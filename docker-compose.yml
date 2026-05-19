@@ -1,0 +1,28 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    volumes:
+      # Persist the fetcher cache + history snapshots between container restarts.
+      - ./backend/cache:/app/backend/cache
+      - ./backend/history:/app/backend/history
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/healthz').read()"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  fetcher:
+    # One-shot job: re-run with `docker compose run --rm fetcher` (or
+    # schedule via host cron / a sidecar like ofelia).
+    build: .
+    profiles: ["job"]
+    env_file:
+      - .env
+    volumes:
+      - ./backend/cache:/app/backend/cache
+      - ./backend/history:/app/backend/history
+    command: ["uv", "run", "python", "scripts/fetch_data.py"]
