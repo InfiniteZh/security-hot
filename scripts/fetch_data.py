@@ -28,12 +28,15 @@ import csv
 import gzip
 import io
 import json
+import os
 import re
 import sys
 import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlparse
+from xml.etree import ElementTree as ET
 
 import feedparser
 import httpx
@@ -73,17 +76,143 @@ NEWS_SOURCES: list[dict] = [
     {"slug": "datadog", "title": "Datadog Security Labs", "url": "https://securitylabs.datadoghq.com/rss/feed.xml", "lang": "en"},
     {"slug": "googlep0", "title": "Project Zero", "url": "https://googleprojectzero.blogspot.com/feeds/posts/default", "lang": "en"},
     {"slug": "mandiant", "title": "Mandiant", "url": "https://www.mandiant.com/resources/blog/rss.xml", "lang": "en"},
-    {"slug": "socket", "title": "Socket", "url": "https://socket.dev/blog/rss.xml", "lang": "en"},
     {"slug": "checkmarx", "title": "Checkmarx", "url": "https://checkmarx.com/blog/feed/", "lang": "en"},
     # Supply-chain-focused blogs — most useful early-warning signal for npm/PyPI/Go/Rust
-    # poisoning. Socket.dev is intentionally absent here: their feed is Cloudflare-gated.
-    # `category: "supply-intel"` lets the frontend pull them into the supply-chain
-    # view independently of language filters.
+    # poisoning. `category: "supply-intel"` lets the frontend pull them into the
+    # supply-chain view independently of language filters.
+    # Socket: their /blog/rss.xml is Cloudflare-gated, but /api/blog/feed.atom serves
+    # cleanly without the bot challenge.
+    {"slug": "socket", "title": "Socket", "url": "https://socket.dev/api/blog/feed.atom", "lang": "en", "category": "supply-intel"},
     {"slug": "safedep", "title": "SafeDep", "url": "https://safedep.io/rss.xml", "lang": "en", "category": "supply-intel"},
     {"slug": "aikido", "title": "Aikido", "url": "https://www.aikido.dev/blog/rss.xml", "lang": "en", "category": "supply-intel"},
     {"slug": "stepsec", "title": "StepSecurity", "url": "https://www.stepsecurity.io/blog/rss.xml", "lang": "en", "category": "supply-intel"},
     {"slug": "endor", "title": "Endor Labs", "url": "https://www.endorlabs.com/blog/rss.xml", "lang": "en", "category": "supply-intel"},
 ]
+
+
+# Hosts that almost certainly serve Chinese content. Anything matching here
+# (substring) is tagged lang=zh regardless of OPML metadata.
+_ZH_HOST_HINTS = (
+    "freebuf.com", "anquanke.com", "4hou.com", "secrss.com", "sec-wiki",
+    "secwiki", "seebug.org", "vipread.com", "360.cn", "tencent.com",
+    "alibaba.com", "weibo.com", "qq.com", "ke.qq", "huawei.com",
+    "uedbox.com", "secquan.org", "secepo.com", "feishu", "csdn.net",
+    "sec-in.com", "sec-news.com", "zhihu.com", "jianshu.com",
+    "xianzhi.aliyun", "bilibili.com", "cnblogs.com",
+    ".com.cn", ".org.cn", ".cn/",
+)
+
+
+def _slug_from_url(url: str) -> str:
+    """Derive a stable slug from a feed URL — host segment with non-alnum
+    collapsed to '_'. Used for de-duplication and as a stable id across
+    runs even when the OPML title changes."""
+    try:
+        host = re.sub(r"^https?://", "", url).split("/")[0].lower()
+        host = re.sub(r"^www\.", "", host)
+        slug = re.sub(r"[^a-z0-9]+", "_", host).strip("_")
+        return slug[:48] or "unknown"
+    except Exception:
+        return "unknown"
+
+
+def _detect_lang(title: str, url: str, category_label: str) -> str:
+    """Heuristic: any CJK char in title, or known-CN host, or 公众号 category
+    ⇒ zh. Otherwise en. Mis-tagged Italian / French feeds default to en,
+    which is fine for the news lang toggle."""
+    if any("一" <= ch <= "鿿" for ch in (title or "")):
+        return "zh"
+    lower_url = (url or "").lower()
+    if any(hint in lower_url for hint in _ZH_HOST_HINTS):
+        return "zh"
+    if "公众号" in (category_label or ""):
+        return "zh"
+    return "en"
+
+
+def _load_alive_sources_from_opml(opml_path: Path) -> list[dict]:
+    """Parse rss/merged.opml (output of merge_rss.py) into the
+    NEWS_SOURCES dict shape. Returns empty list if file missing/invalid
+    so the caller can fall back to the curated list.
+
+    Slugs are URL-derived to stay stable across re-merges; falls back to
+    feed title when host hashing collides.
+    """
+    if not opml_path.exists():
+        return []
+    try:
+        tree = ET.parse(opml_path)
+    except ET.ParseError:
+        return []
+    body = tree.getroot().find("body")
+    if body is None:
+        return []
+    sources: list[dict] = []
+    seen_slugs: dict[str, int] = {}
+
+    def walk(node: ET.Element, parent_category: str) -> None:
+        for child in node:
+            if child.tag.split("}")[-1] != "outline":
+                continue
+            xml_url = (child.attrib.get("xmlUrl") or "").strip()
+            title = (child.attrib.get("title") or child.attrib.get("text") or "").strip()
+            if not xml_url:
+                # Topical category container (e.g. "Pentest", "Companies").
+                walk(child, title or parent_category)
+                continue
+            slug = _slug_from_url(xml_url)
+            # Disambiguate when two feeds share a host (rare but happens).
+            if slug in seen_slugs:
+                seen_slugs[slug] += 1
+                slug = f"{slug}_{seen_slugs[slug]}"
+            else:
+                seen_slugs[slug] = 1
+            sources.append({
+                "slug": slug,
+                "title": title or xml_url,
+                "url": xml_url,
+                "lang": _detect_lang(title, xml_url, parent_category),
+                "category": parent_category or "Uncategorized",
+            })
+
+    walk(body, "")
+    return sources
+
+
+def _news_sources_to_use() -> list[dict]:
+    """Resolve the news source list at fetch time.
+
+    Strategy:
+      1. read rss/merged.opml — that's the full ~695 alive feed catalog
+         produced by merge_rss.py
+      2. merge the curated NEWS_SOURCES on top (their hand-tuned title,
+         lang, and supply-intel category override the OPML defaults)
+      3. fall back to NEWS_SOURCES alone if merged.opml doesn't exist
+
+    Curated sources keep their original slug so cross-run continuity
+    holds; new OPML sources get URL-derived slugs.
+    """
+    opml = ROOT / "rss" / "merged.opml"
+    bulk = _load_alive_sources_from_opml(opml)
+    if not bulk:
+        return list(NEWS_SOURCES)
+    # Overlay curated entries by URL match.
+    curated_by_url = {s["url"]: s for s in NEWS_SOURCES}
+    out: list[dict] = []
+    consumed_curated_urls: set[str] = set()
+    for s in bulk:
+        if s["url"] in curated_by_url:
+            override = curated_by_url[s["url"]]
+            consumed_curated_urls.add(s["url"])
+            out.append({**s, **override, "category": override.get("category") or s["category"]})
+        else:
+            out.append(s)
+    # Any curated source not present in OPML (e.g. supply-intel vendors
+    # we added by hand and never ran through merge_rss) still gets in.
+    for s in NEWS_SOURCES:
+        if s["url"] not in consumed_curated_urls:
+            out.append(s)
+    return out
 
 
 def now_iso() -> str:
@@ -280,7 +409,9 @@ async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8) -> dict:
         async with sem:
             return await fetch_one_feed(client, src)
 
-    results = await asyncio.gather(*[bounded(s) for s in NEWS_SOURCES])
+    sources_to_pull = _news_sources_to_use()
+    print(f"[news] pulling {len(sources_to_pull)} sources (merged.opml + curated)", file=sys.stderr)
+    results = await asyncio.gather(*[bounded(s) for s in sources_to_pull])
 
     articles = []
     sources = []
@@ -306,14 +437,216 @@ async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8) -> dict:
                 "lang": s["lang"],
                 "category": s.get("category"),
             })
+    # ─── Layer 1+2 pipeline: dedupe then keyword block ───
+    pre_total = len(articles)
+    articles, url_dropped, title_dropped = _articles_dedupe(articles)
+    articles, keyword_dropped = _articles_keyword_filter(articles)
+    filter_meta = {
+        "raw_articles": pre_total,
+        "url_duplicates": len(url_dropped),
+        "title_duplicates": len(title_dropped),
+        "keyword_filtered": len(keyword_dropped),
+        "kept": len(articles),
+    }
+
+    # Interleave dropped samples (cap each category) so the audit trail
+    # in news.json has visibility into all three filter layers, not just
+    # whichever bucket is biggest.
+    filtered_sample = (
+        url_dropped[:100] + title_dropped[:50] + keyword_dropped[:50]
+    )
+
     out = {
         "articles": articles,
         "sources": sources,
         "count": len(articles),
+        "filter_meta": filter_meta,
+        "filtered_out": filtered_sample,
         "fetched_at": now_iso(),
     }
     write_json("news.json", out)
-    return {"name": "news", "count": len(articles)}
+
+    # Layer 3: incremental LLM scoring when LLM_API_KEY is set. Inline import
+    # so the dependency on llm_rank.py is lazy — same-directory script.
+    llm_meta = None
+    if os.environ.get("LLM_API_KEY"):
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from llm_rank import rank_news  # type: ignore
+            llm_meta = await rank_news(verbose=True)
+        except Exception as exc:
+            print(f"[news] llm_rank step failed: {exc}", file=sys.stderr)
+            llm_meta = {"error": str(exc)[:200]}
+
+    return {
+        "name": "news",
+        "count": len(articles),
+        "filter_meta": filter_meta,
+        "llm_meta": llm_meta,
+    }
+
+
+# ────────── Layer 1: URL + title dedupe ──────────
+# Prefix-based instead of a named whitelist: tracking params multiply faster
+# than we can enumerate. Anything starting with these prefixes (case-insensitive)
+# is dropped from the canonical URL. Covers utm_*, ref/ref_*, scene/scene_*,
+# spm (taobao/aliyun), mpshare/chksm/srcid (wechat), igshid (instagram),
+# mc_eid/mkt_tok (mailchimp / marketo), s_cid/cmpid (mainstream news), etc.
+_TRACKING_PREFIXES = (
+    "utm_", "utm", "ref", "ref_", "from_", "_from", "from",
+    "source", "spm", "scene", "share", "sharer", "shareid",
+    "mpshare", "chksm", "srcid", "wt_mc", "wt_zmc",
+    "mc_eid", "mc_cid", "mkt_tok",
+    "s_cid", "cmpid", "cmp",
+    "fbclid", "gclid", "igshid", "__twitter_impression",
+)
+
+
+def _is_tracking_param(key: str) -> bool:
+    k = (key or "").lower()
+    for prefix in _TRACKING_PREFIXES:
+        if k == prefix or k.startswith(prefix):
+            return True
+    return False
+
+
+def _canonical_url(url: str) -> str:
+    """Strip tracking params and normalize host/path so the same article
+    on two aggregators (or shared with different `?utm_*` tails) is one
+    URL key for dedupe."""
+    if not url:
+        return ""
+    try:
+        p = urlparse(url.strip())
+    except Exception:
+        return url.strip().lower()
+    if not p.netloc:
+        return url.strip().lower()
+    qs = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
+          if not _is_tracking_param(k)]
+    query = urlencode(qs)
+    path = p.path.rstrip("/") or "/"
+    host = p.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return f"{p.scheme.lower()}://{host}{path}" + (f"?{query}" if query else "")
+
+
+def _title_signature(title: str) -> str:
+    """Lowercase, drop punctuation/whitespace, keep CJK + alphanum, first
+    80 chars. Catches re-titled reposts where spacing or punctuation
+    drifts but the core text is the same."""
+    if not title:
+        return ""
+    sig = re.sub(r"[^\w一-鿿]+", "", title.lower())
+    return sig[:80]
+
+
+def _articles_dedupe(articles: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
+    """Return (kept, url_duplicates, title_duplicates).
+
+    Two passes: URL first (stronger signal), then title (catches reposts
+    with different paths). Sources earlier in the list win ties — the
+    fetch is already ordered by NEWS_SOURCES order, so curated supply-
+    intel vendors get keep-priority over bulk OPML mirrors of the same
+    story.
+
+    Kept entries get their `link` rewritten to the canonical form so the
+    downstream LLM-incremental check (which keys off `link`) doesn't
+    re-score the same article when a different upstream re-shares it
+    with different tracking params.
+    """
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
+    kept: list[dict] = []
+    url_dropped: list[dict] = []
+    title_dropped: list[dict] = []
+    for a in articles:
+        u = _canonical_url(a.get("link") or "")
+        if u and u in seen_urls:
+            url_dropped.append({**a, "drop_reason": "url-dup"})
+            continue
+        t = _title_signature(a.get("title") or "")
+        if t and t in seen_titles:
+            title_dropped.append({**a, "drop_reason": "title-dup"})
+            continue
+        if u:
+            seen_urls.add(u)
+            a["link"] = u  # write canonical back so incremental key is stable
+        if t:
+            seen_titles.add(t)
+        kept.append(a)
+    return kept, url_dropped, title_dropped
+
+
+# ────────── Layer 2: keyword blocklist ──────────
+# Default blocklist covers recruitment, promo / lottery, conference solicitation,
+# personal housekeeping posts. Override via NEWS_BLOCK_KEYWORDS env (comma list)
+# if you want stricter / looser filtering without redeploying.
+_DEFAULT_BLOCK_KEYWORDS = [
+    # ─── Recruitment ────────────────────────────────────────────
+    "招聘", "招人", "招募", "诚聘", "实习生招", "校招", "社招",
+    "求职", "投简历", "招贤纳士", "内推",
+    "we're hiring", "we are hiring",
+
+    # ─── Promotion / giveaway / sales ───────────────────────────
+    "限免", "限时免费", "优惠码", "抽奖", "免费领取",
+    "福利来了", "限时优惠", "购买链接",
+    "加群", "加微信", "扫码加", "知识星球",
+
+    # ─── Conference solicitation ────────────────────────────────
+    # Use specific compound phrases (not bare 议程/报名) to avoid killing
+    # BlackHat/DEFCON/USENIX agenda announcements which carry research signal.
+    "议程公布", "嘉宾揭晓", "报名截止", "报名开启", "开启报名",
+    "限时报名", "招商赞助", "赞助合作",
+
+    # ─── Periodic digests (no information density) ──────────────
+    # All catch retrospective compilations like "CNVD漏洞周报" / "Weekly Update".
+    # We don't kill `年度` alone (kills "2025 年度十大漏洞盘点"), only compound.
+    "周报", "月报", "全球网络安全日报",
+    "Weekly Update", "Weekly Briefing", "Newsletter", "Digest",
+    "年终总结", "年度总结", "年度盘点", "年度大事记",
+    "年度荣耀", "年度颁奖",
+
+    # ─── Personal / housekeeping ────────────────────────────────
+    "新年快乐", "中秋快乐", "国庆快乐", "感谢支持",
+    "公众号回顾", "年终总结征集",
+    "随笔", "深夜随笔", "年中随笔", "心得体会",
+    "我们的故事", "团队介绍", "加入我们",
+    "产品发布会",  # marketing event vs. genuine product launch story
+
+    # ─── Audio-only content (RSS gives us titles but not transcripts) ─
+    "Podcast:", "播客:", "播客：",
+]
+
+
+def _articles_keyword_filter(articles: list[dict]) -> tuple[list[dict], list[dict]]:
+    raw_extra = os.environ.get("NEWS_BLOCK_KEYWORDS") or ""
+    extras = [k.strip() for k in raw_extra.split(",") if k.strip()]
+    keywords = _DEFAULT_BLOCK_KEYWORDS + extras
+    if not keywords:
+        return articles, []
+    # ASCII keywords get \b word boundaries to avoid substring traps like
+    # "Digest" matching "Digestion". CJK keywords have no real word-boundary
+    # concept in regex; just leave them as substring matches (which is what
+    # we want anyway — Chinese text has no inter-word space).
+    parts: list[str] = []
+    for kw in keywords:
+        if re.search(r"[一-鿿]", kw):  # CJK present → substring match
+            parts.append(re.escape(kw))
+        else:                                 # ASCII → word-bounded match
+            parts.append(rf"\b{re.escape(kw)}\b")
+    pattern = re.compile("|".join(parts), re.IGNORECASE)
+    kept: list[dict] = []
+    dropped: list[dict] = []
+    for a in articles:
+        blob = f"{a.get('title','')} {a.get('summary','')}"
+        m = pattern.search(blob)
+        if m:
+            dropped.append({**a, "drop_reason": f"keyword:{m.group(0)}"})
+        else:
+            kept.append(a)
+    return kept, dropped
 
 
 async def fetch_epss(client: httpx.AsyncClient) -> dict:
