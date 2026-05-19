@@ -1,0 +1,1293 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<!--
+  ================================================================
+  SECURITY HOT  ·  design notes  ·  v0.2 (OpenAI-style refresh)
+  ================================================================
+  Concept            calm intelligence desk, not a terminal
+  Inspirations       OpenAI Platform · GitHub Security ·
+                     Stripe Press · Linear (light theme)
+
+  ── Type system ────────────────────────────────────────────────
+  Display / body     Geist  (free Söhne-adjacent grotesque)
+  Mono               Geist Mono  (CVE IDs, scores, timestamps)
+  No serifs — OpenAI doesn't lean on them in product UI.
+  Sizes (rem)
+    display-xl  3.5  hero numbers
+    h-section   1.5  panel titles
+    h-card      1.0  card titles
+    body        0.9375
+    meta        0.8125
+    label       0.6875  (tracking-widest uppercase)
+
+  ── Color tokens (warm light) ──────────────────────────────────
+  --bg          #FAFAF7   page canvas (warm off-white)
+  --surface     #FFFFFF   cards
+  --surface-2   #F4F4EE   subtle inset
+  --border      #E8E5DD   warm hairlines
+  --border-2    #D8D4C7
+  --text        #0A0A0A
+  --text-soft   #3D3D3D
+  --muted       #6B6B6B
+  --dim         #9A9A9A
+  --accent      #10A37F   OpenAI green (used sparingly)
+  Severity palette retained, but pulled toward warm:
+  --sev-crit    #C73E3E
+  --sev-high    #D97706
+  --sev-med     #B45309
+  --sev-low     #2563EB
+  --sev-poc     #059669
+  --sev-itw     #DC2626
+  --sev-kev     #7C3AED
+
+  ── i18n ───────────────────────────────────────────────────────
+  Default zh (CN). Toggle in top-right swaps every node with
+  data-i18n; dynamic strings (severity, kind) come from the JS
+  dictionary too. Articles keep their original language; we just
+  surface a lang badge.
+
+  ── API ────────────────────────────────────────────────────────
+  Served by FastAPI at the same origin (single uvicorn).
+  GET /api/today  /api/news  /api/vuln  /api/heat  /api/sources
+  Each render path is independent so a failing endpoint won't
+  break the whole board.
+-->
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Security Hot · 安全情报日报</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
+  rel="stylesheet"
+/>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    theme: {
+      extend: {
+        fontFamily: {
+          sans: ['"Geist"', "ui-sans-serif", "system-ui"],
+          mono: ['"Geist Mono"', "ui-monospace", "SFMono-Regular"],
+        },
+        colors: {
+          bg: "#FAFAF7",
+          surface: "#FFFFFF",
+          "surface-2": "#F4F4EE",
+          border: "#E8E5DD",
+          "border-2": "#D8D4C7",
+          ink: "#0A0A0A",
+          "ink-soft": "#3D3D3D",
+          muted: "#6B6B6B",
+          dim: "#9A9A9A",
+          accent: "#10A37F",
+          crit: "#C73E3E",
+          high: "#D97706",
+          med: "#B45309",
+          low: "#2563EB",
+          poc: "#059669",
+          itw: "#DC2626",
+          kev: "#7C3AED",
+        },
+      },
+    },
+  };
+</script>
+<style>
+  :root { color-scheme: light; }
+  html, body {
+    background: #FAFAF7;
+    color: #0A0A0A;
+    font-family: "Geist", ui-sans-serif, system-ui;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01" on, "ss03" on, "cv11" on;
+  }
+
+  /* selection */
+  ::selection { background: #10A37F; color: white; }
+
+  /* hairline helpers */
+  .hairline { border-color: #E8E5DD !important; }
+  .hairline-2 { border-color: #D8D4C7 !important; }
+
+  /* scrollbar (subtle) */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #D8D4C7; border-radius: 6px; }
+  ::-webkit-scrollbar-thumb:hover { background: #B8B4A7; }
+  ::-webkit-scrollbar-track { background: transparent; }
+
+  /* card hover lift */
+  .card {
+    transition: box-shadow 200ms ease, border-color 200ms ease, transform 200ms ease;
+    overflow: hidden;
+  }
+  .card:hover {
+    border-color: #D8D4C7 !important;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 32px -16px rgba(20,20,15,0.10);
+  }
+
+  /* live blink */
+  @keyframes blink { 50% { opacity: 0.35; } }
+  .blink { animation: blink 1.6s ease-in-out infinite; }
+
+  /* tab pill */
+  .tab-pill {
+    position: relative;
+    transition: color 160ms ease, background 160ms ease;
+  }
+  .tab-pill[aria-selected="true"] {
+    background: #0A0A0A;
+    color: #FAFAF7;
+  }
+
+  /* sub-pill (vuln class) */
+  .sub-pill {
+    transition: background 140ms, border-color 140ms, color 140ms;
+  }
+  .sub-pill[data-on="true"] {
+    background: #0A0A0A;
+    color: #FAFAF7;
+    border-color: #0A0A0A;
+  }
+  /* multi-filter chip */
+  .filter-chip {
+    transition: background 140ms, border-color 140ms, color 140ms;
+    color: #6B6B6B;
+  }
+  .filter-chip[data-on="true"] {
+    background: #0A0A0A;
+    color: #FAFAF7;
+    border-color: #0A0A0A;
+  }
+
+  /* severity badges */
+  .sev {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: "Geist Mono", monospace;
+    font-size: 10.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 2px 8px;
+    border-radius: 999px; border: 1px solid;
+    line-height: 1.4; font-weight: 500;
+  }
+  .sev::before {
+    content: ""; width: 6px; height: 6px; border-radius: 999px;
+    background: currentColor; flex-shrink: 0;
+  }
+  .sev-critical { color: #C73E3E; border-color: #F0D2D2; background: #FDF2F2; }
+  .sev-high     { color: #D97706; border-color: #F2D9B0; background: #FEF9EE; }
+  .sev-medium   { color: #B45309; border-color: #ECD9B5; background: #FBF6EB; }
+  .sev-low      { color: #2563EB; border-color: #D2DDF5; background: #F2F6FD; }
+  .sev-unknown  { color: #6B6B6B; border-color: #E0DDD3; background: #F4F4EE; }
+
+  .pill-tag {
+    display: inline-flex; align-items: center;
+    font-family: "Geist Mono", monospace;
+    font-size: 10.5px; letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 2px 7px; border-radius: 4px;
+    border: 1px solid #E8E5DD;
+    color: #3D3D3D; background: #FAFAF7;
+    line-height: 1.4;
+  }
+  .pill-tag.kev { color: #7C3AED; border-color: #E5DAF8; background: #F7F2FE; }
+  .pill-tag.itw { color: #DC2626; border-color: #F2CFCF; background: #FEF2F2; }
+  .pill-tag.poc { color: #059669; border-color: #CCEBDF; background: #F0FAF6; }
+  .pill-tag.supply { color: #C2410C; border-color: #EFCFB8; background: #FEF5EE; }
+  .pill-tag.ransom { color: #7C3AED; border-color: #E5DAF8; background: #F7F2FE; }
+
+  /* lang lozenge */
+  .lang-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: "Geist Mono", monospace;
+    font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 1px 6px; border-radius: 3px;
+    background: #F4F4EE; color: #6B6B6B;
+  }
+
+  /* heat bar */
+  .hb-bar {
+    height: 4px; background: #EDEAE0;
+    border-radius: 999px; overflow: hidden;
+  }
+  .hb-bar > i {
+    display: block; height: 100%;
+    background: #0A0A0A;
+    border-radius: 999px;
+  }
+  .hb-bar.poc > i { background: #059669; }
+  .hb-bar.high > i { background: #D97706; }
+  .hb-bar.crit > i, .hb-bar.itw > i { background: #DC2626; }
+  .hb-bar.kev > i { background: #7C3AED; }
+
+  /* CVSS pill */
+  .cvss-num {
+    font-family: "Geist Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+  }
+
+  /* skeleton shimmer */
+  @keyframes shimmer {
+    0% { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+  }
+  .skeleton {
+    background: linear-gradient(90deg, #F4F4EE 25%, #EDEAE0 50%, #F4F4EE 75%);
+    background-size: 800px 100%;
+    animation: shimmer 1.6s linear infinite;
+    border-radius: 6px;
+  }
+
+  /* link underline */
+  a.lnk { position: relative; transition: color 160ms; }
+  a.lnk:hover { color: #10A37F; }
+
+  /* hide panel */
+  .panel[hidden] { display: none !important; }
+
+  /* line clamps */
+  .clamp-2 {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; word-break: break-word; overflow-wrap: anywhere;
+  }
+  .clamp-3 {
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden; word-break: break-word; overflow-wrap: anywhere;
+  }
+
+  /* date cell */
+  .date-cell[data-today="true"] {
+    background: #0A0A0A;
+    color: #FAFAF7;
+  }
+  .date-cell[data-today="true"] .date-num { color: #FAFAF7; }
+  .date-cell[data-today="true"] .date-meta { color: #C0BFB8; }
+</style>
+</head>
+<body>
+  <!-- ─────────── TOP NAV ─────────── -->
+  <header class="border-b hairline bg-bg sticky top-0 z-30">
+    <div class="max-w-[1400px] mx-auto px-6 lg:px-10 py-3.5 flex items-center gap-6">
+      <a href="/" class="flex items-center gap-2.5">
+        <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-ink text-bg font-mono text-sm font-semibold">S</span>
+        <div class="leading-none">
+          <div class="text-[15px] font-semibold tracking-tight">Security Hot</div>
+          <div class="text-[10.5px] text-muted font-mono tracking-wider mt-0.5" data-i18n="brand.tag">每日安全情报</div>
+        </div>
+      </a>
+
+      <div class="flex-1 max-w-xl mx-4 hidden md:block">
+        <div class="flex items-center gap-2 border hairline bg-surface rounded-lg px-3 py-2 focus-within:border-2 transition">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-muted">
+            <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
+          </svg>
+          <input id="search" type="text" placeholder=" " data-i18n-placeholder="nav.search" class="bg-transparent outline-none w-full text-[13.5px]" />
+          <kbd class="font-mono text-[10px] text-dim border hairline rounded px-1.5 py-px hidden md:inline">⌘K</kbd>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 ml-auto">
+        <div class="hidden md:flex items-center gap-1.5 text-muted">
+          <span class="relative flex">
+            <span class="absolute h-2 w-2 rounded-full bg-poc opacity-50 blink"></span>
+            <span class="h-2 w-2 rounded-full bg-poc"></span>
+          </span>
+          <span class="font-mono text-[11px] tracking-wider" data-i18n="nav.live">实时</span>
+        </div>
+        <div class="border hairline rounded-md flex overflow-hidden">
+          <button id="lang-zh" class="lang-btn px-2.5 py-1.5 text-[11.5px] font-mono tracking-wide" data-lang="zh">中</button>
+          <button id="lang-en" class="lang-btn px-2.5 py-1.5 text-[11.5px] font-mono tracking-wide border-l hairline" data-lang="en">EN</button>
+        </div>
+        <a href="/docs" target="_blank" class="hidden md:inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-ink px-2 py-1 lnk font-mono">API ↗</a>
+      </div>
+    </div>
+  </header>
+
+  <div class="max-w-[1400px] mx-auto px-6 lg:px-10">
+
+    <!-- ─────────── HERO ─────────── -->
+    <section class="pt-10 pb-7">
+      <div class="flex items-end justify-between flex-wrap gap-4">
+        <div>
+          <div class="font-mono text-[11px] tracking-[0.18em] uppercase text-muted" data-i18n="hero.kicker">每日聚合 · 安全资讯 · 漏洞情报 · 论文</div>
+          <h1 class="text-[34px] md:text-[40px] font-semibold tracking-tight leading-[1.05] mt-3" data-i18n="hero.title">看清今天最值得注意的安全动向</h1>
+          <p class="text-[14px] text-muted mt-2 max-w-2xl leading-relaxed" data-i18n="hero.sub">
+            从 1,690 个 RSS 源 与 CISA KEV、GHSA、OSSF、nomi-sec PoC 等接口持续抓取，去重、归一、按热度排序后呈现。
+          </p>
+        </div>
+        <div class="flex items-center gap-3 font-mono text-[11px] text-muted">
+          <span data-i18n="hero.lastsync">最近同步</span>
+          <span id="last-sync" class="text-ink">--:--</span>
+        </div>
+      </div>
+
+      <!-- stats grid (skeleton cards inserted by JS until /api/today loads) -->
+      <div class="mt-8 grid grid-cols-2 md:grid-cols-4 gap-3" id="stats-grid"></div>
+    </section>
+
+    <!-- ─────────── DATE STRIP ─────────── -->
+    <nav class="flex items-stretch gap-2 mb-6 overflow-x-auto pb-1" aria-label="date">
+      <button id="date-prev" class="px-3 py-2 rounded-lg border hairline bg-surface text-muted hover:text-ink hover:bg-surface-2 shrink-0">◀</button>
+      <ol id="date-strip" class="flex gap-2 items-stretch"></ol>
+      <button id="date-next" class="px-3 py-2 rounded-lg border hairline bg-surface text-muted hover:text-ink hover:bg-surface-2 shrink-0">▶</button>
+      <button id="date-today" class="px-3 py-2 rounded-lg border hairline bg-surface text-muted hover:text-ink hover:bg-surface-2 shrink-0 font-mono text-[11.5px] uppercase tracking-widest" data-i18n="date.today">今日</button>
+    </nav>
+
+    <!-- ─────────── PRIMARY TABS ─────────── -->
+    <nav class="flex items-center justify-between mb-6 flex-wrap gap-3" role="tablist">
+      <div class="inline-flex items-center gap-1 border hairline rounded-full bg-surface p-1">
+        <button class="tab-pill rounded-full px-4 py-1.5 text-[13px] font-medium" role="tab" data-tab="news" aria-selected="false">
+          <span data-i18n="tab.news">行业资讯</span>
+          <span class="ml-1.5 text-[11px] text-dim font-mono" id="tab-news-count">—</span>
+        </button>
+        <button class="tab-pill rounded-full px-4 py-1.5 text-[13px] font-medium" role="tab" data-tab="vuln" aria-selected="true">
+          <span data-i18n="tab.vuln">漏洞情报</span>
+          <span class="ml-1.5 text-[11px] text-dim font-mono" id="tab-vuln-count">—</span>
+        </button>
+        <button class="tab-pill rounded-full px-4 py-1.5 text-[13px] font-medium" role="tab" data-tab="papers" aria-selected="false">
+          <span data-i18n="tab.papers">安全论文</span>
+          <span class="ml-1.5 text-[11px] text-dim font-mono">·</span>
+        </button>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <div class="inline-flex border hairline rounded-md overflow-hidden bg-surface">
+          <button data-sort="heat" class="sort-btn px-3 py-1.5 text-[12px] font-mono text-ink bg-surface-2">
+            <span data-i18n="sort.heat">热度</span>
+          </button>
+          <button data-sort="time" class="sort-btn px-3 py-1.5 text-[12px] font-mono text-muted border-l hairline">
+            <span data-i18n="sort.time">时间</span>
+          </button>
+        </div>
+        <div class="inline-flex border hairline rounded-md overflow-hidden bg-surface" id="news-lang-filter" hidden>
+          <button data-news-lang="all" class="newslang-btn px-2.5 py-1.5 text-[12px] font-mono bg-surface-2 text-ink"><span data-i18n="lang.all">全部</span></button>
+          <button data-news-lang="zh" class="newslang-btn px-2.5 py-1.5 text-[12px] font-mono text-muted border-l hairline">中</button>
+          <button data-news-lang="en" class="newslang-btn px-2.5 py-1.5 text-[12px] font-mono text-muted border-l hairline">EN</button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- ─────────── MAIN GRID ─────────── -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 pb-12">
+      <main class="lg:col-span-9 min-w-0">
+        <!-- vuln sub-filter row -->
+        <div id="vuln-subfilter" class="flex items-center gap-2 flex-wrap mb-3">
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-on="true" data-kind="all">
+            <span data-i18n="vk.all">全部</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="all">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-kind="cve">
+            <span data-i18n="vk.cve">CVE · 0day</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="cve">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-kind="supply">
+            <span data-i18n="vk.supply">供应链投毒</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="supply">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-kind="poc">
+            <span data-i18n="vk.poc">PoC 首发</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="poc">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-kind="itw">
+            <span data-i18n="vk.itw">在野利用</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="itw">—</span>
+          </button>
+        </div>
+
+        <!-- severity + source multi-filter chips -->
+        <div id="vuln-multifilter" class="flex items-center gap-x-3 gap-y-2 flex-wrap mb-5 text-[11.5px]">
+          <span class="font-mono text-[10px] tracking-widest uppercase text-dim mr-1" data-i18n="filter.severity">严重度</span>
+          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="severity" data-val="critical" data-on="false">CRIT</button>
+          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="severity" data-val="high" data-on="false">HIGH</button>
+          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="severity" data-val="medium" data-on="false">MED</button>
+          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="severity" data-val="low" data-on="false">LOW</button>
+          <span class="border-l hairline-2 h-4 mx-1"></span>
+          <span class="font-mono text-[10px] tracking-widest uppercase text-dim mr-1" data-i18n="filter.source">来源</span>
+          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="source" data-val="cisa-kev" data-on="false">KEV</button>
+          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="source" data-val="github-advisory" data-on="false">GHSA</button>
+          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="source" data-val="nomi-sec" data-on="false">PoC</button>
+          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="source" data-val="ossf-malpkgs" data-on="false">OSSF</button>
+          <span class="border-l hairline-2 h-4 mx-1"></span>
+          <button id="filter-clear" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest" data-i18n="filter.clear">清空</button>
+        </div>
+
+        <!-- panel: NEWS -->
+        <section class="panel space-y-3" data-panel="news" hidden>
+          <div class="news-list" id="news-list"></div>
+        </section>
+
+        <!-- panel: VULN (default) -->
+        <section class="panel space-y-3" data-panel="vuln">
+          <div class="vuln-list" id="vuln-list"></div>
+        </section>
+
+        <!-- panel: PAPERS -->
+        <section class="panel" data-panel="papers" hidden>
+          <div class="border hairline bg-surface rounded-xl p-12 text-center">
+            <div class="font-mono text-[11px] tracking-[0.2em] uppercase text-muted mb-3" data-i18n="papers.kicker">// 状态 · 排期中</div>
+            <h3 class="text-[24px] font-semibold tracking-tight mb-2" data-i18n="papers.title">即将上线</h3>
+            <p class="text-[13.5px] text-muted max-w-md mx-auto leading-relaxed" data-i18n="papers.sub">
+              我们正在接入 arXiv <code class="font-mono text-ink">cs.CR</code>、USENIX、IEEE S&P、NDSS、CCS、RAID 与 Real World Crypto 的论文流水线，按主题与新颖度排序后呈现摘要。
+            </p>
+            <div class="mt-8 flex items-center justify-center gap-x-6 gap-y-2 flex-wrap font-mono text-[10.5px] tracking-widest text-dim uppercase">
+              <span><span class="text-poc">●</span> arXiv · queued</span>
+              <span><span class="text-poc">●</span> USENIX · queued</span>
+              <span><span class="text-dim">○</span> IEEE S&amp;P</span>
+              <span><span class="text-dim">○</span> NDSS</span>
+              <span><span class="text-dim">○</span> CCS</span>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- ─────────── RIGHT RAIL ─────────── -->
+      <aside class="lg:col-span-3 space-y-6 lg:sticky lg:top-[80px] lg:self-start min-w-0">
+        <!-- heat -->
+        <section class="border hairline bg-surface rounded-xl p-5">
+          <div class="flex items-center justify-between mb-3.5">
+            <h3 class="text-[13px] font-semibold tracking-tight" data-i18n="rail.heat">综合威胁分</h3>
+            <span class="text-poc text-xs">●</span>
+          </div>
+          <ol id="heat-list" class="space-y-3.5">
+            <li class="skeleton h-12"></li>
+            <li class="skeleton h-12"></li>
+            <li class="skeleton h-12"></li>
+          </ol>
+        </section>
+
+        <!-- sources health -->
+        <section class="border hairline bg-surface rounded-xl p-5">
+          <h3 class="text-[13px] font-semibold tracking-tight mb-3.5" data-i18n="rail.sources">数据源健康</h3>
+          <ul id="sources-list" class="space-y-2 text-[12px] font-mono"></ul>
+        </section>
+
+        <!-- pipeline -->
+        <section class="border hairline bg-surface rounded-xl p-5">
+          <h3 class="text-[13px] font-semibold tracking-tight mb-3.5" data-i18n="rail.pipeline">采集流水线</h3>
+          <dl id="pipeline-list" class="text-[12px] font-mono space-y-1.5"></dl>
+        </section>
+      </aside>
+    </div>
+
+    <!-- ─────────── DETAIL DRAWER ─────────── -->
+    <div id="detail-overlay" class="fixed inset-0 bg-ink/30 backdrop-blur-sm z-40 hidden" aria-hidden="true"></div>
+    <aside id="detail-drawer" class="fixed top-0 right-0 h-full w-full md:w-[560px] bg-bg border-l hairline-2 z-50 translate-x-full transition-transform duration-200 ease-out overflow-y-auto" role="dialog" aria-modal="true" aria-hidden="true">
+      <div id="detail-content"></div>
+    </aside>
+
+    <!-- ─────────── FOOTER ─────────── -->
+    <footer class="border-t hairline">
+      <div class="py-6 flex flex-wrap items-center justify-between gap-3 font-mono text-[10.5px] tracking-widest text-dim uppercase">
+        <div class="flex items-center gap-3">
+          <span>SECURITY HOT · v0.2</span>
+          <span class="text-border-2">·</span>
+          <span>build 2026.05.16</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <a href="/api/manifest" class="lnk hover:text-ink">manifest.json</a>
+          <a href="/api/sources" class="lnk hover:text-ink">sources</a>
+          <a href="/docs" class="lnk hover:text-ink">api</a>
+          <a href="https://github.com/" target="_blank" class="lnk hover:text-ink">github</a>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+<!-- I18N dictionary lives in its own file so future module splits (state.js
+     / api.js / render.js / events.js — backlog) can each import a single
+     translation helper rather than reaching into a 1000-line app script. -->
+<script src="./i18n.js"></script>
+<script>
+// ───────────────────── i18n ─────────────────────
+/* I18N dict externalised to ./i18n.js (loaded above) */
+let lang = (localStorage.getItem("sh.lang") || "zh");
+const t = (key, ...args) => {
+  const d = I18N[lang] || I18N.zh;
+  const v = d[key];
+  if (typeof v === "function") return v(...args);
+  if (typeof v === "object" && v) return v;
+  return v || key;
+};
+
+function applyI18n() {
+  document.documentElement.lang = lang;
+  // text content
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const k = el.dataset.i18n;
+    const v = t(k);
+    if (typeof v === "string") el.textContent = v;
+  });
+  // placeholders
+  document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
+    el.setAttribute("placeholder", t(el.dataset.i18nPlaceholder));
+  });
+  // lang button state
+  document.querySelectorAll(".lang-btn").forEach((b) => {
+    if (b.dataset.lang === lang) { b.classList.add("bg-ink", "text-bg"); b.classList.remove("text-muted"); }
+    else { b.classList.remove("bg-ink", "text-bg"); b.classList.add("text-muted"); }
+  });
+}
+document.querySelectorAll(".lang-btn").forEach((b) => {
+  b.addEventListener("click", () => {
+    lang = b.dataset.lang;
+    localStorage.setItem("sh.lang", lang);
+    applyI18n();
+    renderAll();
+  });
+});
+
+// ───────────────────── API ─────────────────────
+const api = async (path) => {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+};
+
+// ───────────────────── state ─────────────────────
+const state = {
+  today: null,
+  news: [],
+  vuln: [],
+  heat: [],
+  sources: [],
+  manifest: null,
+  activeTab: "vuln",
+  kind: "all",
+  sort: "heat",
+  newsLang: "all",
+  q: "",
+  selectedDate: null,   // YYYY-MM-DD; null = "today"
+  windowEnd: null,      // YYYY-MM-DD of right-most date cell
+  filters: { severity: new Set(), source: new Set() },
+  vulnLimit: 40,        // pagination window for vuln list
+  newsLimit: 40,        // pagination window for news list
+  openDetailId: null,   // CVE-* id currently shown in the side drawer
+  detailPrevFocus: null,// element to restore focus to on drawer close
+};
+
+function todayUtc() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+}
+function shiftDate(yyyymmdd, days) {
+  const d = new Date(yyyymmdd + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + days);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth()+1)}-${pad(d.getUTCDate())}`;
+}
+function syncUrl() {
+  const params = new URLSearchParams(location.search);
+  if (state.selectedDate && state.selectedDate !== todayUtc()) {
+    params.set("date", state.selectedDate);
+  } else {
+    params.delete("date");
+  }
+  if (state.openDetailId) {
+    params.set("detail", state.openDetailId);
+  } else {
+    params.delete("detail");
+  }
+  const q = params.toString();
+  history.replaceState(null, "", q ? `?${q}` : location.pathname);
+}
+
+// ───────────────────── utilities ─────────────────────
+function fmtTime(iso) {
+  if (!iso) return "";
+  // try to render in local "MM-DD HH:mm"
+  let d = new Date(iso);
+  if (isNaN(d)) {
+    // try replace space with T
+    d = new Date((iso || "").replace(" ", "T"));
+  }
+  if (isNaN(d)) return iso.length > 16 ? iso.slice(0, 16) : iso;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}.${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function relTime(iso) {
+  if (!iso) return "";
+  let d = new Date(iso);
+  if (isNaN(d)) d = new Date((iso || "").replace(" ", "T"));
+  if (isNaN(d)) return "";
+  const diff = (Date.now() - d.getTime()) / 1000;
+  if (diff < 60) return t("time.just_now");
+  if (diff < 3600) return Math.floor(diff/60) + t("time.min_ago");
+  if (diff < 86400) return Math.floor(diff/3600) + t("time.hour_ago");
+  if (diff < 86400 * 30) return Math.floor(diff/86400) + t("time.day_ago");
+  return fmtTime(iso);
+}
+function severityClass(s) { return "sev sev-" + s; }
+function escapeHtml(s) { return (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// ───────────────────── renderers ─────────────────────
+function renderStatsSkeleton() {
+  const grid = document.getElementById("stats-grid");
+  if (grid.children.length === 4 && !grid.querySelector(".skeleton")) return;
+  const card = `
+    <div class="stat-card border hairline bg-surface rounded-xl p-5">
+      <div class="skeleton h-3 w-20"></div>
+      <div class="skeleton h-9 w-24 mt-3"></div>
+      <div class="skeleton h-3 w-32 mt-3"></div>
+    </div>`;
+  grid.innerHTML = card.repeat(4);
+}
+renderStatsSkeleton();
+
+function renderStats() {
+  const d = state.today;
+  if (!d) {
+    // Don't keep shimmering forever if /api/today failed permanently.
+    if (fetchErrors.today) {
+      document.getElementById("stats-grid").innerHTML = `
+        <div class="stat-card border hairline bg-surface rounded-xl p-5 md:col-span-4 text-center">
+          <div class="font-mono text-[10.5px] tracking-widest uppercase text-crit">${t("load_fail")} · /api/today</div>
+          <div class="text-[12px] text-muted mt-2">${escapeHtml(fetchErrors.today)}</div>
+        </div>`;
+    } else {
+      renderStatsSkeleton();
+    }
+    return;
+  }
+  const heat = d.top_heat;
+  const sev = d.sev_breakdown || {};
+  const newsBy = { zh: 0, en: 0 };
+  for (const a of state.news) (a.lang === "zh") ? newsBy.zh++ : newsBy.en++;
+  const cards = [
+    { label: t("stat.news").label,  big: d.news_today, sub: t("stat.news").footnote(newsBy) },
+    { label: t("stat.vuln").label,  big: d.vuln_today, sub: t("stat.vuln").footnote(sev) },
+    { label: t("stat.itw").label,   big: d.itw_today,  sub: t("stat.itw").footnote() },
+    { label: t("stat.heat").label,  big: heat ? heat.label : "—", sub: t("stat.heat").footnote(heat), small: true },
+  ];
+  document.getElementById("stats-grid").innerHTML = cards.map((c, i) => `
+    <div class="stat-card border hairline bg-surface rounded-xl p-5">
+      <div class="font-mono text-[10.5px] tracking-[0.14em] uppercase text-muted">${escapeHtml(c.label)}</div>
+      <div class="mt-2 ${c.small ? 'text-[20px] font-semibold tracking-tight font-mono leading-tight break-all' : 'text-[36px] font-semibold tracking-tight leading-none'}">${escapeHtml(String(c.big))}</div>
+      <div class="text-[12px] text-muted mt-2 font-mono">${escapeHtml(c.sub || "")}</div>
+    </div>
+  `).join("");
+
+  // last sync stamp
+  if (d.last_fetch) {
+    const dt = new Date(d.last_fetch);
+    if (!isNaN(dt)) {
+      const pad = (n) => String(n).padStart(2, "0");
+      document.getElementById("last-sync").textContent = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+    }
+  }
+}
+
+function renderDateStrip() {
+  // Window of 7 days ending at state.windowEnd. The currently-selected day
+  // is highlighted (not necessarily the rightmost); rightmost is constrained
+  // not to exceed today.
+  const todayStr = todayUtc();
+  if (!state.windowEnd) state.windowEnd = todayStr;
+  if (!state.selectedDate) state.selectedDate = todayStr;
+  const out = [];
+  const pad = (n) => String(n).padStart(2, "0");
+  const dowZh = ["日","一","二","三","四","五","六"];
+  const dowEn = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  for (let i = 6; i >= 0; i--) {
+    const cellDate = shiftDate(state.windowEnd, -i);
+    const isToday = cellDate === todayStr;
+    const isSelected = cellDate === state.selectedDate;
+    const isFuture = cellDate > todayStr;
+    const d = new Date(cellDate + "T00:00:00Z");
+    const dow = (lang === "zh" ? dowZh : dowEn)[d.getUTCDay()];
+    const todayBadge = isToday ? ` · ${t("date.today")}` : "";
+    const meta = isToday && state.today ? `${state.today.news_today}·${state.today.vuln_today}` : "—";
+    out.push(`
+      <li>
+        <button class="date-cell border hairline rounded-lg px-4 py-2 min-w-[88px] text-left bg-surface ${isFuture ? 'opacity-40 cursor-not-allowed' : ''}"
+                data-today="${isSelected}" data-date="${cellDate}" ${isFuture ? 'disabled' : ''}>
+          <div class="font-mono text-[10px] uppercase tracking-widest ${isSelected ? '' : 'text-dim'}">${dow}${todayBadge}</div>
+          <div class="date-num font-mono text-[15px] mt-0.5 ${isSelected ? '' : 'text-muted'}">${pad(d.getUTCMonth()+1)}.${pad(d.getUTCDate())}</div>
+          <div class="date-meta font-mono text-[10px] mt-0.5 ${isSelected ? '' : 'text-dim'}">${meta}</div>
+        </button>
+      </li>
+    `);
+  }
+  document.getElementById("date-strip").innerHTML = out.join("");
+  // disable next button if window is already at today
+  const nextBtn = document.getElementById("date-next");
+  const atToday = state.windowEnd >= todayStr;
+  nextBtn.disabled = atToday;
+  nextBtn.classList.toggle("opacity-40", atToday);
+  nextBtn.classList.toggle("cursor-not-allowed", atToday);
+}
+
+function vulnKindPill(v) {
+  let cls = "pill-tag", txt = "";
+  if (v.is_itw)   { cls += " itw";    txt = t("kind.itw"); }
+  else if (v.is_supply_chain || v.kind === "supply") { cls += " supply"; txt = t("kind.supply"); }
+  else if (v.kind === "poc") { cls += " poc"; txt = t("kind.poc"); }
+  else txt = t("kind.cve");
+  return `<span class="${cls}">${escapeHtml(txt)}</span>`;
+}
+
+function renderVulnCard(v) {
+  const sev = v.severity || "unknown";
+  const sevText = t("sev." + sev);
+  const pkg = v.package ? `${(v.ecosystem||'').toUpperCase()}/${v.package}` : "";
+  const pocCount = (v.pocs || []).length;
+  const tagsHtml = (v.tags || []).slice(0, 4).map(x => `<span class="pill-tag">${escapeHtml(x)}</span>`).join("");
+  const refsHtml = (v.references || []).slice(0, 3).map(r => `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="lnk font-mono text-[11px] text-muted hover:text-ink">${escapeHtml(r.label || new URL(r.url).hostname.replace(/^www\./,'').slice(0,18))} ↗</a>`).join('<span class="text-dim mx-1">·</span>');
+  const summary = (v.summary || "").trim();
+  const pubLine = v.published ? relTime(v.published) : "";
+
+  const detailId = v.cve_id || v.ghsa_id || v.id;
+  return `
+    <article class="card border hairline bg-surface rounded-xl p-5 mb-3 relative overflow-hidden cursor-pointer" data-vuln="${escapeHtml(detailId)}" role="button" tabindex="0">
+      <div class="absolute left-0 top-0 bottom-0 w-[3px] bg-${sev === 'critical' ? 'crit' : sev === 'high' ? 'high' : sev === 'medium' ? 'med' : 'border-2'}"></div>
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap mb-2">
+            <span class="${severityClass(sev)}">${escapeHtml(sevText)}</span>
+            ${vulnKindPill(v)}
+            ${v.is_kev ? `<span class="pill-tag kev">KEV</span>` : ""}
+            ${v.is_ransomware ? `<span class="pill-tag ransom">RANSOM</span>` : ""}
+            ${v.nuclei_template_url ? `<span class="pill-tag poc">NUCLEI</span>` : ""}
+            ${v.cve_id ? `<span class="font-mono text-[12px] text-muted">${escapeHtml(v.cve_id)}</span>` : v.ghsa_id ? `<span class="font-mono text-[12px] text-muted">${escapeHtml(v.ghsa_id)}</span>` : ""}
+            ${pubLine ? `<span class="font-mono text-[11px] text-dim">· ${escapeHtml(pubLine)}</span>` : ""}
+          </div>
+          <h3 class="text-[15.5px] font-medium tracking-tight leading-snug clamp-2 mb-1.5">${escapeHtml(v.title || v.id)}</h3>
+          ${summary ? `<p class="text-[13px] text-muted leading-relaxed clamp-3">${escapeHtml(summary)}</p>` : ""}
+          ${(v.affected_versions && v.affected_versions.length) ? `
+            <div class="mt-2.5 flex items-start gap-2 flex-wrap">
+              <span class="font-mono text-[10px] tracking-widest uppercase text-dim shrink-0 pt-1">${t("vuln.versions")}</span>
+              ${v.affected_versions.slice(0, 6).map(ver => `<code class="font-mono text-[11px] bg-surface-2 border hairline rounded px-1.5 py-0.5 text-ink-soft">${escapeHtml(ver)}</code>`).join("")}
+              ${v.affected_versions.length > 6 ? `<span class="font-mono text-[11px] text-dim self-center">+${v.affected_versions.length - 6}</span>` : ""}
+            </div>` : ""}
+          <div class="mt-3 grid grid-cols-2 md:grid-cols-5 gap-x-5 gap-y-2 text-[12px]">
+            <div>
+              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">${t("vuln.cvss")}</div>
+              <div class="cvss-num text-[14px] mt-0.5">${v.cvss != null ? v.cvss.toFixed(1) : '—'}</div>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">EPSS</div>
+              <div class="font-mono text-[13px] mt-0.5">${v.epss_score != null ? (v.epss_score * 100).toFixed(0) + '<span class="text-dim text-[10px]">%</span>' : '<span class="text-dim">—</span>'}</div>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">${t("vuln.pocs")}</div>
+              <div class="font-mono text-[13px] mt-0.5">${pocCount > 0 ? `<span class="text-poc font-semibold">${pocCount}</span>` : '<span class="text-dim">—</span>'}</div>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">${t("vuln.heat")}</div>
+              <div class="font-mono text-[13px] mt-0.5 font-semibold">${v.heat}</div>
+            </div>
+            <div class="${pkg ? '' : 'opacity-60'}">
+              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">${pkg ? t("vuln.pkg") : t("vuln.src")}</div>
+              <div class="font-mono text-[12px] mt-0.5 truncate">${pkg ? escapeHtml(pkg) : escapeHtml(v.source || "")}</div>
+            </div>
+          </div>
+          ${tagsHtml ? `<div class="flex flex-wrap gap-1.5 mt-3">${tagsHtml}</div>` : ""}
+          ${refsHtml ? `<div class="mt-3 text-[11px]">${refsHtml}</div>` : ""}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderVulnList() {
+  let items = state.kind === "all" ? state.vuln : state.vuln.filter(v => v.kind === state.kind);
+  // multi-dim: severity AND source (chip-style; empty set = "all")
+  const sevSet = state.filters.severity;
+  const srcSet = state.filters.source;
+  if (sevSet.size > 0) items = items.filter(v => sevSet.has(v.severity));
+  if (srcSet.size > 0) items = items.filter(v => srcSet.has(v.source));
+  const q = state.q.toLowerCase();
+  if (q) items = items.filter(v => (v.title||"").toLowerCase().includes(q) || (v.cve_id||"").toLowerCase().includes(q) || (v.summary||"").toLowerCase().includes(q) || (v.package||"").toLowerCase().includes(q));
+  const sorted = [...items].sort((a, b) =>
+    state.sort === "heat" ? (b.heat - a.heat) : ((b.published||"") > (a.published||"") ? 1 : -1)
+  );
+  const limited = sorted.slice(0, state.vulnLimit);
+  const el = document.getElementById("vuln-list");
+  if (limited.length === 0) {
+    el.innerHTML = `<div class="border hairline bg-surface rounded-xl p-10 text-center text-muted">${t("no_data")}</div>`;
+    return;
+  }
+  let html = limited.map(renderVulnCard).join("");
+  const remaining = sorted.length - state.vulnLimit;
+  if (remaining > 0) {
+    html += `<div class="text-center py-4"><button id="vuln-load-more" class="border hairline rounded-full px-5 py-2 text-[12px] font-mono uppercase tracking-widest text-muted hover:text-ink hover:border-2 transition">${t("load_more")} <span class="text-dim ml-1">+${remaining}</span></button></div>`;
+  }
+  el.innerHTML = html;
+  const lm = document.getElementById("vuln-load-more");
+  if (lm) lm.addEventListener("click", () => { state.vulnLimit += 40; renderVulnList(); });
+  document.getElementById("tab-vuln-count").textContent = state.vuln.length;
+  // sub-pill counts
+  ["all","cve","supply","poc","itw"].forEach(k => {
+    const c = k === "all" ? state.vuln.length : state.vuln.filter(v => v.kind === k).length;
+    document.querySelectorAll(`#vuln-subfilter [data-count="${k}"]`).forEach(n => n.textContent = c);
+  });
+}
+
+function renderNewsCard(a) {
+  const langLabel = a.lang === "zh" ? t("lang.zh_badge") : t("lang.en_badge");
+  return `
+    <article class="card border hairline bg-surface rounded-xl p-5 mb-3">
+      <div class="flex items-start gap-4">
+        <div class="font-mono text-[11px] text-muted shrink-0 w-20">${escapeHtml(relTime(a.published))}</div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap mb-1.5">
+            <span class="lang-badge">${langLabel}</span>
+            <span class="font-mono text-[11px] text-muted">${escapeHtml(a.source_title || a.source_slug)}</span>
+          </div>
+          <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" class="block hover:text-ink">
+            <h3 class="text-[15px] font-medium tracking-tight leading-snug clamp-2 mb-1">${escapeHtml(a.title)}</h3>
+          </a>
+          ${a.summary ? `<p class="text-[12.5px] text-muted leading-relaxed clamp-2">${escapeHtml(a.summary)}</p>` : ""}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderNewsList() {
+  let items = state.news;
+  if (state.newsLang !== "all") items = items.filter(a => a.lang === state.newsLang);
+  const q = state.q.toLowerCase();
+  if (q) items = items.filter(a => (a.title||"").toLowerCase().includes(q) || (a.summary||"").toLowerCase().includes(q) || (a.source_title||"").toLowerCase().includes(q));
+  // News no longer carries heat — always sort by published time (newest first).
+  const sorted = [...items].sort((a, b) => (b.published||"") > (a.published||"") ? 1 : -1);
+  const limited = sorted.slice(0, state.newsLimit);
+  const el = document.getElementById("news-list");
+  if (limited.length === 0) {
+    el.innerHTML = `<div class="border hairline bg-surface rounded-xl p-10 text-center text-muted">${t("no_data")}</div>`;
+  } else {
+    let html = limited.map(renderNewsCard).join("");
+    const remaining = sorted.length - state.newsLimit;
+    if (remaining > 0) {
+      html += `<div class="text-center py-4"><button id="news-load-more" class="border hairline rounded-full px-5 py-2 text-[12px] font-mono uppercase tracking-widest text-muted hover:text-ink hover:border-2 transition">${t("load_more")} <span class="text-dim ml-1">+${remaining}</span></button></div>`;
+    }
+    el.innerHTML = html;
+    const lm = document.getElementById("news-load-more");
+    if (lm) lm.addEventListener("click", () => { state.newsLimit += 40; renderNewsList(); });
+  }
+  document.getElementById("tab-news-count").textContent = state.news.length;
+}
+
+function renderHeat() {
+  const el = document.getElementById("heat-list");
+  if (!state.heat.length) {
+    el.innerHTML = `<li class="text-[12px] text-muted">${t("no_data")}</li>`;
+    return;
+  }
+  const maxScore = state.heat[0]?.score || 1;
+  el.innerHTML = state.heat.map(h => {
+    const pct = Math.max(8, Math.round((h.score / maxScore) * 100));
+    const cls = h.kind_color || "muted";
+    return `
+      <li>
+        <a href="#" class="block group cursor-pointer" data-vuln="${escapeHtml(h.cve_id || h.label)}">
+          <div class="flex items-baseline justify-between gap-2 mb-1">
+            <span class="font-mono text-[10px] text-dim">${String(h.rank).padStart(2,'0')}</span>
+            <span class="font-mono text-[11px] tabular-nums text-ink-soft">${h.score}</span>
+          </div>
+          <div class="font-mono text-[12.5px] truncate">${escapeHtml(h.label)}</div>
+          <div class="hb-bar ${cls} mt-1.5"><i style="width:${pct}%"></i></div>
+          ${h.category ? `<div class="text-[10.5px] text-muted mt-1 uppercase tracking-wider font-mono">${escapeHtml(h.category)}</div>` : ""}
+        </a>
+      </li>
+    `;
+  }).join("");
+}
+
+function renderSources() {
+  const el = document.getElementById("sources-list");
+  const sources = [...state.sources].sort((a,b) => (b.ok - a.ok) || (b.count - a.count));
+  el.innerHTML = sources.slice(0, 14).map(s => `
+    <li class="flex items-center justify-between">
+      <span class="${s.ok ? '' : 'text-dim'} truncate" title="${escapeHtml(s.url)}">${escapeHtml(s.title)}</span>
+      <span class="${s.ok ? 'text-poc' : 'text-crit'} text-[11px]">${s.ok ? '● ' + (s.count || 0) : '● ' + (s.error || 'fail').slice(0, 12)}</span>
+    </li>
+  `).join("");
+}
+
+function renderPipeline() {
+  const m = state.manifest;
+  const el = document.getElementById("pipeline-list");
+  if (!m) { el.innerHTML = ""; return; }
+  const lines = [];
+  if (m.fetched_at) {
+    const d = new Date(m.fetched_at);
+    const pad = (n) => String(n).padStart(2,'0');
+    lines.push(`<div class="flex items-center justify-between"><dt class="text-muted">${t("pipe.last")}</dt><dd>${!isNaN(d) ? `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : '—'}</dd></div>`);
+  }
+  for (const r of (m.results || [])) {
+    lines.push(`<div class="flex items-center justify-between">
+      <dt class="text-muted">${escapeHtml(r.name)}</dt>
+      <dd class="${r.ok ? '' : 'text-crit'}">${r.ok ? r.count + ' · ' + r.elapsed_s + 's' : (r.error || 'err').slice(0,16)}</dd>
+    </div>`);
+  }
+  el.innerHTML = lines.join("");
+}
+
+function renderAll() {
+  applyI18n();
+  renderStats();
+  renderDateStrip();
+  renderVulnList();
+  renderNewsList();
+  renderHeat();
+  renderSources();
+  renderPipeline();
+}
+
+// ───────────────────── interactivity ─────────────────────
+// tabs
+document.querySelectorAll(".tab-pill").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".tab-pill").forEach(x => x.setAttribute("aria-selected", "false"));
+    b.setAttribute("aria-selected", "true");
+    state.activeTab = b.dataset.tab;
+    document.querySelectorAll(".panel").forEach(p => {
+      if (p.dataset.panel === state.activeTab) p.removeAttribute("hidden"); else p.setAttribute("hidden", "");
+    });
+    // toggle sub-filter (only on vuln) and news-lang filter
+    document.getElementById("vuln-subfilter").style.display = state.activeTab === "vuln" ? "" : "none";
+    const nlf = document.getElementById("news-lang-filter");
+    if (state.activeTab === "news") nlf.removeAttribute("hidden"); else nlf.setAttribute("hidden", "");
+  });
+});
+
+// sub-pill (vuln class)
+document.querySelectorAll(".sub-pill").forEach(b => {
+  b.addEventListener("click", () => {
+    document.querySelectorAll(".sub-pill").forEach(x => x.setAttribute("data-on", "false"));
+    b.setAttribute("data-on", "true");
+    state.kind = b.dataset.kind;
+    renderVulnList();
+  });
+});
+
+// multi-filter chips (severity + source)
+document.querySelectorAll(".filter-chip").forEach(b => {
+  b.addEventListener("click", () => {
+    const dim = b.dataset.dim;
+    const val = b.dataset.val;
+    const set = state.filters[dim];
+    if (set.has(val)) {
+      set.delete(val);
+      b.setAttribute("data-on", "false");
+    } else {
+      set.add(val);
+      b.setAttribute("data-on", "true");
+    }
+    renderVulnList();
+  });
+});
+document.getElementById("filter-clear").addEventListener("click", () => {
+  state.filters.severity.clear();
+  state.filters.source.clear();
+  document.querySelectorAll(".filter-chip").forEach(b => b.setAttribute("data-on", "false"));
+  renderVulnList();
+});
+
+// sort
+document.querySelectorAll(".sort-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    state.sort = b.dataset.sort;
+    document.querySelectorAll(".sort-btn").forEach(x => {
+      if (x.dataset.sort === state.sort) { x.classList.add("bg-surface-2", "text-ink"); x.classList.remove("text-muted"); }
+      else { x.classList.remove("bg-surface-2", "text-ink"); x.classList.add("text-muted"); }
+    });
+    renderVulnList(); renderNewsList();
+  });
+});
+
+// news lang
+document.querySelectorAll(".newslang-btn").forEach(b => {
+  b.addEventListener("click", () => {
+    state.newsLang = b.dataset.newsLang;
+    document.querySelectorAll(".newslang-btn").forEach(x => {
+      if (x.dataset.newsLang === state.newsLang) { x.classList.add("bg-surface-2", "text-ink"); x.classList.remove("text-muted"); }
+      else { x.classList.remove("bg-surface-2", "text-ink"); x.classList.add("text-muted"); }
+    });
+    renderNewsList();
+  });
+});
+
+// search
+let searchTimer;
+document.getElementById("search").addEventListener("input", (e) => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    state.q = e.target.value.trim();
+    renderVulnList(); renderNewsList();
+  }, 200);
+});
+// cmd-k focus
+window.addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    document.getElementById("search").focus();
+  }
+});
+
+// ───────────────────── boot + fetch ─────────────────────
+const ENDPOINTS = [
+  { key: "today",    url: () => "/api/today",                                              dateAware: false },
+  { key: "news",     url: () => `/api/news?limit=120${dateQuery()}`,                       dateAware: true },
+  { key: "vuln",     url: () => `/api/vuln?limit=120&sort=heat${dateQuery()}`,             dateAware: true },
+  { key: "heat",     url: () => "/api/heat?limit=10",                                      dateAware: false },
+  { key: "sources",  url: () => "/api/sources",                                            dateAware: false },
+  { key: "manifest", url: () => "/api/manifest",                                           dateAware: false },
+];
+
+function dateQuery() {
+  return state.selectedDate && state.selectedDate !== todayUtc()
+    ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
+}
+
+const fetchErrors = {};   // {key: err}
+
+async function fetchOne(key) {
+  const ep = ENDPOINTS.find(e => e.key === key);
+  if (!ep) return;
+  try {
+    const data = await api(ep.url());
+    delete fetchErrors[key];
+    if (key === "today") state.today = data;
+    else if (key === "news") state.news = data || [];
+    else if (key === "vuln") state.vuln = data || [];
+    else if (key === "heat") state.heat = data || [];
+    else if (key === "sources") state.sources = data || [];
+    else if (key === "manifest") state.manifest = data;
+  } catch (exc) {
+    fetchErrors[key] = exc.message || String(exc);
+  }
+}
+
+async function fetchAll() {
+  await Promise.allSettled(ENDPOINTS.map(ep => fetchOne(ep.key)));
+  renderAll();
+  renderToasts();
+}
+
+// toast container (lazy-created at first error)
+function ensureToastBox() {
+  let box = document.getElementById("toast-box");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "toast-box";
+    box.className = "fixed bottom-5 right-5 z-50 flex flex-col gap-2 max-w-xs";
+    document.body.appendChild(box);
+  }
+  return box;
+}
+function renderToasts() {
+  const box = ensureToastBox();
+  const keys = Object.keys(fetchErrors);
+  if (keys.length === 0) { box.innerHTML = ""; return; }
+  box.innerHTML = keys.map(k => `
+    <div class="border hairline-2 bg-surface rounded-lg px-4 py-3 shadow text-[12px]">
+      <div class="flex items-center justify-between mb-1">
+        <span class="font-mono text-[10px] tracking-widest uppercase text-crit">${t("load_fail")} · ${escapeHtml(k)}</span>
+        <button class="toast-retry font-mono text-[10px] tracking-widest uppercase text-ink border hairline rounded px-2 py-px hover:bg-surface-2" data-key="${escapeHtml(k)}">${t("retry")}</button>
+      </div>
+      <div class="text-muted text-[11.5px] break-all">${escapeHtml(fetchErrors[k])}</div>
+    </div>
+  `).join("");
+  box.querySelectorAll(".toast-retry").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const key = btn.dataset.key;
+      btn.disabled = true;
+      btn.textContent = "…";
+      await fetchOne(key);
+      renderToasts();
+      renderAll();
+    });
+  });
+}
+
+// date strip event delegation (cell + arrows + today reset)
+document.getElementById("date-strip").addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-date]");
+  if (!btn || btn.disabled) return;
+  const d = btn.dataset.date;
+  if (!d || d === state.selectedDate) return;
+  state.selectedDate = d;
+  syncUrl();
+  renderDateStrip();
+  await fetchAll();
+});
+document.getElementById("date-prev").addEventListener("click", () => {
+  state.windowEnd = shiftDate(state.windowEnd || todayUtc(), -7);
+  renderDateStrip();
+});
+document.getElementById("date-next").addEventListener("click", () => {
+  const next = shiftDate(state.windowEnd || todayUtc(), 7);
+  state.windowEnd = next > todayUtc() ? todayUtc() : next;
+  renderDateStrip();
+});
+document.getElementById("date-today").addEventListener("click", async () => {
+  state.selectedDate = todayUtc();
+  state.windowEnd = todayUtc();
+  syncUrl();
+  renderDateStrip();
+  await fetchAll();
+});
+
+// ───────────────────── detail drawer ─────────────────────
+function openDetailDrawer(html) {
+  const overlay = document.getElementById("detail-overlay");
+  const drawer = document.getElementById("detail-drawer");
+  // Save the element that had focus so we can restore it on close (a11y).
+  if (!state.detailPrevFocus) state.detailPrevFocus = document.activeElement;
+  document.getElementById("detail-content").innerHTML = html;
+  overlay.classList.remove("hidden");
+  overlay.setAttribute("aria-hidden", "false");
+  drawer.classList.remove("translate-x-full");
+  drawer.setAttribute("aria-hidden", "false");
+  // Move focus into the drawer (close button if present, else drawer itself).
+  requestAnimationFrame(() => {
+    const focusable = drawer.querySelector("button, a[href], [tabindex='0']");
+    (focusable || drawer).focus({ preventScroll: true });
+  });
+}
+function closeDetailDrawer() {
+  const overlay = document.getElementById("detail-overlay");
+  const drawer = document.getElementById("detail-drawer");
+  overlay.classList.add("hidden");
+  overlay.setAttribute("aria-hidden", "true");
+  drawer.classList.add("translate-x-full");
+  drawer.setAttribute("aria-hidden", "true");
+  // Clear URL deep-link and state.
+  state.openDetailId = null;
+  syncUrl();
+  // Restore focus to whatever opened the drawer (a11y).
+  if (state.detailPrevFocus && typeof state.detailPrevFocus.focus === "function") {
+    try { state.detailPrevFocus.focus({ preventScroll: true }); } catch (_) {}
+  }
+  state.detailPrevFocus = null;
+}
+document.getElementById("detail-overlay").addEventListener("click", closeDetailDrawer);
+window.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDetailDrawer(); });
+// Make the drawer itself focusable so requestAnimationFrame focus() works
+// even when there's no button (e.g. while loading state).
+document.getElementById("detail-drawer").setAttribute("tabindex", "-1");
+
+function renderDetail(v) {
+  const sev = v.severity || "unknown";
+  const epss = v.epss_score != null ? `${(v.epss_score * 100).toFixed(1)}%` : "—";
+  const epssP = v.epss_percentile != null ? `(p${(v.epss_percentile * 100).toFixed(1)})` : "";
+  const refs = (v.references || []).map(r => `
+    <li><a class="lnk text-[12.5px] block py-1 truncate" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.label || r.url)} ↗</a></li>
+  `).join("") || `<li class="text-[12.5px] text-muted">—</li>`;
+  const pocs = (v.pocs || []).map(p => `
+    <li class="py-1 flex items-baseline justify-between gap-3">
+      <a class="lnk text-[12.5px] font-mono truncate" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.title || p.url)} ↗</a>
+      <span class="font-mono text-[11px] text-muted shrink-0">★ ${p.stars}</span>
+    </li>
+  `).join("") || `<li class="text-[12.5px] text-muted">—</li>`;
+  const nuclei = v.nuclei_template_url
+    ? `<a class="lnk text-[12.5px] font-mono break-all" href="${escapeHtml(v.nuclei_template_url)}" target="_blank" rel="noopener">${escapeHtml(v.nuclei_template_url)} ↗</a>`
+    : `<span class="text-[12.5px] text-muted">—</span>`;
+
+  return `
+    <div class="p-6 lg:p-8">
+      <div class="flex items-center justify-between mb-4">
+        <button onclick="closeDetailDrawer()" class="font-mono text-[11px] uppercase tracking-widest text-muted hover:text-ink">← ${t("detail.close")}</button>
+        <span class="font-mono text-[10.5px] text-dim">${escapeHtml(v.source)}</span>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap mb-3">
+        <span class="${severityClass(sev)}">${t("sev." + sev)}</span>
+        ${vulnKindPill(v)}
+        ${v.is_kev ? `<span class="pill-tag kev">KEV</span>` : ""}
+        ${v.is_ransomware ? `<span class="pill-tag ransom">RANSOMWARE</span>` : ""}
+        ${v.is_supply_chain ? `<span class="pill-tag supply">SUPPLY</span>` : ""}
+      </div>
+      <h2 class="text-[22px] font-semibold tracking-tight leading-tight mb-1">${escapeHtml(v.title || v.id)}</h2>
+      <div class="font-mono text-[12px] text-muted mb-4">${escapeHtml(v.cve_id || v.ghsa_id || v.id)}${v.published ? ` · ${escapeHtml(relTime(v.published))}` : ""}</div>
+      ${v.summary ? `<p class="text-[13.5px] text-ink-soft leading-relaxed mb-6 whitespace-pre-line">${escapeHtml(v.summary)}</p>` : ""}
+
+      <div class="grid grid-cols-2 gap-4 mb-6">
+        <div>
+          <div class="font-mono text-[10px] tracking-widest uppercase text-dim mb-1">CVSS</div>
+          <div class="font-mono text-[18px]">${v.cvss != null ? v.cvss.toFixed(1) : "—"}</div>
+        </div>
+        <div>
+          <div class="font-mono text-[10px] tracking-widest uppercase text-dim mb-1">EPSS</div>
+          <div class="font-mono text-[18px]">${epss} <span class="text-[11px] text-muted">${epssP}</span></div>
+        </div>
+        <div>
+          <div class="font-mono text-[10px] tracking-widest uppercase text-dim mb-1">${t("vuln.heat")}</div>
+          <div class="font-mono text-[18px]">${v.heat}</div>
+        </div>
+        <div>
+          <div class="font-mono text-[10px] tracking-widest uppercase text-dim mb-1">${t("detail.signals")}</div>
+          <div class="font-mono text-[12px]">HN ${v.hn_mentions || 0} · Masto ${v.masto_mentions || 0}</div>
+        </div>
+      </div>
+
+      ${(v.affected_versions && v.affected_versions.length) ? `
+      <section class="mb-6">
+        <h3 class="font-mono text-[11px] tracking-widest uppercase text-muted mb-2">${t("vuln.affected")} <span class="text-dim">(${v.affected_versions.length})</span></h3>
+        <div class="flex flex-wrap gap-1.5">
+          ${v.affected_versions.map(ver => `<code class="font-mono text-[12px] bg-surface-2 border hairline rounded px-2 py-0.5 text-ink-soft">${(v.package ? escapeHtml(v.package) + '@' : '')}${escapeHtml(ver)}</code>`).join("")}
+        </div>
+      </section>` : ""}
+      <section class="mb-6">
+        <h3 class="font-mono text-[11px] tracking-widest uppercase text-muted mb-2">${t("detail.nuclei")}</h3>
+        ${nuclei}
+      </section>
+      <section class="mb-6">
+        <h3 class="font-mono text-[11px] tracking-widest uppercase text-muted mb-2">${t("detail.pocs")} <span class="text-dim">(${(v.pocs||[]).length})</span></h3>
+        <ul class="divide-y hairline">${pocs}</ul>
+      </section>
+      <section class="mb-6">
+        <h3 class="font-mono text-[11px] tracking-widest uppercase text-muted mb-2">${t("detail.refs")}</h3>
+        <ul class="divide-y hairline">${refs}</ul>
+      </section>
+    </div>
+  `;
+}
+
+async function showDetail(vulnId) {
+  state.openDetailId = vulnId;
+  syncUrl();
+  openDetailDrawer(`<div class="p-8 text-center text-muted font-mono text-[11px] uppercase tracking-widest">${t("detail.loading")}…</div>`);
+  try {
+    const v = await api(`/api/vuln/${encodeURIComponent(vulnId)}`);
+    openDetailDrawer(renderDetail(v));
+  } catch (e) {
+    openDetailDrawer(`<div class="p-8 text-center text-crit font-mono text-[11.5px]">${t("detail.err")}: ${escapeHtml(e.message || String(e))}</div>`);
+  }
+}
+
+// Delegate clicks on vuln cards (by data-vuln attribute we'll add at render time)
+document.addEventListener("click", (e) => {
+  const node = e.target.closest("[data-vuln]");
+  if (node) {
+    e.preventDefault();
+    showDetail(node.dataset.vuln);
+  }
+});
+
+async function boot() {
+  applyI18n();
+  // hydrate from URL
+  const params = new URLSearchParams(location.search);
+  const urlDate = params.get("date");
+  if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+    // Clamp future dates to today so a hand-crafted ?date=2099-12-31
+    // doesn't trigger a useless backend query for a date with no data.
+    const clamped = urlDate > todayUtc() ? todayUtc() : urlDate;
+    state.selectedDate = clamped;
+    state.windowEnd = clamped;
+  } else {
+    state.selectedDate = todayUtc();
+    state.windowEnd = todayUtc();
+  }
+  await fetchAll();
+  // Open detail drawer from ?detail=CVE-XXX if present (after fetch so the
+  // backing list is rendered behind the drawer).
+  const urlDetail = params.get("detail");
+  if (urlDetail && /^[A-Z0-9-]+$/i.test(urlDetail)) {
+    showDetail(urlDetail);
+  }
+}
+boot();
+</script>
+</body>
+</html>
