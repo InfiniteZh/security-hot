@@ -1,0 +1,32 @@
+# Secrets — never commit these
+.env
+.env.*.local
+*.token
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.python-version
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Generated data — refreshed by scripts/fetch_data.py
+# The CI workflow pushes these to the `data` branch instead of `main`.
+backend/cache/
+backend/history/
+scripts/output/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Build / dist
+dist/
+build/

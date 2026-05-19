@@ -1,0 +1,15 @@
+[project]
+name = "security-hot"
+version = "0.1.0"
+description = "Daily aggregator for security news, vulnerability intel, and papers."
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "httpx>=0.27",
+  "feedparser>=6.0",
+  "pydantic>=2.6",
+]
+
+[tool.uv]
+package = false

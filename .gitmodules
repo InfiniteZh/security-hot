@@ -1,0 +1,9 @@
+[submodule "rss/awesome-security-feed"]
+	path = rss/awesome-security-feed
+	url = https://github.com/mrtouch93/awesome-security-feed.git
+[submodule "rss/CyberSecurityRSS"]
+	path = rss/CyberSecurityRSS
+	url = https://github.com/zer0yu/CyberSecurityRSS.git
+[submodule "rss/Chinese-Security-RSS"]
+	path = rss/Chinese-Security-RSS
+	url = https://github.com/zhengjim/Chinese-Security-RSS.git
