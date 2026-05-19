@@ -1,0 +1,931 @@
+"""Fetch real data from security sources into local JSON cache.
+
+Outputs (all under backend/cache/):
+  kev.json       CISA Known Exploited Vulnerabilities catalog (latest 200)
+  ghsa.json      GitHub Security Advisories (latest 100 reviewed)
+  pocs.json      Recent PoC publications (poc-in-github.motikan2010.net mirror)
+  itw.json       inthewild.io feed (recent in-the-wild exploitation entries)
+  heat.json      cvecrowd.com discussion-heat snapshot (if reachable)
+  news.json      curated RSS sources (zh + en), latest articles per source
+  epss.json      FIRST.org EPSS daily scores ({cve_id: {score, percentile}})
+  osv-npm.json   OSV.dev all advisories for npm ecosystem
+  osv-pypi.json  OSV.dev all advisories for PyPI ecosystem
+  nuclei.json    projectdiscovery/nuclei-templates CVE coverage ({cve_id: paths})
+  hn.json        Hacker News stories matching security queries (vuln/0day/RCE/...)
+  masto.json     Mastodon public hashtag timelines (cve / infosec / 0day / ...)
+  manifest.json  counts, timestamps, errors per fetcher
+
+Usage:
+  uv run python scripts/fetch_data.py
+  uv run python scripts/fetch_data.py --only kev,news
+  uv run python scripts/fetch_data.py --concurrency 12
+"""
+from __future__ import annotations
+
+import argparse
+import asyncio
+import csv
+import gzip
+import io
+import json
+import re
+import sys
+import time
+import zipfile
+from datetime import datetime, timezone
+from pathlib import Path
+
+import feedparser
+import httpx
+
+ROOT = Path(__file__).resolve().parent.parent
+CACHE = ROOT / "backend" / "cache"
+CACHE.mkdir(parents=True, exist_ok=True)
+
+USER_AGENT = (
+    "Mozilla/5.0 (compatible; security-hot/1.0; +https://github.com/) "
+    "feedparser/python-httpx"
+)
+HEADERS = {"User-Agent": USER_AGENT}
+
+
+# ─── curated RSS sources ───
+NEWS_SOURCES: list[dict] = [
+    # Chinese
+    {"slug": "freebuf", "title": "FreeBuf", "url": "https://www.freebuf.com/feed", "lang": "zh"},
+    {"slug": "anquanke", "title": "安全客", "url": "https://api.anquanke.com/data/v1/rss", "lang": "zh"},
+    {"slug": "4hou", "title": "嘶吼", "url": "https://www.4hou.com/feed", "lang": "zh"},
+    {"slug": "secwiki", "title": "SecWiki News", "url": "https://www.sec-wiki.com/news/rss", "lang": "zh"},
+    {"slug": "vipread", "title": "信息安全知识库", "url": "https://vipread.com/feed", "lang": "zh"},
+    {"slug": "xuanwu", "title": "腾讯玄武实验室", "url": "https://xlab.tencent.com/cn/atom.xml", "lang": "zh"},
+    {"slug": "keenlab", "title": "腾讯科恩实验室", "url": "https://keenlab.tencent.com/zh/atom.xml", "lang": "zh"},
+    {"slug": "seebug", "title": "Seebug Paper", "url": "https://paper.seebug.org/rss", "lang": "zh"},
+    {"slug": "netlab360", "title": "360 Netlab", "url": "https://blog.netlab.360.com/rss", "lang": "zh"},
+    {"slug": "meituan", "title": "美团技术团队", "url": "https://tech.meituan.com/feed", "lang": "zh"},
+    # English
+    {"slug": "thn", "title": "The Hacker News", "url": "https://thehackernews.com/feeds/posts/default", "lang": "en"},
+    {"slug": "bleeping", "title": "BleepingComputer", "url": "https://www.bleepingcomputer.com/feed/", "lang": "en"},
+    {"slug": "krebs", "title": "Krebs on Security", "url": "https://krebsonsecurity.com/feed/", "lang": "en"},
+    {"slug": "schneier", "title": "Schneier on Security", "url": "https://www.schneier.com/feed/atom/", "lang": "en"},
+    {"slug": "talos", "title": "Talos Intelligence", "url": "https://blog.talosintelligence.com/feeds/posts/default", "lang": "en"},
+    {"slug": "unit42", "title": "Palo Alto Unit 42", "url": "https://unit42.paloaltonetworks.com/feed/", "lang": "en"},
+    {"slug": "msrc", "title": "Microsoft MSRC", "url": "https://msrc.microsoft.com/blog/feed/", "lang": "en"},
+    {"slug": "datadog", "title": "Datadog Security Labs", "url": "https://securitylabs.datadoghq.com/rss/feed.xml", "lang": "en"},
+    {"slug": "googlep0", "title": "Project Zero", "url": "https://googleprojectzero.blogspot.com/feeds/posts/default", "lang": "en"},
+    {"slug": "mandiant", "title": "Mandiant", "url": "https://www.mandiant.com/resources/blog/rss.xml", "lang": "en"},
+    {"slug": "socket", "title": "Socket", "url": "https://socket.dev/blog/rss.xml", "lang": "en"},
+    {"slug": "checkmarx", "title": "Checkmarx", "url": "https://checkmarx.com/blog/feed/", "lang": "en"},
+    # Supply-chain-focused blogs — most useful early-warning signal for npm/PyPI/Go/Rust
+    # poisoning. Socket.dev is intentionally absent here: their feed is Cloudflare-gated.
+    # `category: "supply-intel"` lets the frontend pull them into the supply-chain
+    # view independently of language filters.
+    {"slug": "safedep", "title": "SafeDep", "url": "https://safedep.io/rss.xml", "lang": "en", "category": "supply-intel"},
+    {"slug": "aikido", "title": "Aikido", "url": "https://www.aikido.dev/blog/rss.xml", "lang": "en", "category": "supply-intel"},
+    {"slug": "stepsec", "title": "StepSecurity", "url": "https://www.stepsecurity.io/blog/rss.xml", "lang": "en", "category": "supply-intel"},
+    {"slug": "endor", "title": "Endor Labs", "url": "https://www.endorlabs.com/blog/rss.xml", "lang": "en", "category": "supply-intel"},
+]
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def write_json(name: str, data) -> Path:
+    path = CACHE / name
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def strip_html(text: str) -> str:
+    if not text:
+        return ""
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"&\w+;", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def clean_summary(text: str, limit: int = 320) -> str:
+    text = strip_html(text)
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    return text
+
+
+def _iso_from_feedparser(entry) -> str:
+    """Normalize RSS/Atom dates to ISO 8601 UTC.
+
+    feedparser parses every common date format into a `time.struct_time`
+    under `published_parsed` (or `updated_parsed` / `created_parsed`).
+    Falling back to the raw string risks lexicographic sort breaking when
+    sources mix RFC 2822 ("Wed, 26 Nov 2025 …") with ISO ("2026-05-12 …").
+    """
+    for key in ("published_parsed", "updated_parsed", "created_parsed"):
+        parsed = entry.get(key)
+        if parsed:
+            try:
+                return time.strftime("%Y-%m-%dT%H:%M:%SZ", parsed)
+            except (TypeError, ValueError):
+                continue
+    # No machine-readable date; return raw string (rare, but keep something).
+    return (entry.get("published") or entry.get("updated") or "").strip()
+
+
+# ─────────── fetchers ───────────
+
+async def fetch_kev(client: httpx.AsyncClient) -> dict:
+    url = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
+    r = await client.get(url, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    vulns = data.get("vulnerabilities", [])
+    vulns.sort(key=lambda v: v.get("dateAdded", ""), reverse=True)
+    items = vulns[:200]
+    out = {
+        "title": data.get("title", "CISA KEV"),
+        "version": data.get("catalogVersion"),
+        "date_released": data.get("dateReleased"),
+        "count_total": len(vulns),
+        "items": items,
+        "fetched_at": now_iso(),
+    }
+    write_json("kev.json", out)
+    return {"name": "kev", "count": len(items)}
+
+
+async def fetch_ghsa(client: httpx.AsyncClient) -> dict:
+    url = "https://api.github.com/advisories"
+    params = {"per_page": 100, "sort": "updated", "direction": "desc"}
+    headers = {**HEADERS, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    r = await client.get(url, params=params, headers=headers, timeout=30)
+    r.raise_for_status()
+    items = r.json()
+    out = {"items": items, "count": len(items), "fetched_at": now_iso()}
+    write_json("ghsa.json", out)
+    return {"name": "ghsa", "count": len(items)}
+
+
+async def fetch_pocs(client: httpx.AsyncClient) -> dict:
+    # motikan2010 mirror exposes a clean JSON API
+    url = "https://poc-in-github.motikan2010.net/api/v1/"
+    params = {"sort": "-created_at", "count": 100}
+    r = await client.get(url, params=params, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    data = r.json()
+    pocs = data.get("pocs", [])
+    out = {"items": pocs, "count": len(pocs), "fetched_at": now_iso()}
+    write_json("pocs.json", out)
+    return {"name": "pocs", "count": len(pocs)}
+
+
+async def fetch_itw(client: httpx.AsyncClient) -> dict:
+    url = "https://inthewild.io/feed"
+    r = await client.get(url, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    parsed = feedparser.parse(r.content)
+    items = []
+    for entry in parsed.entries[:80]:
+        items.append({
+            "id": entry.get("id") or entry.get("link") or "",
+            "title": entry.get("title", "").strip(),
+            "link": entry.get("link", ""),
+            "published": _iso_from_feedparser(entry),
+            "summary": clean_summary(entry.get("summary", "")),
+        })
+    diagnostic = None
+    if not items:
+        diagnostic = {
+            "endpoint": url,
+            "http_status": r.status_code,
+            "response_size": len(r.content),
+            "bozo": parsed.bozo,
+            "bozo_exception": str(parsed.bozo_exception) if parsed.bozo else None,
+            "hint": "HTTP 200 but feed contains zero entries; upstream may be silent today or the feed schema changed",
+        }
+    out = {"items": items, "count": len(items), "fetched_at": now_iso(), "diagnostic": diagnostic}
+    write_json("itw.json", out)
+    return {"name": "itw", "count": len(items), "diagnostic": diagnostic}
+
+
+async def fetch_heat(client: httpx.AsyncClient) -> dict:
+    candidates = [
+        "https://cvecrowd.com/api/cves",
+        "https://cvecrowd.com/api/cves?period=24h",
+    ]
+    items = []
+    used = None
+    attempts: list[dict] = []
+    for url in candidates:
+        try:
+            r = await client.get(url, headers={**HEADERS, "Accept": "application/json"}, timeout=20)
+            attempts.append({
+                "url": url,
+                "http_status": r.status_code,
+                "content_type": r.headers.get("content-type", ""),
+                "response_size": len(r.content),
+            })
+            if r.status_code == 200 and "json" in r.headers.get("content-type", "").lower():
+                data = r.json()
+                if isinstance(data, list):
+                    items = data
+                elif isinstance(data, dict):
+                    items = data.get("cves") or data.get("items") or data.get("data") or []
+                used = url
+                break
+        except Exception as exc:
+            attempts.append({"url": url, "error": f"{type(exc).__name__}: {exc}"[:160]})
+            continue
+    diagnostic = None
+    if not items:
+        diagnostic = {
+            "attempts": attempts,
+            "hint": "no candidate endpoint returned discussion-heat JSON; cvecrowd may have changed schema or paywalled the API",
+        }
+    out = {
+        "items": items[:100],
+        "source_url": used,
+        "diagnostic": diagnostic,
+        "fetched_at": now_iso(),
+    }
+    write_json("heat.json", out)
+    return {"name": "heat", "count": len(out["items"]), "diagnostic": diagnostic}
+
+
+async def fetch_one_feed(client: httpx.AsyncClient, source: dict, max_entries: int = 8) -> dict | None:
+    try:
+        r = await client.get(source["url"], headers=HEADERS, timeout=20)
+        if r.status_code != 200:
+            return {**source, "ok": False, "error": f"HTTP {r.status_code}", "entries": []}
+        parsed = feedparser.parse(r.content)
+        if not parsed.entries:
+            return {**source, "ok": False, "error": "no entries", "entries": []}
+        entries = []
+        for e in parsed.entries[:max_entries]:
+            entries.append({
+                "id": e.get("id") or e.get("link") or "",
+                "title": (e.get("title") or "").strip(),
+                "link": e.get("link", ""),
+                "published": _iso_from_feedparser(e),
+                "summary": clean_summary(e.get("summary", "")),
+            })
+        return {**source, "ok": True, "entries": entries}
+    except Exception as exc:
+        return {**source, "ok": False, "error": f"{type(exc).__name__}: {exc}"[:200], "entries": []}
+
+
+async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8) -> dict:
+    sem = asyncio.Semaphore(concurrency)
+
+    async def bounded(src):
+        async with sem:
+            return await fetch_one_feed(client, src)
+
+    results = await asyncio.gather(*[bounded(s) for s in NEWS_SOURCES])
+
+    articles = []
+    sources = []
+    for s in results:
+        sources.append({
+            "slug": s["slug"],
+            "title": s["title"],
+            "url": s["url"],
+            "lang": s["lang"],
+            "category": s.get("category"),
+            "ok": s["ok"],
+            "error": s.get("error"),
+            "count": len(s.get("entries", [])),
+        })
+        for e in s.get("entries", []):
+            articles.append({
+                "title": e["title"],
+                "link": e["link"],
+                "published": e["published"],
+                "summary": e["summary"],
+                "source_slug": s["slug"],
+                "source_title": s["title"],
+                "lang": s["lang"],
+                "category": s.get("category"),
+            })
+    out = {
+        "articles": articles,
+        "sources": sources,
+        "count": len(articles),
+        "fetched_at": now_iso(),
+    }
+    write_json("news.json", out)
+    return {"name": "news", "count": len(articles)}
+
+
+async def fetch_epss(client: httpx.AsyncClient) -> dict:
+    """Pull FIRST.org EPSS daily scores. CSV format:
+        #model_version:..., score_date:YYYY-MM-DDTHH:MM:SS+TZ
+        cve,epss,percentile
+        CVE-XXXX-XXXX,0.00123,0.50012
+    """
+    url = "https://epss.cyentia.com/epss_scores-current.csv.gz"
+    r = await client.get(url, headers=HEADERS, timeout=60)
+    r.raise_for_status()
+    raw_bytes = gzip.decompress(r.content)
+    text = raw_bytes.decode("utf-8", errors="replace")
+
+    score_date = None
+    model_version = None
+    items: dict[str, dict] = {}
+
+    reader = csv.reader(io.StringIO(text))
+    header_seen = False
+    for row in reader:
+        if not row:
+            continue
+        first = row[0]
+        if first.startswith("#"):
+            # metadata line; may contain multiple `key:value` separated by commas
+            cells = [first.lstrip("#")] + list(row[1:])
+            for cell in cells:
+                cell = cell.strip()
+                if cell.startswith("score_date:"):
+                    score_date = cell.split(":", 1)[1].strip()
+                elif cell.startswith("model_version:"):
+                    model_version = cell.split(":", 1)[1].strip()
+            continue
+        if not header_seen and first.lower() == "cve":
+            header_seen = True
+            continue
+        if not header_seen or len(row) < 3:
+            continue
+        cve = row[0].strip().upper()
+        if not cve.startswith("CVE-"):
+            continue
+        try:
+            items[cve] = {
+                "score": float(row[1]),
+                "percentile": float(row[2]),
+            }
+        except ValueError:
+            continue
+
+    out = {
+        "score_date": score_date,
+        "model_version": model_version,
+        "items": items,
+        "count": len(items),
+        "fetched_at": now_iso(),
+    }
+    write_json("epss.json", out)
+    return {"name": "epss", "count": len(items)}
+
+
+def _osv_ecosystem_url(eco: str) -> str:
+    return f"https://osv-vulnerabilities.storage.googleapis.com/{eco}/all.zip"
+
+
+def _normalize_osv_entry(raw: dict) -> dict:
+    pkg_names: list[str] = []
+    # Parallel array of version lists per package, so the consumer can
+    # render `pkg@1.2.3` even when one OSV record covers multiple packages.
+    pkg_versions: list[list[str]] = []
+    for a in raw.get("affected") or []:
+        pkg = (a.get("package") or {})
+        name = pkg.get("name")
+        if not name or name in pkg_names:
+            continue
+        pkg_names.append(name)
+        versions = a.get("versions") or []
+        pkg_versions.append([v for v in versions[:10] if isinstance(v, str)])
+    refs: list[dict] = []
+    for r in (raw.get("references") or [])[:6]:
+        if isinstance(r, dict) and r.get("url"):
+            refs.append({"url": r["url"], "type": r.get("type", "")})
+    db_specific = raw.get("database_specific") or {}
+    osv_id = raw.get("id", "")
+    cves = [a for a in (raw.get("aliases") or []) if isinstance(a, str) and a.upper().startswith("CVE-")]
+    # `details` often contains campaign attribution (e.g. "Mini Shai-Hulud is
+    # back worm by the TeamPCP threat actor"). Strip OSV's boilerplate header
+    # and the per-source `## Source: name (hash)` separators so only the
+    # narrative remains.
+    details = (raw.get("details") or "").strip()
+    if details:
+        if "Per source details" in details:
+            details = details.split("Per source details. Do not edit below this line.", 1)[-1]
+        # Strip OSV's "## Source: provider (hash)" headers and the surrounding
+        # `_-=` / `=-_` decorative markers so only the narrative remains.
+        details = re.sub(r"## Source: \S+ \([a-f0-9]+\)\s*", " ", details)
+        # OSV uses `_-=` and `=-_` as decorative section markers around the
+        # "Per source details" header; strip both forms outright.
+        details = re.sub(r"_-=|=-_", " ", details)
+        details = re.sub(r"-{3,}", " ", details)
+        details = " ".join(details.split()).lstrip("_ ").strip()[:600]
+    return {
+        "id": osv_id,
+        "aliases": raw.get("aliases", []),
+        "cve_ids": cves,
+        "summary": (raw.get("summary") or "").strip()[:400],
+        "details": details,
+        "packages": pkg_names[:5],
+        "versions": pkg_versions[:5],
+        "published": raw.get("published", ""),
+        "modified": raw.get("modified", ""),
+        "severity_raw": db_specific.get("severity"),
+        "is_malware": osv_id.upper().startswith("MAL-") or db_specific.get("type", "").lower() == "malware",
+        "references": refs,
+    }
+
+
+async def _fetch_one_osv_ecosystem(client: httpx.AsyncClient, ecosystem: str) -> int:
+    url = _osv_ecosystem_url(ecosystem)
+    r = await client.get(url, headers=HEADERS, timeout=180)
+    r.raise_for_status()
+    items: list[dict] = []
+    with zipfile.ZipFile(io.BytesIO(r.content)) as zf:
+        for name in zf.namelist():
+            if not name.endswith(".json"):
+                continue
+            try:
+                raw = json.loads(zf.read(name))
+            except (json.JSONDecodeError, OSError):
+                continue
+            items.append(_normalize_osv_entry(raw))
+    items.sort(key=lambda x: x.get("modified", ""), reverse=True)
+    out = {
+        "ecosystem": ecosystem,
+        "items": items,
+        "count": len(items),
+        "fetched_at": now_iso(),
+    }
+    write_json(f"osv-{ecosystem.lower()}.json", out)
+    return len(items)
+
+
+async def fetch_osv(client: httpx.AsyncClient) -> dict:
+    """Pull OSV.dev full ecosystem dumps for npm and PyPI."""
+    by_eco = {}
+    for ecosystem in ("npm", "PyPI"):
+        by_eco[ecosystem] = await _fetch_one_osv_ecosystem(client, ecosystem)
+    return {"name": "osv", "count": sum(by_eco.values()), "by_ecosystem": by_eco}
+
+
+_NUCLEI_CVE_RE = re.compile(r"(?<![A-Z0-9])(CVE-\d{4}-\d{4,7})(?!\d)", re.IGNORECASE)
+_NUCLEI_REPO_BLOB = "https://github.com/projectdiscovery/nuclei-templates/blob/main/"
+
+
+async def fetch_nuclei(client: httpx.AsyncClient) -> dict:
+    """List all CVE-targeting templates in projectdiscovery/nuclei-templates.
+
+    Uses GitHub Trees API (recursive=1) for a single request listing.
+    Output: {cve_id: {"paths": [...], "primary": "...", "url": "..."}}
+    """
+    url = "https://api.github.com/repos/projectdiscovery/nuclei-templates/git/trees/main?recursive=1"
+    headers = {**HEADERS, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
+    r = await client.get(url, headers=headers, timeout=60)
+    r.raise_for_status()
+    data = r.json()
+    truncated = bool(data.get("truncated"))
+    grouped: dict[str, list[str]] = {}
+    for entry in data.get("tree", []):
+        path = entry.get("path") or ""
+        if not (path.endswith(".yaml") or path.endswith(".yml")):
+            continue
+        m = _NUCLEI_CVE_RE.search(path)
+        if not m:
+            continue
+        cve = m.group(1).upper()
+        grouped.setdefault(cve, []).append(path)
+
+    # Priority by template category — http/cves is most actionable (live probe),
+    # then code (static analysis), dns / ssl / network, finally cloud / kubernetes.
+    priority_order = ("http/", "code/", "javascript/", "dns/", "ssl/", "network/",
+                       "tcp/", "headless/", "file/", "cloud/", "kubernetes/")
+
+    def _path_priority(p: str) -> tuple[int, str]:
+        for i, prefix in enumerate(priority_order):
+            if p.startswith(prefix):
+                return (i, p)
+        return (len(priority_order), p)
+
+    items = {}
+    for cve, paths in grouped.items():
+        paths.sort(key=_path_priority)
+        primary = paths[0]
+        items[cve] = {
+            "paths": paths,
+            "primary": primary,
+            "url": _NUCLEI_REPO_BLOB + primary,
+        }
+    out = {
+        "items": items,
+        "truncated": truncated,
+        "tree_size": len(data.get("tree", [])),
+        "count": len(items),
+        "fetched_at": now_iso(),
+    }
+    write_json("nuclei.json", out)
+    return {"name": "nuclei", "count": len(items)}
+
+
+_HN_QUERIES = ["vulnerability", "zero-day", "remote code execution", "exploit", "patch tuesday"]
+# Word-bounded CVE matcher: avoid swallowing trailing digits or being prefixed
+# by another digit/letter (e.g. "XCVE-2024-..." or "...-12345678" should not match).
+_CVE_TITLE_RE = re.compile(r"(?<![A-Z0-9])CVE-\d{4}-\d{4,7}(?!\d)", re.IGNORECASE)
+
+
+async def _hn_search_one(client: httpx.AsyncClient, query: str) -> tuple[str, list[dict], str | None]:
+    base = "https://hn.algolia.com/api/v1/search_by_date"
+    params = {
+        "query": query,
+        "tags": "story",
+        "restrictSearchableAttributes": "title",
+        "hitsPerPage": 50,
+    }
+    try:
+        r = await client.get(base, params=params, headers=HEADERS, timeout=20)
+        r.raise_for_status()
+        return query, r.json().get("hits", []) or [], None
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        return query, [], f"{type(exc).__name__}: {exc}"[:160]
+
+
+async def fetch_hn(client: httpx.AsyncClient) -> dict:
+    """Pull recent Hacker News stories matching security queries.
+
+    Uses Algolia's title-only search across several focused queries in parallel.
+    Output includes CVE mentions extracted from titles for cross-reference.
+    """
+    results = await asyncio.gather(*[_hn_search_one(client, q) for q in _HN_QUERIES])
+
+    seen: set[str] = set()
+    items: list[dict] = []
+    errors: dict[str, str] = {}
+    for query, hits, err in results:
+        if err:
+            errors[query] = err
+            continue
+        for hit in hits:
+            sid = hit.get("objectID")
+            if not sid or sid in seen:
+                continue
+            seen.add(sid)
+            title = (hit.get("title") or "").strip()
+            mentions = sorted({m.upper() for m in _CVE_TITLE_RE.findall(title)})
+            items.append({
+                "id": sid,
+                "title": title,
+                "url": hit.get("url") or f"https://news.ycombinator.com/item?id={sid}",
+                "hn_url": f"https://news.ycombinator.com/item?id={sid}",
+                "author": hit.get("author"),
+                "points": int(hit.get("points") or 0),
+                "num_comments": int(hit.get("num_comments") or 0),
+                "created_at": hit.get("created_at", ""),
+                "matched_query": query,
+                "cve_mentions": mentions,
+            })
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    items = items[:300]
+    if errors and not items:
+        # all queries failed — let outer run() mark fetcher errored
+        raise RuntimeError(f"all HN queries failed: {errors}")
+    out = {
+        "items": items,
+        "queries": _HN_QUERIES,
+        "errors": errors,
+        "count": len(items),
+        "fetched_at": now_iso(),
+    }
+    write_json("hn.json", out)
+    return {"name": "hn", "count": len(items), "partial_errors": len(errors)}
+
+
+# Mastodon instances + hashtag list. infosec.exchange now requires auth for
+# public timeline endpoints, so we fan out across two large public instances
+# and dedupe federated copies by status `uri` (canonical URL).
+_MASTO_INSTANCES = ["mastodon.social", "hachyderm.io"]
+_MASTO_TAGS = ["cve", "infosec", "cybersecurity", "vulnerability", "0day", "ransomware"]
+
+
+async def _masto_one_tag(
+    client: httpx.AsyncClient, instance: str, tag: str
+) -> tuple[str, str, list[dict], str | None]:
+    url = f"https://{instance}/api/v1/timelines/tag/{tag}"
+    params = {"limit": 40, "local": "false"}
+    try:
+        r = await client.get(url, params=params, headers=HEADERS, timeout=25)
+        r.raise_for_status()
+        data = r.json()
+        if not isinstance(data, list):
+            return instance, tag, [], f"non-list response: {str(data)[:120]}"
+        return instance, tag, data, None
+    except (httpx.HTTPError, json.JSONDecodeError) as exc:
+        return instance, tag, [], f"{type(exc).__name__}: {exc}"[:160]
+
+
+async def fetch_masto(client: httpx.AsyncClient) -> dict:
+    """Public-timeline hashtag posts fanned out across multiple Mastodon instances.
+
+    Federated copies of the same status are deduped by `uri` (canonical URL).
+    Engagement (favourites + reblogs + replies) is captured per status so a
+    later heat aggregator can use real social signal instead of a synthetic score.
+    """
+    jobs = [(inst, tag) for inst in _MASTO_INSTANCES for tag in _MASTO_TAGS]
+    results = await asyncio.gather(*[_masto_one_tag(client, i, t) for (i, t) in jobs])
+
+    seen: set[str] = set()
+    items: list[dict] = []
+    errors: dict[str, str] = {}
+    for instance, tag, statuses, err in results:
+        if err:
+            errors[f"{instance}#{tag}"] = err
+            continue
+        for s in statuses:
+            uri = s.get("uri") or s.get("url") or f"{instance}:{s.get('id', '')}"
+            if uri in seen:
+                continue
+            seen.add(uri)
+            content_text = strip_html(s.get("content") or "")
+            mentions = sorted({m.upper() for m in _CVE_TITLE_RE.findall(content_text)})
+            account = s.get("account") or {}
+            items.append({
+                "id": s.get("id"),
+                "uri": uri,
+                "url": s.get("url") or uri,
+                "created_at": s.get("created_at", ""),
+                "content": content_text[:600],
+                "account": account.get("acct") or account.get("username", ""),
+                "display_name": account.get("display_name", ""),
+                "favourites": int(s.get("favourites_count") or 0),
+                "reblogs": int(s.get("reblogs_count") or 0),
+                "replies": int(s.get("replies_count") or 0),
+                "tags": [t.get("name", "") for t in (s.get("tags") or []) if isinstance(t, dict)][:10],
+                "matched_tag": tag,
+                "source_instance": instance,
+                "cve_mentions": mentions,
+            })
+    items.sort(key=lambda x: x.get("created_at") or "", reverse=True)
+    items = items[:600]
+    if errors and not items:
+        raise RuntimeError(f"all Mastodon fan-out failed: {errors}")
+    out = {
+        "instances": _MASTO_INSTANCES,
+        "tags": _MASTO_TAGS,
+        "items": items,
+        "errors": errors,
+        "count": len(items),
+        "fetched_at": now_iso(),
+    }
+    write_json("masto.json", out)
+    return {"name": "masto", "count": len(items), "partial_errors": len(errors)}
+
+
+FETCHERS = {
+    "kev": fetch_kev,
+    "ghsa": fetch_ghsa,
+    "pocs": fetch_pocs,
+    "itw": fetch_itw,
+    "heat": fetch_heat,
+    "news": fetch_news,
+    "epss": fetch_epss,
+    "osv": fetch_osv,
+    "nuclei": fetch_nuclei,
+    "hn": fetch_hn,
+    "masto": fetch_masto,
+}
+
+
+# ─────────── snapshot / incremental layer ───────────
+#
+# Each cache file records a list (or dict) of items keyed by some stable
+# identifier. The snapshot step:
+#   1. reads the latest prior snapshot in backend/history/ (if any),
+#   2. annotates current items with `first_seen` (carried over for existing
+#      ids, set to today's date for newly seen ones),
+#   3. writes the annotated cache back in place,
+#   4. copies the annotated cache into backend/history/{today}/.
+#
+# This gives the API layer an unambiguous "new today" signal without forcing
+# every fetcher to know about diff logic.
+
+HISTORY = ROOT / "backend" / "history"
+
+# (cache_filename_without_ext, list_key, id_field)
+# id_field=None means the list_key holds a dict keyed by id (e.g. nuclei).
+SNAPSHOT_KEYS: list[tuple[str, str, str | None]] = [
+    ("kev", "items", "cveID"),
+    ("ghsa", "items", "ghsa_id"),
+    ("pocs", "items", "id"),
+    ("itw", "items", "id"),
+    ("news", "articles", "link"),
+    ("osv-npm", "items", "id"),
+    ("osv-pypi", "items", "id"),
+    ("nuclei", "items", None),
+    ("hn", "items", "id"),
+    ("masto", "items", "uri"),
+]
+
+
+def _latest_history_dir(today_dir: Path) -> Path | None:
+    if not HISTORY.exists():
+        return None
+    prior = sorted(
+        p for p in HISTORY.iterdir()
+        if p.is_dir() and p.name != today_dir.name and len(p.name) == 10
+    )
+    return prior[-1] if prior else None
+
+
+def _read_prev_seen(prev_dir: Path | None, cache_name: str, list_key: str, id_field: str | None) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if prev_dir is None:
+        return out
+    prev_path = prev_dir / f"{cache_name}.json"
+    if not prev_path.exists():
+        return out
+    try:
+        prev = json.loads(prev_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return out
+    container = prev.get(list_key)
+    if id_field is None and isinstance(container, dict):
+        for k, v in container.items():
+            if isinstance(v, dict) and v.get("first_seen"):
+                out[k] = v["first_seen"]
+    elif isinstance(container, list):
+        for item in container:
+            if not isinstance(item, dict):
+                continue
+            iid = item.get(id_field) if id_field else None
+            if iid:
+                out[str(iid)] = item.get("first_seen") or ""
+    return out
+
+
+def snapshot_today(only: set[str] | None = None) -> dict:
+    """Annotate cache files with `first_seen` and copy them into history.
+
+    If `only` is provided, restrict to that subset of cache_name(s); other
+    caches keep whatever annotation they already have and are NOT copied to
+    today's history dir (avoids implying those sources ran today).
+
+    Same-day re-runs consult today's existing snapshot (read BEFORE write) so
+    `new_today` doesn't false-positive when an item was already seen earlier
+    today but the fetcher just rewrote the cache from scratch.
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_dir = HISTORY / today
+    today_exists_before_write = today_dir.exists() and any(today_dir.iterdir())
+    today_dir.mkdir(parents=True, exist_ok=True)
+    prev_dir = _latest_history_dir(today_dir)
+
+    summary: dict[str, dict] = {}
+    for cache_name, list_key, id_field in SNAPSHOT_KEYS:
+        if only is not None and cache_name not in only:
+            continue
+        src = CACHE / f"{cache_name}.json"
+        if not src.exists():
+            continue
+        try:
+            data = json.loads(src.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        # Prefer first_seen from a strictly-prior day if available; else
+        # fall back to today's earlier in-day snapshot for idempotency.
+        prev_seen = _read_prev_seen(prev_dir, cache_name, list_key, id_field)
+        if today_exists_before_write:
+            same_day = _read_prev_seen(today_dir, cache_name, list_key, id_field)
+            for k, v in same_day.items():
+                prev_seen.setdefault(k, v)
+        container = data.get(list_key)
+        new_today = 0
+        total = 0
+
+        if id_field is None and isinstance(container, dict):
+            for k, v in container.items():
+                if not isinstance(v, dict):
+                    continue
+                total += 1
+                existing = v.get("first_seen")
+                prev_fs = prev_seen.get(k)
+                if existing:
+                    pass  # already annotated earlier today
+                elif prev_fs:
+                    v["first_seen"] = prev_fs
+                else:
+                    v["first_seen"] = today
+                    new_today += 1
+        elif isinstance(container, list):
+            for item in container:
+                if not isinstance(item, dict):
+                    continue
+                total += 1
+                iid = str(item.get(id_field) or "") if id_field else ""
+                existing = item.get("first_seen")
+                prev_fs = prev_seen.get(iid) if iid else None
+                if existing:
+                    pass
+                elif prev_fs:
+                    item["first_seen"] = prev_fs
+                else:
+                    item["first_seen"] = today
+                    new_today += 1
+        else:
+            continue
+
+        # write annotated back in place
+        src.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        # copy to history (relies on the in-place write above)
+        (today_dir / f"{cache_name}.json").write_bytes(src.read_bytes())
+        summary[cache_name] = {"new_today": new_today, "total": total}
+
+    write_json("manifest.json", {
+        **(json.loads((CACHE / "manifest.json").read_text(encoding="utf-8")) if (CACHE / "manifest.json").exists() else {}),
+        "snapshot": {
+            "date": today,
+            "prev_snapshot": prev_dir.name if prev_dir else None,
+            "summary": summary,
+        },
+    })
+    return summary
+
+
+async def run(selected: list[str], concurrency: int, snapshot: bool = True) -> int:
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    limits = httpx.Limits(max_connections=concurrency * 2, max_keepalive_connections=concurrency)
+    async with httpx.AsyncClient(
+        headers=HEADERS, timeout=timeout, limits=limits, follow_redirects=True
+    ) as client:
+        manifest = {"fetched_at": now_iso(), "results": []}
+        for name in selected:
+            t0 = time.monotonic()
+            try:
+                fn = FETCHERS[name]
+                if name == "news":
+                    r = await fn(client, concurrency)
+                else:
+                    r = await fn(client)
+                elapsed = round(time.monotonic() - t0, 2)
+                r["elapsed_s"] = elapsed
+                r["ok"] = True
+                count = int(r.get("count", 0))
+                if count > 0:
+                    r["status"] = "ok"
+                else:
+                    r["status"] = "no_data"
+                tag = "ok" if r["status"] == "ok" else "no-data"
+                print(f"[{tag}] {name:<8} count={count:>4} elapsed={elapsed}s", file=sys.stderr)
+            except Exception as exc:
+                elapsed = round(time.monotonic() - t0, 2)
+                r = {
+                    "name": name,
+                    "ok": False,
+                    "status": "error",
+                    "count": 0,
+                    "error": f"{type(exc).__name__}: {exc}"[:300],
+                    "elapsed_s": elapsed,
+                }
+                print(f"[err] {name:<8} {r['error']}", file=sys.stderr)
+            r["finished_at"] = now_iso()
+            manifest["results"].append(r)
+        write_json("manifest.json", manifest)
+
+    if snapshot:
+        # Map fetcher names → the cache files they own. Fetchers writing
+        # multiple cache files (osv → osv-npm + osv-pypi) must list both;
+        # fetchers not tracked in SNAPSHOT_KEYS (epss/heat) map to empty.
+        FETCHER_TO_CACHES = {
+            "kev": ["kev"], "ghsa": ["ghsa"], "pocs": ["pocs"], "itw": ["itw"],
+            "news": ["news"], "osv": ["osv-npm", "osv-pypi"],
+            "nuclei": ["nuclei"], "hn": ["hn"], "masto": ["masto"],
+            # Enrichment-style caches (no per-item first_seen tracking needed)
+            "heat": [], "epss": [],
+        }
+        snapshot_only: set[str] = set()
+        for fetched in selected:
+            snapshot_only.update(FETCHER_TO_CACHES.get(fetched, []))
+        try:
+            summary = snapshot_today(only=snapshot_only or None)
+            total_new = sum(v.get("new_today", 0) for v in summary.values())
+            print(f"[snap] {len(summary)} caches, {total_new} new items today", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[snap] failed: {exc}", file=sys.stderr)
+
+    failed = sum(1 for r in manifest["results"] if not r.get("ok"))
+    return 0 if failed == 0 else 1
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description="Fetch security data into local JSON cache.")
+    p.add_argument("--only", help="comma-separated subset of fetchers (default: all)")
+    p.add_argument("--concurrency", type=int, default=8, help="news-feed concurrency (default 8)")
+    p.add_argument("--no-snapshot", action="store_true", help="skip history snapshot + first_seen annotation")
+    args = p.parse_args()
+
+    if args.only:
+        selected = [s.strip() for s in args.only.split(",") if s.strip()]
+        unknown = [s for s in selected if s not in FETCHERS]
+        if unknown:
+            sys.exit(f"unknown fetcher(s): {unknown}; available: {list(FETCHERS)}")
+    else:
+        selected = list(FETCHERS)
+    return asyncio.run(run(selected, args.concurrency, snapshot=not args.no_snapshot))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
