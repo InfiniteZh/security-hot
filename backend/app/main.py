@@ -135,7 +135,19 @@ def api_news(
         items = [a for a in items if _contains(q, a.title, a.summary, a.source_title)]
     if target_date:
         items = [a for a in items if _matches_date(a.published, target_date)]
-    items.sort(key=lambda x: x.published or "", reverse=True)
+    # Default sort: LLM priority desc (nulls last) → published time desc.
+    # When no article has llm_score (LLM ranking not enabled) this is
+    # equivalent to pure time ordering. `?sort=time` forces time-only.
+    if sort == "time":
+        items.sort(key=lambda x: x.published or "", reverse=True)
+    else:
+        items.sort(
+            key=lambda x: (
+                x.llm_score if x.llm_score is not None else -1,
+                x.published or "",
+            ),
+            reverse=True,
+        )
     return items[:limit]
 
 

@@ -20,6 +20,8 @@ class Article(BaseModel):
     source_title: str
     lang: Lang
     category: str | None = None  # e.g. "supply-intel" for vendor blogs
+    llm_score: int | None = None   # 1-10 priority from LLM rank step
+    llm_reason: str | None = None  # short Chinese reason
     tags: list[str] = Field(default_factory=list)
 
 

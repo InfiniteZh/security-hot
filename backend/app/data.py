@@ -582,6 +582,7 @@ def all_articles() -> list[Article]:
     raw = _load_json("news.json", {"articles": [], "sources": []})
     out: list[Article] = []
     for a in raw.get("articles", []):
+        score = a.get("llm_score")
         out.append(Article(
             title=a.get("title", ""),
             link=a.get("link", ""),
@@ -591,6 +592,8 @@ def all_articles() -> list[Article]:
             source_title=a.get("source_title", ""),
             lang=a.get("lang", "en"),
             category=a.get("category"),
+            llm_score=int(score) if isinstance(score, (int, float)) else None,
+            llm_reason=a.get("llm_reason"),
             tags=[(a.get("source_title") or "").upper()] if a.get("source_title") else [],
         ))
     return out

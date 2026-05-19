@@ -823,6 +823,17 @@ function renderVulnList() {
 
 function renderNewsCard(a) {
   const langLabel = a.lang === "zh" ? t("lang.zh_badge") : t("lang.en_badge");
+  // LLM priority badge — only when ranked. Red ≥8 (must-read), amber ≥5
+  // (interesting), grey otherwise. Reason shown on hover for transparency.
+  let scoreBadge = "";
+  if (a.llm_score != null) {
+    const s = a.llm_score;
+    const cls = s >= 8 ? "text-crit border-crit/40 bg-crit/5"
+              : s >= 5 ? "text-high border-high/40 bg-high/5"
+              : "text-muted";
+    const reason = a.llm_reason ? ` title="${escapeHtml(a.llm_reason)}"` : "";
+    scoreBadge = `<span class="font-mono text-[11px] border hairline rounded px-1.5 py-0.5 ${cls}"${reason}>AI ${s}</span>`;
+  }
   return `
     <article class="card border hairline bg-surface rounded-xl p-5 mb-3">
       <div class="flex items-start gap-4">
@@ -831,11 +842,14 @@ function renderNewsCard(a) {
           <div class="flex items-center gap-2 flex-wrap mb-1.5">
             <span class="lang-badge">${langLabel}</span>
             <span class="font-mono text-[11px] text-muted">${escapeHtml(a.source_title || a.source_slug)}</span>
+            ${scoreBadge}
+            ${a.category === "supply-intel" ? `<span class="pill-tag supply">SUPPLY-INTEL</span>` : ""}
           </div>
           <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" class="block hover:text-ink">
             <h3 class="text-[15px] font-medium tracking-tight leading-snug clamp-2 mb-1">${escapeHtml(a.title)}</h3>
           </a>
           ${a.summary ? `<p class="text-[12.5px] text-muted leading-relaxed clamp-2">${escapeHtml(a.summary)}</p>` : ""}
+          ${(a.llm_score != null && a.llm_reason) ? `<div class="font-mono text-[10.5px] text-dim mt-1.5">${escapeHtml(a.llm_reason)}</div>` : ""}
         </div>
       </div>
     </article>
