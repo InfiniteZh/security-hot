@@ -13,6 +13,7 @@ from .models import (
     FetcherStatus,
     HeatEntry,
     Manifest,
+    NewsCategory,
     PocLink,
     Reference,
     SourceStatus,
@@ -463,6 +464,8 @@ def all_vulns() -> list[Vuln]:
     merged = list(by_cve.values()) + extra
     # join CVE-level external signals (EPSS / HN / Mastodon / Nuclei)
     signals = _cve_signals()
+    # AI assessments (written by llm_rank.py --task vuln_assess)
+    ai_data = _load_json("vuln_ai.json", {})
     for v in merged:
         s = signals.get(v.cve_id) if v.cve_id else None
         if s:
@@ -471,6 +474,12 @@ def all_vulns() -> list[Vuln]:
             v.hn_mentions = int(s.get("hn_mentions", 0))
             v.masto_mentions = int(s.get("masto_mentions", 0))
             v.nuclei_template_url = s.get("nuclei_url")
+        ai = ai_data.get(v.cve_id or v.id)
+        if isinstance(ai, dict):
+            raw_sev = ai.get("ai_severity")
+            if raw_sev in ("critical", "high", "medium", "low"):
+                v.ai_severity = raw_sev
+            v.ai_summary = ai.get("ai_summary")
         v.kind = classify_kind(v)
         v.severity = derive_severity(v)
         v.heat = compute_heat(v)
@@ -519,63 +528,62 @@ def derive_severity(v: Vuln) -> "Severity":  # type: ignore[name-defined]
 
 
 def compute_heat(v: Vuln) -> int:
-    """Threat-prioritization score using **real exploitation signals**, not
-    just CVSS bookkeeping. Designed so the top of the board surfaces what's
-    actually being discussed / exploited *right now*.
+    """Normalized 0-100 threat score. Exploitation signals dominate; social
+    noise is capped low. Designed to answer "what should a security team
+    look at RIGHT NOW?"
 
-    Components (max ~250 in the worst case):
-      EPSS (×50)       Real-world exploit probability from FIRST.org
-      HN mentions (×3) Per security-tagged Hacker News story citing the CVE
-      Masto mentions (×2) Per Mastodon post citing the CVE
-      Nuclei avail (+20) A ready-to-run Nuclei template exists
-      KEV listed (+30) CISA has flagged this as actively exploited
-      ITW confirmed (+15) Independent in-the-wild signal beyond KEV
-      Fresh (+40 → 0)  first_seen ≤ 24h gives +40, decays per hour to 0 at 48h
-      Severity tail (+0–8)  Tiny upstream-CVSS tiebreaker so ties stay sane
-
-    The formula deliberately does NOT add raw PoC repo counts: a CVE getting
-    cloned 30 times by students is not the same signal as one being patched
-    by Microsoft + discussed on HN.
+    Components:
+      KEV (+25) / ITW (+20)  — non-additive, take the stronger signal
+      Ransomware (+8)        — additive on top of KEV/ITW
+      EPSS (×20)             — age-dampened after 1yr
+      Nuclei template (+10)  — actionable scanner coverage
+      Freshness (0-20)       — 72h linear decay (covers weekends)
+      Social (HN+Masto, cap 10)
+      Supply-chain fresh (+15) — 72h window
+      Severity tiebreaker (0-5)
     """
     h = 0
-    # EPSS: real exploit probability; age-dampened so a 9-year-old high-EPSS
-    # entry doesn't drown out today's signal.
+
+    if v.is_kev:
+        h += 25
+    elif v.is_itw:
+        h += 20
+    if v.is_ransomware:
+        h += 8
+
     if v.epss_score is not None:
-        epss_boost = v.epss_score * 50              # 0–50
+        epss_boost = v.epss_score * 20
         pub = parse_iso_date(v.published)
         if pub is not None:
             age_y = (datetime.now(timezone.utc) - pub).days / 365
             if age_y > 1:
-                epss_boost *= max(0.4, 1 - 0.15 * (age_y - 1))  # decay 15% / yr down to 40%
+                epss_boost *= max(0.4, 1 - 0.15 * (age_y - 1))
         h += int(round(epss_boost))
-    h += min(v.hn_mentions * 3, 30)                  # cap 30
-    h += min(v.masto_mentions * 2, 30)               # cap 30
+
     if v.nuclei_template_url:
-        h += 20
-    if v.is_kev:
-        h += 30
-    if v.is_itw and not v.is_kev:
-        h += 15                                      # avoid double-counting w/ KEV
-    if v.is_ransomware:
         h += 10
-    # Freshness: hour-granularity decay over 48h. Boosted to 60 so a real
-    # 0day published 30min ago can outrank a stale 2017 high-EPSS entry.
+
     fs = parse_iso_date(v.first_seen) or parse_iso_date(v.published)
     if fs is not None:
         age_h = (datetime.now(timezone.utc) - fs).total_seconds() / 3600
         if age_h < 0:
-            h += 60
-        elif age_h <= 48:
-            h += int(round(60 * (1 - age_h / 48)))
-    # Supply-chain malicious-package live signal: most npm/PyPI poisoning
-    # has zero EPSS / KEV / Nuclei but matters most while still fresh.
+            h += 20
+        elif age_h <= 72:
+            h += int(round(20 * (1 - age_h / 72)))
+
+    social = min(v.hn_mentions * 1.5 + v.masto_mentions, 10)
+    h += int(round(social))
+
     if v.is_supply_chain and fs is not None:
-        age_h = (datetime.now(timezone.utc) - fs).total_seconds() / 3600
-        if 0 <= age_h <= 72:
-            h += 30
-    # Tail-breaker by severity so equally-scored vulns don't shuffle randomly.
-    h += {"critical": 8, "high": 5, "medium": 2, "low": 0, "unknown": 0}.get(v.severity, 0)
-    return h
+        age_h_sc = (datetime.now(timezone.utc) - fs).total_seconds() / 3600
+        if 0 <= age_h_sc <= 72:
+            h += 15
+
+    h += {"critical": 5, "high": 3, "medium": 1, "low": 0, "unknown": 0}.get(v.severity, 0)
+    return min(h, 100)
+
+
+_VALID_CATEGORIES: set[str] = {"incident", "vuln", "supply-chain", "research", "industry"}
 
 
 def all_articles() -> list[Article]:
@@ -583,6 +591,11 @@ def all_articles() -> list[Article]:
     out: list[Article] = []
     for a in raw.get("articles", []):
         score = a.get("llm_score")
+        score_int = int(score) if isinstance(score, (int, float)) else None
+        if score_int is not None and score_int <= 2:
+            continue
+        raw_cat = a.get("llm_category")
+        llm_cat: NewsCategory | None = raw_cat if raw_cat in _VALID_CATEGORIES else None
         out.append(Article(
             title=a.get("title", ""),
             link=a.get("link", ""),
@@ -592,8 +605,10 @@ def all_articles() -> list[Article]:
             source_title=a.get("source_title", ""),
             lang=a.get("lang", "en"),
             category=a.get("category"),
-            llm_score=int(score) if isinstance(score, (int, float)) else None,
+            llm_score=score_int,
             llm_reason=a.get("llm_reason"),
+            llm_category=llm_cat,
+            llm_summary_zh=a.get("llm_summary_zh"),
             tags=[(a.get("source_title") or "").upper()] if a.get("source_title") else [],
         ))
     return out
@@ -642,7 +657,7 @@ def today_summary() -> TodaySummary:
     articles = all_articles()
     sources = all_sources()
     now = datetime.now(timezone.utc)
-    yesterday = now - timedelta(days=2)  # be lenient: count last 48h
+    yesterday = now - timedelta(days=1)
 
     def is_recent(s: str | None) -> bool:
         d = parse_iso_date(s)

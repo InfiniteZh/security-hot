@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 Lang = Literal["zh", "en"]
 Severity = Literal["critical", "high", "medium", "low", "unknown"]
 VulnKind = Literal["cve", "supply", "poc", "itw"]
+NewsCategory = Literal["incident", "vuln", "supply-chain", "research", "industry"]
 SortBy = Literal["heat", "time"]
 
 
@@ -19,9 +20,11 @@ class Article(BaseModel):
     source_slug: str
     source_title: str
     lang: Lang
-    category: str | None = None  # e.g. "supply-intel" for vendor blogs
-    llm_score: int | None = None   # 1-10 priority from LLM rank step
-    llm_reason: str | None = None  # short Chinese reason
+    category: str | None = None
+    llm_score: int | None = None
+    llm_reason: str | None = None
+    llm_category: NewsCategory | None = None
+    llm_summary_zh: str | None = None
     tags: list[str] = Field(default_factory=list)
 
 
@@ -67,6 +70,8 @@ class Vuln(BaseModel):
     hn_mentions: int = 0
     masto_mentions: int = 0
     heat: int = 0
+    ai_severity: Severity | None = None
+    ai_summary: str | None = None
 
 
 class HeatEntry(BaseModel):

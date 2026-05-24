@@ -402,7 +402,7 @@ async def fetch_one_feed(client: httpx.AsyncClient, source: dict, max_entries: i
         return {**source, "ok": False, "error": f"{type(exc).__name__}: {exc}"[:200], "entries": []}
 
 
-async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8) -> dict:
+async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8, incremental: bool = False) -> dict:
     sem = asyncio.Semaphore(concurrency)
 
     async def bounded(src):
@@ -441,17 +441,33 @@ async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8) -> dict:
     pre_total = len(articles)
     articles, url_dropped, title_dropped = _articles_dedupe(articles)
     articles, keyword_dropped = _articles_keyword_filter(articles)
+
+    # ─── Incremental merge: keep existing articles, prepend only new ones ───
+    incremental_new = 0
+    if incremental:
+        news_path = CACHE / "news.json"
+        if news_path.exists():
+            try:
+                prev_data = json.loads(news_path.read_text(encoding="utf-8"))
+                prev_articles = prev_data.get("articles") or []
+                prev_links = {_canonical_url(a.get("link", "")) for a in prev_articles}
+                new_articles = [a for a in articles if _canonical_url(a.get("link", "")) not in prev_links]
+                incremental_new = len(new_articles)
+                articles = new_articles + prev_articles
+                articles = articles[:6000]
+                print(f"[news] incremental: {incremental_new} new, {len(articles)} total", file=sys.stderr)
+            except (json.JSONDecodeError, OSError):
+                pass
+
     filter_meta = {
         "raw_articles": pre_total,
         "url_duplicates": len(url_dropped),
         "title_duplicates": len(title_dropped),
         "keyword_filtered": len(keyword_dropped),
         "kept": len(articles),
+        "incremental_new": incremental_new,
     }
 
-    # Interleave dropped samples (cap each category) so the audit trail
-    # in news.json has visibility into all three filter layers, not just
-    # whichever bucket is biggest.
     filtered_sample = (
         url_dropped[:100] + title_dropped[:50] + keyword_dropped[:50]
     )
@@ -1178,7 +1194,7 @@ def snapshot_today(only: set[str] | None = None) -> dict:
     return summary
 
 
-async def run(selected: list[str], concurrency: int, snapshot: bool = True) -> int:
+async def run(selected: list[str], concurrency: int, snapshot: bool = True, incremental: bool = False) -> int:
     timeout = httpx.Timeout(30.0, connect=10.0)
     limits = httpx.Limits(max_connections=concurrency * 2, max_keepalive_connections=concurrency)
     async with httpx.AsyncClient(
@@ -1190,7 +1206,7 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True) -> i
             try:
                 fn = FETCHERS[name]
                 if name == "news":
-                    r = await fn(client, concurrency)
+                    r = await fn(client, concurrency, incremental=incremental)
                 else:
                     r = await fn(client)
                 elapsed = round(time.monotonic() - t0, 2)
@@ -1248,6 +1264,7 @@ def main() -> int:
     p.add_argument("--only", help="comma-separated subset of fetchers (default: all)")
     p.add_argument("--concurrency", type=int, default=8, help="news-feed concurrency (default 8)")
     p.add_argument("--no-snapshot", action="store_true", help="skip history snapshot + first_seen annotation")
+    p.add_argument("--incremental", action="store_true", help="merge new articles into existing cache instead of replacing")
     args = p.parse_args()
 
     if args.only:
@@ -1257,7 +1274,7 @@ def main() -> int:
             sys.exit(f"unknown fetcher(s): {unknown}; available: {list(FETCHERS)}")
     else:
         selected = list(FETCHERS)
-    return asyncio.run(run(selected, args.concurrency, snapshot=not args.no_snapshot))
+    return asyncio.run(run(selected, args.concurrency, snapshot=not args.no_snapshot, incremental=args.incremental))
 
 
 if __name__ == "__main__":

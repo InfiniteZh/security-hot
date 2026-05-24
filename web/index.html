@@ -132,6 +132,13 @@
   @keyframes blink { 50% { opacity: 0.35; } }
   .blink { animation: blink 1.6s ease-in-out infinite; }
 
+  /* refresh button spinner — applied to the .refresh-icon when its
+     parent .refresh-btn is in `in-flight` state */
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .refresh-btn[data-state="in-flight"] .refresh-icon { animation: spin 1.05s linear infinite; }
+  .refresh-btn[data-state="in-flight"] { color: #10A37F; }
+  .refresh-btn[data-state="done"] .refresh-icon { color: #10A37F; }
+
   /* tab pill */
   .tab-pill {
     position: relative;
@@ -265,6 +272,60 @@
   }
   .date-cell[data-today="true"] .date-num { color: #FAFAF7; }
   .date-cell[data-today="true"] .date-meta { color: #C0BFB8; }
+
+  /* news category pills */
+  .cat-pill {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: "Geist Mono", monospace;
+    font-size: 10.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 2px 8px;
+    border-radius: 999px; border: 1px solid;
+    line-height: 1.4; font-weight: 500;
+  }
+  .cat-pill::before {
+    content: ""; width: 5px; height: 5px; border-radius: 999px;
+    background: currentColor; flex-shrink: 0;
+  }
+  .cat-incident    { color: #DC2626; border-color: #F2CFCF; background: #FEF2F2; }
+  .cat-vuln        { color: #D97706; border-color: #F2D9B0; background: #FEF9EE; }
+  .cat-supply-chain { color: #C2410C; border-color: #EFCFB8; background: #FEF5EE; }
+  .cat-research    { color: #2563EB; border-color: #D2DDF5; background: #F2F6FD; }
+  .cat-industry    { color: #6B6B6B; border-color: #E0DDD3; background: #F4F4EE; }
+
+  /* AI assessment block */
+  .ai-assess {
+    background: #F9F9F5;
+    border: 1px solid #E8E5DD;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-top: 10px;
+  }
+  .ai-assess-label {
+    font-family: "Geist Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: #10A37F;
+    margin-bottom: 4px;
+  }
+  .ai-assess-text {
+    font-size: 12.5px;
+    color: #3D3D3D;
+    line-height: 1.6;
+  }
+
+  /* trending keyword tag */
+  .trend-tag {
+    display: inline-flex; align-items: center;
+    font-family: "Geist Mono", monospace;
+    font-size: 11px; padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid #E8E5DD;
+    color: #3D3D3D; background: #FAFAF7;
+    cursor: pointer;
+    transition: background 140ms, border-color 140ms;
+  }
+  .trend-tag:hover { background: #F4F4EE; border-color: #D8D4C7; }
 </style>
 </head>
 <body>
@@ -321,6 +382,16 @@
         <div class="flex items-center gap-3 font-mono text-[11px] text-muted">
           <span data-i18n="hero.lastsync">最近同步</span>
           <span id="last-sync" class="text-ink">--:--</span>
+          <button id="refresh-all" data-refresh-only=""
+                  title="" data-i18n-title="refresh.title"
+                  class="refresh-btn ml-1 inline-flex items-center justify-center w-7 h-7 rounded-full border hairline hover:bg-surface-2 hover:border-2 text-ink transition disabled:opacity-50"
+                  aria-label="Refresh all">
+            <svg class="w-3.5 h-3.5 refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <polyline points="1 20 1 14 7 14"></polyline>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -409,9 +480,31 @@
           <button id="filter-clear" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest" data-i18n="filter.clear">清空</button>
         </div>
 
+        <!-- news category sub-filter -->
+        <div id="news-catfilter" class="flex items-center gap-2 flex-wrap mb-3" style="display:none">
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-on="true" data-cat="all">
+            <span data-i18n="cat.all">全部</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="all">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="incident">
+            <span data-i18n="cat.incident">安全事件</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="incident">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="vuln">
+            <span data-i18n="cat.vuln">漏洞情报</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="vuln">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="supply-chain">
+            <span data-i18n="cat.supply-chain">供应链投毒</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="supply-chain">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="research">
+            <span data-i18n="cat.research">安全研究</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="research">—</span>
+          </button>
+          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="industry">
+            <span data-i18n="cat.industry">行业动态</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="industry">—</span>
+          </button>
+        </div>
+
         <!-- panel: NEWS -->
         <section class="panel space-y-3" data-panel="news" hidden>
-          <div class="news-list" id="news-list"></div>
+          <div class="news-list grid grid-cols-1 lg:grid-cols-2 gap-3" id="news-list"></div>
         </section>
 
         <!-- panel: VULN (default) -->
@@ -443,8 +536,8 @@
         <!-- heat -->
         <section class="border hairline bg-surface rounded-xl p-5">
           <div class="flex items-center justify-between mb-3.5">
-            <h3 class="text-[13px] font-semibold tracking-tight" data-i18n="rail.heat">综合威胁分</h3>
-            <span class="text-poc text-xs">●</span>
+            <h3 class="text-[13px] font-semibold tracking-tight" data-i18n="rail.heat">热度榜</h3>
+            <span class="font-mono text-[10px] text-dim">0-100</span>
           </div>
           <ol id="heat-list" class="space-y-3.5">
             <li class="skeleton h-12"></li>
@@ -453,10 +546,10 @@
           </ol>
         </section>
 
-        <!-- sources health -->
+        <!-- trending keywords -->
         <section class="border hairline bg-surface rounded-xl p-5">
-          <h3 class="text-[13px] font-semibold tracking-tight mb-3.5" data-i18n="rail.sources">数据源健康</h3>
-          <ul id="sources-list" class="space-y-2 text-[12px] font-mono"></ul>
+          <h3 class="text-[13px] font-semibold tracking-tight mb-3.5" data-i18n="rail.trends">趋势关键词</h3>
+          <div id="trends-list" class="flex flex-wrap gap-2"></div>
         </section>
 
         <!-- pipeline -->
@@ -519,6 +612,9 @@ function applyI18n() {
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
     el.setAttribute("placeholder", t(el.dataset.i18nPlaceholder));
   });
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    el.setAttribute("title", t(el.dataset.i18nTitle));
+  });
   // lang button state
   document.querySelectorAll(".lang-btn").forEach((b) => {
     if (b.dataset.lang === lang) { b.classList.add("bg-ink", "text-bg"); b.classList.remove("text-muted"); }
@@ -553,6 +649,7 @@ const state = {
   kind: "all",
   sort: "heat",
   newsLang: "all",
+  newsCategory: "all",
   q: "",
   selectedDate: null,   // YYYY-MM-DD; null = "today"
   windowEnd: null,      // YYYY-MM-DD of right-most date cell
@@ -779,6 +876,11 @@ function renderVulnCard(v) {
               <div class="font-mono text-[12px] mt-0.5 truncate">${pkg ? escapeHtml(pkg) : escapeHtml(v.source || "")}</div>
             </div>
           </div>
+          ${v.ai_summary ? `
+          <div class="ai-assess mt-3">
+            <div class="ai-assess-label">${t("vuln.ai_assess")}${v.ai_severity ? ` · ${t("sev." + v.ai_severity)}` : ''}</div>
+            <div class="ai-assess-text">${escapeHtml(v.ai_summary)}</div>
+          </div>` : ''}
           ${tagsHtml ? `<div class="flex flex-wrap gap-1.5 mt-3">${tagsHtml}</div>` : ""}
           ${refsHtml ? `<div class="mt-3 text-[11px]">${refsHtml}</div>` : ""}
         </div>
@@ -821,35 +923,31 @@ function renderVulnList() {
   });
 }
 
+function newsCatPill(cat) {
+  if (!cat) return '';
+  const label = t("cat." + cat) || cat;
+  return `<span class="cat-pill cat-${cat}">${escapeHtml(label)}</span>`;
+}
+
 function renderNewsCard(a) {
   const langLabel = a.lang === "zh" ? t("lang.zh_badge") : t("lang.en_badge");
-  // LLM priority badge — only when ranked. Red ≥8 (must-read), amber ≥5
-  // (interesting), grey otherwise. Reason shown on hover for transparency.
-  let scoreBadge = "";
-  if (a.llm_score != null) {
-    const s = a.llm_score;
-    const cls = s >= 8 ? "text-crit border-crit/40 bg-crit/5"
-              : s >= 5 ? "text-high border-high/40 bg-high/5"
-              : "text-muted";
-    const reason = a.llm_reason ? ` title="${escapeHtml(a.llm_reason)}"` : "";
-    scoreBadge = `<span class="font-mono text-[11px] border hairline rounded px-1.5 py-0.5 ${cls}"${reason}>AI ${s}</span>`;
-  }
+  const catPill = newsCatPill(a.llm_category);
+  const showZhSummary = a.lang === "en" && a.llm_summary_zh;
   return `
-    <article class="card border hairline bg-surface rounded-xl p-5 mb-3">
-      <div class="flex items-start gap-4">
-        <div class="font-mono text-[11px] text-muted shrink-0 w-20">${escapeHtml(relTime(a.published))}</div>
+    <article class="card border hairline bg-surface rounded-xl p-5">
+      <div class="flex items-start gap-3">
+        <div class="font-mono text-[11px] text-muted shrink-0 w-16 pt-0.5">${escapeHtml(relTime(a.published))}</div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap mb-1.5">
+            ${catPill}
             <span class="lang-badge">${langLabel}</span>
-            <span class="font-mono text-[11px] text-muted">${escapeHtml(a.source_title || a.source_slug)}</span>
-            ${scoreBadge}
-            ${a.category === "supply-intel" ? `<span class="pill-tag supply">SUPPLY-INTEL</span>` : ""}
+            <span class="font-mono text-[10.5px] text-dim">${escapeHtml(a.source_title || a.source_slug)}</span>
           </div>
           <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" class="block hover:text-ink">
-            <h3 class="text-[15px] font-medium tracking-tight leading-snug clamp-2 mb-1">${escapeHtml(a.title)}</h3>
+            <h3 class="text-[14.5px] font-medium tracking-tight leading-snug clamp-2">${escapeHtml(a.title)}</h3>
           </a>
-          ${a.summary ? `<p class="text-[12.5px] text-muted leading-relaxed clamp-2">${escapeHtml(a.summary)}</p>` : ""}
-          ${(a.llm_score != null && a.llm_reason) ? `<div class="font-mono text-[10.5px] text-dim mt-1.5">${escapeHtml(a.llm_reason)}</div>` : ""}
+          ${showZhSummary ? `<p class="text-[12px] text-ink-soft leading-relaxed mt-1.5 clamp-3">${escapeHtml(a.llm_summary_zh)}</p>` : ''}
+          ${(!showZhSummary && a.summary) ? `<p class="text-[12px] text-muted leading-relaxed mt-1 clamp-2">${escapeHtml(a.summary)}</p>` : ''}
         </div>
       </div>
     </article>
@@ -859,25 +957,36 @@ function renderNewsCard(a) {
 function renderNewsList() {
   let items = state.news;
   if (state.newsLang !== "all") items = items.filter(a => a.lang === state.newsLang);
+  if (state.newsCategory !== "all") items = items.filter(a => a.llm_category === state.newsCategory);
   const q = state.q.toLowerCase();
   if (q) items = items.filter(a => (a.title||"").toLowerCase().includes(q) || (a.summary||"").toLowerCase().includes(q) || (a.source_title||"").toLowerCase().includes(q));
-  // News no longer carries heat — always sort by published time (newest first).
-  const sorted = [...items].sort((a, b) => (b.published||"") > (a.published||"") ? 1 : -1);
+  const sorted = [...items].sort((a, b) => {
+    if (state.sort === "time") return (b.published||"") > (a.published||"") ? 1 : -1;
+    const sa = a.llm_score != null ? a.llm_score : -1;
+    const sb = b.llm_score != null ? b.llm_score : -1;
+    return sb - sa || ((b.published||"") > (a.published||"") ? 1 : -1);
+  });
   const limited = sorted.slice(0, state.newsLimit);
   const el = document.getElementById("news-list");
   if (limited.length === 0) {
-    el.innerHTML = `<div class="border hairline bg-surface rounded-xl p-10 text-center text-muted">${t("no_data")}</div>`;
+    el.innerHTML = `<div class="border hairline bg-surface rounded-xl p-10 text-center text-muted lg:col-span-2">${t("no_data")}</div>`;
   } else {
     let html = limited.map(renderNewsCard).join("");
     const remaining = sorted.length - state.newsLimit;
     if (remaining > 0) {
-      html += `<div class="text-center py-4"><button id="news-load-more" class="border hairline rounded-full px-5 py-2 text-[12px] font-mono uppercase tracking-widest text-muted hover:text-ink hover:border-2 transition">${t("load_more")} <span class="text-dim ml-1">+${remaining}</span></button></div>`;
+      html += `<div class="text-center py-4 lg:col-span-2"><button id="news-load-more" class="border hairline rounded-full px-5 py-2 text-[12px] font-mono uppercase tracking-widest text-muted hover:text-ink hover:border-2 transition">${t("load_more")} <span class="text-dim ml-1">+${remaining}</span></button></div>`;
     }
     el.innerHTML = html;
     const lm = document.getElementById("news-load-more");
     if (lm) lm.addEventListener("click", () => { state.newsLimit += 40; renderNewsList(); });
   }
   document.getElementById("tab-news-count").textContent = state.news.length;
+  // category counts
+  const cats = ["all", "incident", "vuln", "supply-chain", "research", "industry"];
+  cats.forEach(c => {
+    const count = c === "all" ? state.news.length : state.news.filter(a => a.llm_category === c).length;
+    document.querySelectorAll(`[data-catcount="${c}"]`).forEach(n => n.textContent = count);
+  });
 }
 
 function renderHeat() {
@@ -906,15 +1015,23 @@ function renderHeat() {
   }).join("");
 }
 
-function renderSources() {
-  const el = document.getElementById("sources-list");
-  const sources = [...state.sources].sort((a,b) => (b.ok - a.ok) || (b.count - a.count));
-  el.innerHTML = sources.slice(0, 14).map(s => `
-    <li class="flex items-center justify-between">
-      <span class="${s.ok ? '' : 'text-dim'} truncate" title="${escapeHtml(s.url)}">${escapeHtml(s.title)}</span>
-      <span class="${s.ok ? 'text-poc' : 'text-crit'} text-[11px]">${s.ok ? '● ' + (s.count || 0) : '● ' + (s.error || 'fail').slice(0, 12)}</span>
-    </li>
-  `).join("");
+function renderTrends() {
+  const el = document.getElementById("trends-list");
+  const allText = [...state.news, ...state.vuln].map(x => x.title || "").join(" ");
+  const stopwords = new Set(["the","a","an","in","of","to","for","and","is","on","with","by","at","from","this","that","are","was","be","it","as","or","but","not","has","had","have","will","can","all","new","via","its","our","your","you","we","they","been","do","does","did","may","also","than","more","into","if","up","out","no","only","so","about","what","when","how","which","who","where","why","just","get","set","use","let","now","see","two","one","over","most","very","some","any","many","much","few","after","before","between","through","during","without","within","against","under","above","below","these","those","here","there","then","other","each","every","both","such","should","could","would","might","must","shall","need","want","like","make","take","come","know","think","find","give","tell","call","try","keep","still","even","while","too","same","own","back","first","last","next","high","based","using","used","data","code","security","attack","system","open","update","tool","version","release","report","advisory","critical","patch","blog","post","package","malicious","vulnerability","vulnerabilities","exploit","remote","execution","server","client","access","authenticated","allow","allows","issue","fixed","fix","해","수","등"]);
+  const freq = {};
+  for (const word of allText.toLowerCase().replace(/[^a-z0-9一-鿿\-]+/g, " ").split(/\s+/)) {
+    if (word.length < 3 || stopwords.has(word)) continue;
+    freq[word] = (freq[word] || 0) + 1;
+  }
+  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  if (sorted.length === 0) {
+    el.innerHTML = `<span class="text-[12px] text-muted">${t("no_data")}</span>`;
+    return;
+  }
+  el.innerHTML = sorted.map(([word, count]) =>
+    `<button class="trend-tag" data-trend="${escapeHtml(word)}">${escapeHtml(word)} <span class="text-dim ml-1">${count}</span></button>`
+  ).join("");
 }
 
 function renderPipeline() {
@@ -925,16 +1042,185 @@ function renderPipeline() {
   if (m.fetched_at) {
     const d = new Date(m.fetched_at);
     const pad = (n) => String(n).padStart(2,'0');
-    lines.push(`<div class="flex items-center justify-between"><dt class="text-muted">${t("pipe.last")}</dt><dd>${!isNaN(d) ? `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : '—'}</dd></div>`);
+    lines.push(`<div class="flex items-center justify-between gap-2"><dt class="text-muted">${t("pipe.last")}</dt><dd>${!isNaN(d) ? `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : '—'}</dd></div>`);
   }
   for (const r of (m.results || [])) {
-    lines.push(`<div class="flex items-center justify-between">
-      <dt class="text-muted">${escapeHtml(r.name)}</dt>
-      <dd class="${r.ok ? '' : 'text-crit'}">${r.ok ? r.count + ' · ' + r.elapsed_s + 's' : (r.error || 'err').slice(0,16)}</dd>
+    // Per-fetcher refresh button: ⟳ on the right edge of each row.
+    // Hidden by default; appears on row hover so the rail stays calm.
+    lines.push(`<div class="group flex items-center justify-between gap-2">
+      <dt class="text-muted shrink-0">${escapeHtml(r.name)}</dt>
+      <div class="flex items-center gap-1.5 min-w-0">
+        <dd class="${r.ok ? '' : 'text-crit'} truncate">${r.ok ? r.count + ' · ' + r.elapsed_s + 's' : (r.error || 'err').slice(0,16)}</dd>
+        <button class="refresh-btn shrink-0 opacity-0 group-hover:opacity-100 inline-flex items-center justify-center w-5 h-5 rounded text-muted hover:text-ink transition"
+                data-refresh-only="${escapeHtml(r.name)}"
+                title="${t('refresh.title')} · ${escapeHtml(r.name)}"
+                aria-label="Refresh ${escapeHtml(r.name)}">
+          <svg class="w-3 h-3 refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
+      </div>
     </div>`);
   }
   el.innerHTML = lines.join("");
 }
+
+// ───────────────────── refresh: token + polling ─────────────────────
+const REFRESH_TOKEN_KEY = "sh.refreshToken";
+const refreshState = { inFlight: new Set() };  // entries: "" for global, fetcher name otherwise
+let toastBoxRefresh = null;
+
+function ensureToastBoxRefresh() {
+  let box = document.getElementById("toast-box-refresh");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "toast-box-refresh";
+    box.className = "fixed top-20 right-5 z-50 flex flex-col gap-2 max-w-xs";
+    document.body.appendChild(box);
+  }
+  return box;
+}
+function showRefreshToast(msg, type = "ok", durationMs = 4000) {
+  const box = ensureToastBoxRefresh();
+  const colorClass = type === "ok" ? "border-poc/40 text-ink"
+                    : type === "warn" ? "border-high/40 text-ink"
+                    : "border-crit/40 text-ink";
+  const div = document.createElement("div");
+  div.className = `border-2 hairline-2 bg-surface rounded-lg px-3.5 py-2 shadow text-[12px] font-mono ${colorClass}`;
+  div.textContent = msg;
+  box.appendChild(div);
+  setTimeout(() => { div.style.opacity = "0"; div.style.transition = "opacity .3s"; }, durationMs - 300);
+  setTimeout(() => div.remove(), durationMs);
+}
+function getRefreshToken() { return localStorage.getItem(REFRESH_TOKEN_KEY) || null; }
+function setRefreshToken(tok) { localStorage.setItem(REFRESH_TOKEN_KEY, tok); }
+function clearRefreshToken() { localStorage.removeItem(REFRESH_TOKEN_KEY); }
+
+function updateRefreshButtonStates() {
+  document.querySelectorAll(".refresh-btn").forEach(btn => {
+    const only = btn.getAttribute("data-refresh-only") || "";
+    const active = refreshState.inFlight.has(only) || (only && refreshState.inFlight.has(""));
+    btn.dataset.state = active ? "in-flight" : "";
+    btn.disabled = active;
+  });
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function triggerRefresh(only) {
+  // `only` = "" → all fetchers; otherwise a single fetcher name.
+  let token = getRefreshToken();
+  if (!token) {
+    token = window.prompt(t("refresh.prompt"));
+    if (!token) return;
+    setRefreshToken(token.trim());
+    token = token.trim();
+  }
+  if (refreshState.inFlight.has(only) || (only && refreshState.inFlight.has(""))) {
+    showRefreshToast(t("refresh.already_running"), "warn");
+    return;
+  }
+  refreshState.inFlight.add(only);
+  updateRefreshButtonStates();
+  const startedAt = new Date();
+
+  const qs = only ? `?only=${encodeURIComponent(only)}` : "";
+  let res;
+  try {
+    res = await fetch(`/api/refresh${qs}`, {
+      method: "POST",
+      headers: { "X-Refresh-Token": token },
+    });
+  } catch (e) {
+    refreshState.inFlight.delete(only);
+    updateRefreshButtonStates();
+    showRefreshToast(`${t("refresh.failed")}: ${e.message}`, "error");
+    return;
+  }
+
+  if (res.status === 503) {
+    refreshState.inFlight.delete(only);
+    updateRefreshButtonStates();
+    showRefreshToast(t("refresh.disabled"), "error", 6000);
+    return;
+  }
+  if (res.status === 401) {
+    clearRefreshToken();
+    refreshState.inFlight.delete(only);
+    updateRefreshButtonStates();
+    showRefreshToast(t("refresh.unauthorized"), "error");
+    return;
+  }
+  if (res.status === 409) {
+    refreshState.inFlight.delete(only);
+    updateRefreshButtonStates();
+    showRefreshToast(t("refresh.already_running"), "warn");
+    return;
+  }
+  if (!res.ok) {
+    refreshState.inFlight.delete(only);
+    updateRefreshButtonStates();
+    showRefreshToast(`${t("refresh.failed")}: HTTP ${res.status}`, "error");
+    return;
+  }
+  // 202 queued — start polling /api/healthz
+  showRefreshToast(`${t("refresh.starting")}${only ? ' · ' + only : ''}`, "ok", 2500);
+  await pollRefreshDone(only, startedAt);
+}
+
+async function pollRefreshDone(only, startedAt) {
+  // OSV full run can take ~50s; news ~100s; full ~3min.
+  // Poll every 4s for up to 6 minutes.
+  const startedMs = startedAt.getTime();
+  const maxPolls = 90;
+  let done = false;
+  for (let i = 0; i < maxPolls; i++) {
+    await sleep(4000);
+    let h;
+    try {
+      h = await fetch("/api/healthz").then(r => r.json());
+    } catch (_) {
+      continue;
+    }
+    const fetchers = h.fetchers || [];
+    if (only) {
+      const target = fetchers.find(f => f.name === only);
+      if (target && target.finished_at) {
+        const finishedMs = new Date(target.finished_at).getTime();
+        if (finishedMs > startedMs) { done = true; break; }
+      }
+    } else {
+      // Global: any fetcher finished_at must be > started; treat as "all done"
+      // when manifest's overall fetched_at is newer than start time.
+      if (h.last_fetch) {
+        const fetched = new Date(h.last_fetch).getTime();
+        if (fetched > startedMs) { done = true; break; }
+      }
+    }
+  }
+  refreshState.inFlight.delete(only);
+  updateRefreshButtonStates();
+  if (done) {
+    showRefreshToast(`${t("refresh.done")}${only ? ' · ' + only : ''}`, "ok");
+    // Re-pull all UI data after a successful refresh.
+    await fetchAll();
+  } else {
+    showRefreshToast(t("refresh.timeout"), "warn", 6000);
+  }
+}
+
+// Document-level delegation so dynamically-rendered .refresh-btn elements
+// (in renderPipeline) keep working without re-binding.
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".refresh-btn");
+  if (!btn) return;
+  e.preventDefault();
+  if (btn.disabled) return;
+  const only = btn.getAttribute("data-refresh-only") || "";
+  triggerRefresh(only);
+});
 
 function renderAll() {
   applyI18n();
@@ -943,7 +1229,7 @@ function renderAll() {
   renderVulnList();
   renderNewsList();
   renderHeat();
-  renderSources();
+  renderTrends();
   renderPipeline();
 }
 
@@ -957,17 +1243,19 @@ document.querySelectorAll(".tab-pill").forEach(b => {
     document.querySelectorAll(".panel").forEach(p => {
       if (p.dataset.panel === state.activeTab) p.removeAttribute("hidden"); else p.setAttribute("hidden", "");
     });
-    // toggle sub-filter (only on vuln) and news-lang filter
     document.getElementById("vuln-subfilter").style.display = state.activeTab === "vuln" ? "" : "none";
+    document.getElementById("vuln-multifilter").style.display = state.activeTab === "vuln" ? "" : "none";
+    document.getElementById("news-catfilter").style.display = state.activeTab === "news" ? "" : "none";
     const nlf = document.getElementById("news-lang-filter");
     if (state.activeTab === "news") nlf.removeAttribute("hidden"); else nlf.setAttribute("hidden", "");
   });
 });
 
-// sub-pill (vuln class)
-document.querySelectorAll(".sub-pill").forEach(b => {
+// sub-pill (vuln class) — scoped to #vuln-subfilter to avoid
+// cross-contamination with news category pills that share .sub-pill.
+document.querySelectorAll("#vuln-subfilter .sub-pill").forEach(b => {
   b.addEventListener("click", () => {
-    document.querySelectorAll(".sub-pill").forEach(x => x.setAttribute("data-on", "false"));
+    document.querySelectorAll("#vuln-subfilter .sub-pill").forEach(x => x.setAttribute("data-on", "false"));
     b.setAttribute("data-on", "true");
     state.kind = b.dataset.kind;
     renderVulnList();
@@ -1021,6 +1309,26 @@ document.querySelectorAll(".newslang-btn").forEach(b => {
   });
 });
 
+// news category sub-filter
+document.getElementById("news-catfilter").addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-cat]");
+  if (!btn) return;
+  document.querySelectorAll("#news-catfilter .sub-pill").forEach(x => x.setAttribute("data-on", "false"));
+  btn.setAttribute("data-on", "true");
+  state.newsCategory = btn.dataset.cat;
+  renderNewsList();
+});
+
+// trend tag → fill search
+document.addEventListener("click", (e) => {
+  const tag = e.target.closest("[data-trend]");
+  if (!tag) return;
+  const word = tag.dataset.trend;
+  state.q = word;
+  document.getElementById("search").value = word;
+  renderVulnList(); renderNewsList();
+});
+
 // search
 let searchTimer;
 document.getElementById("search").addEventListener("input", (e) => {
@@ -1049,7 +1357,7 @@ const ENDPOINTS = [
 ];
 
 function dateQuery() {
-  return state.selectedDate && state.selectedDate !== todayUtc()
+  return state.selectedDate
     ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
 }
 
@@ -1213,7 +1521,13 @@ function renderDetail(v) {
       </div>
       <h2 class="text-[22px] font-semibold tracking-tight leading-tight mb-1">${escapeHtml(v.title || v.id)}</h2>
       <div class="font-mono text-[12px] text-muted mb-4">${escapeHtml(v.cve_id || v.ghsa_id || v.id)}${v.published ? ` · ${escapeHtml(relTime(v.published))}` : ""}</div>
-      ${v.summary ? `<p class="text-[13.5px] text-ink-soft leading-relaxed mb-6 whitespace-pre-line">${escapeHtml(v.summary)}</p>` : ""}
+      ${v.summary ? `<p class="text-[13.5px] text-ink-soft leading-relaxed mb-4 whitespace-pre-line">${escapeHtml(v.summary)}</p>` : ""}
+
+      ${v.ai_summary ? `
+      <div class="ai-assess mb-6">
+        <div class="ai-assess-label">${t("vuln.ai_assess")}${v.ai_severity ? ` · ${t("sev." + v.ai_severity)}` : ''}</div>
+        <div class="ai-assess-text">${escapeHtml(v.ai_summary)}</div>
+      </div>` : ''}
 
       <div class="grid grid-cols-2 gap-4 mb-6">
         <div>

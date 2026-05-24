@@ -115,19 +115,19 @@ def api_today() -> TodaySummary:
 @app.get("/api/news", response_model=list[Article], tags=["news"])
 def api_news(
     lang: Literal["all", "zh", "en"] = "all",
+    category: Literal["all", "incident", "vuln", "supply-chain", "research", "industry"] = "all",
     q: str = "",
     source: str | None = Query(default=None, description="comma-separated source slugs"),
     date: str | None = Query(default=None, description="filter by published date (YYYY-MM-DD)"),
     limit: int = Query(default=80, ge=1, le=500),
-    sort: str = Query(default="time", description="Always sorted by published time; 'heat' is accepted for backwards compatibility and silently mapped to 'time'."),
+    sort: str = Query(default="heat", description="'heat' = LLM priority desc then time desc; 'time' = pure chronological."),
 ) -> list[Article]:
-    """List recent industry news. News no longer carries a heat score
-    (the previous formula was effectively a constant), so the only
-    meaningful sort is by published time."""
     target_date = _validate_date(date)
     items = all_articles()
     if lang != "all":
         items = [a for a in items if a.lang == lang]
+    if category != "all":
+        items = [a for a in items if a.llm_category == category]
     if source:
         slugs = {s.strip() for s in source.split(",") if s.strip()}
         items = [a for a in items if a.source_slug in slugs]
@@ -135,9 +135,6 @@ def api_news(
         items = [a for a in items if _contains(q, a.title, a.summary, a.source_title)]
     if target_date:
         items = [a for a in items if _matches_date(a.published, target_date)]
-    # Default sort: LLM priority desc (nulls last) → published time desc.
-    # When no article has llm_score (LLM ranking not enabled) this is
-    # equivalent to pure time ordering. `?sort=time` forces time-only.
     if sort == "time":
         items.sort(key=lambda x: x.published or "", reverse=True)
     else:
