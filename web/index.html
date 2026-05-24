@@ -1018,13 +1018,21 @@ function renderHeat() {
 function renderTrends() {
   const el = document.getElementById("trends-list");
   const allText = [...state.news, ...state.vuln].map(x => x.title || "").join(" ");
-  const stopwords = new Set(["the","a","an","in","of","to","for","and","is","on","with","by","at","from","this","that","are","was","be","it","as","or","but","not","has","had","have","will","can","all","new","via","its","our","your","you","we","they","been","do","does","did","may","also","than","more","into","if","up","out","no","only","so","about","what","when","how","which","who","where","why","just","get","set","use","let","now","see","two","one","over","most","very","some","any","many","much","few","after","before","between","through","during","without","within","against","under","above","below","these","those","here","there","then","other","each","every","both","such","should","could","would","might","must","shall","need","want","like","make","take","come","know","think","find","give","tell","call","try","keep","still","even","while","too","same","own","back","first","last","next","high","based","using","used","data","code","security","attack","system","open","update","tool","version","release","report","advisory","critical","patch","blog","post","package","malicious","vulnerability","vulnerabilities","exploit","remote","execution","server","client","access","authenticated","allow","allows","issue","fixed","fix","해","수","등"]);
+  const stopwords = new Set(["the","a","an","in","of","to","for","and","is","on","with","by","at","from","this","that","are","was","be","it","as","or","but","not","has","had","have","will","can","all","new","via","its","our","your","you","we","they","been","do","does","did","may","also","than","more","into","if","up","out","no","only","so","about","what","when","how","which","who","where","why","just","get","set","use","let","now","see","two","one","over","most","very","some","any","many","much","few","after","before","between","through","during","without","within","against","under","above","below","these","those","here","there","then","other","each","every","both","such","should","could","would","might","must","shall","need","want","like","make","take","come","know","think","find","give","tell","call","try","keep","still","even","while","too","same","own","back","first","last","next","high","based","using","used","data","code","security","attack","system","open","update","tool","version","release","report","advisory","critical","patch","blog","post","package","malicious","vulnerability","vulnerabilities","exploit","remote","execution","server","client","access","authenticated","allow","allows","issue","fixed","fix","cve","해","수","등","安全","漏洞","分析","技术","通过","使用","进行","实现","发现","研究","可能","已经","攻击","利用","以及","关于","如何","问题","方法","工具","平台","系统","网络","信息","威胁","检测","防护","恶意","软件","更新","发布","公告"]);
   const freq = {};
-  for (const word of allText.toLowerCase().replace(/[^a-z0-9一-鿿\-]+/g, " ").split(/\s+/)) {
-    if (word.length < 3 || stopwords.has(word)) continue;
+  // English words
+  for (const word of allText.toLowerCase().replace(/[^a-z0-9\-]/g, " ").split(/\s+/)) {
+    if (word.length < 3 || /^\d+$/.test(word) || stopwords.has(word)) continue;
     freq[word] = (freq[word] || 0) + 1;
   }
-  const sorted = Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  // CJK bigrams
+  const cjk = allText.replace(/[^一-鿿]/g, "");
+  for (let i = 0; i < cjk.length - 1; i++) {
+    const bigram = cjk[i] + cjk[i + 1];
+    if (stopwords.has(bigram)) continue;
+    freq[bigram] = (freq[bigram] || 0) + 1;
+  }
+  const sorted = Object.entries(freq).filter(([,c]) => c >= 2).sort((a, b) => b[1] - a[1]).slice(0, 12);
   if (sorted.length === 0) {
     el.innerHTML = `<span class="text-[12px] text-muted">${t("no_data")}</span>`;
     return;
@@ -1246,6 +1254,10 @@ document.querySelectorAll(".tab-pill").forEach(b => {
     document.getElementById("vuln-subfilter").style.display = state.activeTab === "vuln" ? "" : "none";
     document.getElementById("vuln-multifilter").style.display = state.activeTab === "vuln" ? "" : "none";
     document.getElementById("news-catfilter").style.display = state.activeTab === "news" ? "" : "none";
+    if (state.activeTab === "news") {
+      state.newsCategory = "all";
+      document.querySelectorAll("#news-catfilter .sub-pill").forEach(x => x.setAttribute("data-on", x.dataset.cat === "all" ? "true" : "false"));
+    }
     const nlf = document.getElementById("news-lang-filter");
     if (state.activeTab === "news") nlf.removeAttribute("hidden"); else nlf.setAttribute("hidden", "");
   });

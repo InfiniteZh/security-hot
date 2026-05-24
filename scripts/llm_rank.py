@@ -50,15 +50,16 @@ NEWS_SYSTEM_PROMPT = """你是安全情报编辑。对每篇文章完成三项�
    - "research"：安全研究（新攻击技术、学术论文、工具发布、逆向分析）
    - "industry"：行业动态（厂商新闻、市场分析、人事变动、会议活动）
 
-3. 如果原文是英文，写一段中文摘要（2-3句，<=150字），帮助中文读者快速判断是否值得关注。中文原文则 summary_zh 留空串。
+3. 如果原文是英文（lang=en），必须写一段中文摘要（2-3句，<=150字），帮助中文读者快速判断是否值得关注。中文原文（lang=zh）的 summary_zh 留空串。
 
-输出严格 JSON: {"results":[{"id":<int>,"score":<int 1-10>,"cat":"<category>","reason":"中文<=24字","summary_zh":"...或空串"}]}
+输出严格 JSON: {"results":[{"id":<int>,"score":<int 1-10>,"cat":"<category>","reason":"中文<=50字","summary_zh":"...或空串"}]}
 id 必须与输入序号对应。不要在 JSON 外输出任何文字。"""
 
-VULN_SYSTEM_PROMPT = """你是漏洞情报分析师。对每条漏洞，基于描述、是否有 PoC/KEV/在野利用、影响范围，给出：
+VULN_SYSTEM_PROMPT = """你是漏洞情报分析师。对每条漏洞，基于描述、是否有 PoC/KEV/在野利用、受影响厂商和产品的部署广泛程度，给出：
 
 1. ai_severity: critical/high/medium/low — 你的独立判断，可以与 CVSS 不同
    例如：CVSS 7.5 但有在野利用+广泛部署 → critical；CVSS 9.0 但仅影响冷门软件 → high
+   注意：界面会同时展示 CVSS 评分和你的 AI 判断，用户可以对比两者。
 2. summary: 中文 2-3 句话（<=200字），说明漏洞是什么、影响什么、紧急程度
 
 输出严格 JSON: {"results":[{"id":<int>,"ai_severity":"<severity>","summary":"<中文摘要>"}]}
@@ -92,7 +93,7 @@ async def _llm_call(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_msg},
         ],
-        "temperature": 0.2,
+        "temperature": 0,
         "response_format": {"type": "json_object"},
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -113,7 +114,7 @@ def _news_needs_processing(a: dict, rescore: bool) -> bool:
     has_cat = a.get("llm_category") in VALID_CATS
     if rescore:
         return not has_cat
-    return not has_score
+    return not (has_score and has_cat)
 
 
 async def rank_news(
@@ -295,8 +296,18 @@ async def assess_vulns(limit: int | None = None, verbose: bool = True) -> dict:
                 flag_str = f" [{', '.join(flags)}]" if flags else ""
                 cvss_str = f" CVSS={v.cvss}" if v.cvss else ""
                 epss_str = f" EPSS={v.epss_score:.3f}" if v.epss_score else ""
+                ctx_parts = []
+                if v.vendor:
+                    ctx_parts.append(f"Vendor={v.vendor}")
+                if v.product:
+                    ctx_parts.append(f"Product={v.product}")
+                if v.ecosystem:
+                    ctx_parts.append(f"Ecosystem={v.ecosystem}")
+                if v.package:
+                    ctx_parts.append(f"Package={v.package}")
+                ctx_str = f" [{', '.join(ctx_parts)}]" if ctx_parts else ""
                 msg_parts.append(
-                    f"[{local_id}] {v.cve_id or v.id}{flag_str}{cvss_str}{epss_str}\n"
+                    f"[{local_id}] {v.cve_id or v.id}{flag_str}{cvss_str}{epss_str}{ctx_str}\n"
                     f"  Title: {v.title[:200]}\n"
                     f"  Summary: {v.summary[:400]}"
                 )
