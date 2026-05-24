@@ -206,6 +206,24 @@ def api_manifest() -> Manifest:
     return manifest_fn()
 
 
+@app.get("/api/brief", tags=["news"])
+def api_brief(
+    date: str | None = Query(default=None, description="YYYY-MM-DD; default today"),
+) -> JSONResponse:
+    """Return daily briefing per category for a given date."""
+    from datetime import datetime as _dt, timezone as _tz
+    import json as _json
+    target = date or _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    brief_path = ROOT / "backend" / "cache" / "daily_brief.json"
+    if not brief_path.exists():
+        return JSONResponse({"date": target, "briefs": {}})
+    try:
+        all_briefs = _json.loads(brief_path.read_text(encoding="utf-8"))
+    except (_json.JSONDecodeError, OSError):
+        return JSONResponse({"date": target, "briefs": {}})
+    return JSONResponse({"date": target, "briefs": all_briefs.get(target, {})})
+
+
 @app.get("/api/diff", tags=["overview"])
 def api_diff(
     since: str = Query(..., description="show items first seen on or after this date (YYYY-MM-DD)"),

@@ -504,6 +504,14 @@
 
         <!-- panel: NEWS -->
         <section class="panel space-y-3" data-panel="news" hidden>
+          <!-- daily brief card -->
+          <div id="daily-brief" class="border hairline bg-surface rounded-xl p-5 mb-4" style="display:none">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-[14px] font-semibold tracking-tight" data-i18n="brief.title">今日简报</h3>
+              <button id="brief-toggle" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest">▼</button>
+            </div>
+            <div id="brief-content" class="space-y-4"></div>
+          </div>
           <div class="news-list grid grid-cols-1 lg:grid-cols-2 gap-3" id="news-list"></div>
         </section>
 
@@ -650,6 +658,9 @@ const state = {
   sort: "heat",
   newsLang: "all",
   newsCategory: "all",
+  brief: null,
+  briefDate: null,
+  briefCollapsed: false,
   q: "",
   selectedDate: null,   // YYYY-MM-DD; null = "today"
   windowEnd: null,      // YYYY-MM-DD of right-most date cell
@@ -1230,6 +1241,68 @@ document.addEventListener("click", (e) => {
   triggerRefresh(only);
 });
 
+const CAT_LABELS = {
+  "incident": () => t("cat.incident"),
+  "vuln": () => t("cat.vuln"),
+  "supply-chain": () => t("cat.supply-chain"),
+  "research": () => t("cat.research"),
+  "industry": () => t("cat.industry"),
+  "uncategorized": () => t("cat.uncategorized"),
+};
+const BRIEF_BORDER = {
+  "incident": "border-crit",
+  "vuln": "border-high",
+  "supply-chain": "border-med",
+  "research": "border-low",
+  "industry": "border-dim",
+};
+
+async function fetchBrief() {
+  if (state.briefDate === state.selectedDate && state.brief !== null) return;
+  const dateParam = state.selectedDate ? `?date=${state.selectedDate}` : "";
+  try {
+    const data = await api(`/api/brief${dateParam}`);
+    state.brief = data.briefs || {};
+    state.briefDate = state.selectedDate;
+  } catch (e) {
+    state.brief = {};
+    state.briefDate = state.selectedDate;
+  }
+}
+
+function renderBrief() {
+  const container = document.getElementById("daily-brief");
+  const content = document.getElementById("brief-content");
+  const btn = document.getElementById("brief-toggle");
+  const briefs = state.brief || {};
+  const cats = Object.keys(briefs);
+  if (cats.length === 0) {
+    container.style.display = "none";
+    return;
+  }
+  container.style.display = "";
+  content.style.display = state.briefCollapsed ? "none" : "";
+  btn.textContent = state.briefCollapsed ? "▶" : "▼";
+  content.innerHTML = cats.map(cat => {
+    const b = briefs[cat];
+    const label = (CAT_LABELS[cat] || (() => cat))();
+    const borderCls = BRIEF_BORDER[cat] || "border-dim";
+    return `
+      <div class="border-l-2 ${borderCls} pl-4">
+        <div class="flex items-center gap-2 mb-1.5">
+          <span class="cat-pill cat-${cat}">${escapeHtml(label)}</span>
+          <span class="font-mono text-[10.5px] text-dim">${b.article_count || 0} articles</span>
+        </div>
+        <div class="text-[13px] text-ink-soft leading-relaxed whitespace-pre-line">${escapeHtml(b.text || "")}</div>
+      </div>`;
+  }).join("");
+}
+
+document.getElementById("brief-toggle").addEventListener("click", () => {
+  state.briefCollapsed = !state.briefCollapsed;
+  renderBrief();
+});
+
 function renderAll() {
   applyI18n();
   renderStats();
@@ -1239,6 +1312,7 @@ function renderAll() {
   renderHeat();
   renderTrends();
   renderPipeline();
+  renderBrief();
 }
 
 // ───────────────────── interactivity ─────────────────────
@@ -1394,6 +1468,7 @@ async function fetchOne(key) {
 
 async function fetchAll() {
   await Promise.allSettled(ENDPOINTS.map(ep => fetchOne(ep.key)));
+  await fetchBrief();
   renderAll();
   renderToasts();
 }

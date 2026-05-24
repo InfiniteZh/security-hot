@@ -20,6 +20,8 @@
 │       ├── malpkgs.json       # ossf/malicious-packages commits
 │       ├── heat.json          # cvecrowd (目前空)
 │       ├── news.json          # 22 个精选 RSS 源
+│       ├── vuln_ai.json       # 漏洞 AI 评估结果
+│       ├── daily_brief.json   # 每日分类日报
 │       └── manifest.json      # 各 fetcher 状态
 ├── rss/
 │   ├── awesome-security-feed/    # submodule
@@ -28,7 +30,8 @@
 │   ├── wechat2rss/sec.opml       # 远端缓存
 │   └── merged.opml               # merge_rss.py 产出
 ├── scripts/
-│   ├── fetch_data.py          # 漏洞/PoC/资讯 → backend/cache
+│   ├── fetch_data.py          # 漏洞/PoC/资讯 → backend/cache（支持 --incremental）
+│   ├── llm_rank.py            # 两阶段 LLM 管道 + 漏洞评估 + 日报生成
 │   ├── merge_rss.py           # OPML 合并 + 去重 + 探活
 │   ├── requirements.txt       # 仅 merge_rss.py 用
 │   └── output/                # health.csv / health.md
@@ -104,14 +107,35 @@ uv run python scripts/fetch_data.py --concurrency 12 # 提升 news RSS 并发
 
 跑完 stderr 会有 `[ok] kev count=200 elapsed=1.8s` 这类日志，`manifest.json` 落详细状态。
 
+## LLM 管道（两阶段）
+
+```bash
+uv run python scripts/llm_rank.py                              # 全流程（30天内文章）
+uv run python scripts/llm_rank.py --task news_classify          # Phase 1: 快速分类打分
+uv run python scripts/llm_rank.py --task news_summarize         # Phase 2: 高分英文生成中文摘要
+uv run python scripts/llm_rank.py --task vuln_assess            # 漏洞 AI 评估
+uv run python scripts/llm_rank.py --task daily_brief            # 每日分类日报
+uv run python scripts/llm_rank.py --days 0 --rescore            # 处理所有文章（不限30天）
+uv run python scripts/llm_rank.py --min-score 7                 # 仅 >=7 分的文章生成摘要
+```
+
+- **Phase 1**（分类+打分）：batch=80，并发 4 路，仅输出 score+cat+reason，极快
+- **Phase 2**（摘要）：仅处理 `llm_score >= min_score` 的英文文章，节省 ~60% token
+- **30 天限制**：默认只处理 30 天内文章，`--days 0` 解除限制
+- 新闻分类为 5 类：`incident / vuln / supply-chain / research / industry`
+- 漏洞 AI 评估产出 `ai_severity`（独立于 CVSS 判断）和中文概述
+- 日报按分类生成当日摘要，存入 `daily_brief.json`
+
 ## 前端
 
 `web/index.html`：
 
 - 默认中文，右上 `中 / EN` 切换；语言写到 `localStorage` 持久化
 - OpenAI 风格：暖白 `#FAFAF7` 画布、纯白卡片、黑墨主文、Geist + Geist Mono、12px 圆角、温和 hairline
-- Sticky 顶导栏 + Hero 统计 + 日期 strip + Tab + 主体（卡片流）+ 右栏（热度 / 数据源 / 流水线）
-- 三个 tab：行业资讯（带 zh/en/all 子过滤）、漏洞情报（带 5 种 kind 子过滤）、安全论文（占位）
+- Sticky 顶导栏 + Hero 统计 + 日期 strip + Tab + 主体（卡片流）+ 右栏（热度榜 / 趋势关键词 / 流水线）
+- 三个 tab：行业资讯（带 5 类分类子过滤 + zh/en/all）、漏洞情报（带 5 种 kind 子过滤 + AI 评估区块）、安全论文（占位）
+- 行业资讯支持每日分类简报（daily brief）、新闻双列网格布局
+- 英文文章自动展示 AI 中文摘要；低质量文章（llm_score<=2）自动过滤
 - 搜索框 200ms 防抖，`⌘K` 聚焦
 - 服务端 503 / 接口失败不会整体崩——`Promise.allSettled` 各 panel 独立渲染
 
