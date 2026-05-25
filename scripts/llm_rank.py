@@ -549,14 +549,21 @@ async def generate_daily_brief(
 
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
             for category in ALL_CATEGORIES:
+                # Use published date, NOT first_seen_date. first_seen_date is
+                # "when we ingested it" — for migrated/freshly-fetched data
+                # everything has first_seen_date=today, so historical brief
+                # queries return zero matches. published is the actual publish
+                # day, which is what the user picks from the date strip.
+                # is_relevant: accept NULL (not yet classified) so cold-start
+                # works without waiting for classify backlog to finish.
                 rows = list(conn.execute("""
                     SELECT title, summary, source_title, llm_summary_zh
                     FROM articles
-                    WHERE first_seen_date = ?
+                    WHERE substr(COALESCE(published, fetched_at), 1, 10) = ?
                       AND llm_category = ?
-                      AND is_relevant = 1
+                      AND (is_relevant = 1 OR is_relevant IS NULL)
                       AND (cluster_id IS NULL OR is_cluster_primary = 1)
-                    ORDER BY llm_score DESC
+                    ORDER BY COALESCE(llm_score, 5) DESC
                     LIMIT 12
                 """, [target_date, category]))
                 if not rows:

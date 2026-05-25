@@ -985,7 +985,7 @@ function renderNewsCard(a) {
   return `
     <article class="card border hairline bg-surface rounded-xl p-5">
       <div class="flex items-start gap-3">
-        <div class="font-mono text-[11px] text-muted shrink-0 w-16 pt-0.5">${escapeHtml(relTime(a.published))}</div>
+        <div class="font-mono text-[11px] text-muted shrink-0 w-16 pt-0.5" title="${escapeHtml(a.published || a.fetched_at || '')}">${escapeHtml(relTime(a.published))}</div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap mb-1.5">
             ${catPill}
@@ -1015,11 +1015,15 @@ function renderNewsCard(a) {
 }
 
 function renderNewsList() {
-  let items = state.news;
+  // When user types a search ≥2 chars, _searchResults holds global API
+  // results that span the full 30-day window; otherwise we use the
+  // date-filtered state.news slice.
+  let items = state._searchResults !== null ? state._searchResults : state.news;
   if (state.newsLang !== "all") items = items.filter(a => a.lang === state.newsLang);
   if (state.newsCategory !== "all") items = items.filter(a => a.llm_category === state.newsCategory);
   const q = state.q.toLowerCase();
-  if (q) items = items.filter(a => (a.title||"").toLowerCase().includes(q) || (a.summary||"").toLowerCase().includes(q) || (a.source_title||"").toLowerCase().includes(q));
+  // Local filter is still applied for q < 2 chars (server-side took over for ≥2)
+  if (q && state._searchResults === null) items = items.filter(a => (a.title||"").toLowerCase().includes(q) || (a.summary||"").toLowerCase().includes(q) || (a.source_title||"").toLowerCase().includes(q));
   const sorted = [...items].sort((a, b) => {
     if (state.sort === "time") return (b.published||"") > (a.published||"") ? 1 : -1;
     const sa = a.llm_score != null ? a.llm_score : -1;
@@ -1028,10 +1032,20 @@ function renderNewsList() {
   });
   const limited = sorted.slice(0, state.newsLimit);
   const el = document.getElementById("news-list");
+  // Banner when in global-search mode so user understands they're not seeing the date slice
+  let searchBanner = "";
+  if (state._searchResults !== null) {
+    const isZh = (typeof lang !== "undefined" && lang === "zh");
+    searchBanner = `<div class="lg:col-span-2 mb-2 px-3.5 py-2 bg-surface border hairline rounded-md text-[12px] font-mono text-dim flex items-center gap-2">
+      <span>🔍</span>
+      <span>${isZh ? "全局搜索" : "Global search"}: <span class="text-ink">"${escapeHtml(state.q)}"</span> · ${state._searchResults.length} ${isZh ? "条结果（跨 30 天）" : "results (30-day window)"}</span>
+      <button class="ml-auto underline hover:text-ink" onclick="document.getElementById('search').value=''; state.q=''; state._searchResults=null; renderNewsList(); renderVulnList();">${isZh ? "清除" : "Clear"}</button>
+    </div>`;
+  }
   if (limited.length === 0) {
-    el.innerHTML = `<div class="border hairline bg-surface rounded-xl p-10 text-center text-muted lg:col-span-2">${t("no_data")}</div>`;
+    el.innerHTML = searchBanner + `<div class="border hairline bg-surface rounded-xl p-10 text-center text-muted lg:col-span-2">${t("no_data")}</div>`;
   } else {
-    let html = limited.map(renderNewsCard).join("");
+    let html = searchBanner + limited.map(renderNewsCard).join("");
     const remaining = sorted.length - state.newsLimit;
     if (remaining > 0) {
       html += `<div class="text-center py-4 lg:col-span-2"><button id="news-load-more" class="border hairline rounded-full px-5 py-2 text-[12px] font-mono uppercase tracking-widest text-muted hover:text-ink hover:border-2 transition">${t("load_more")} <span class="text-dim ml-1">+${remaining}</span></button></div>`;
@@ -1466,13 +1480,40 @@ async function regenerateBrief() {
     return;
   }
   if (r.status === 202) {
-    showRefreshToast(isZh ? "✅ 简报生成中,15s 后自动刷新" : "✅ Generating… auto-refresh in 15s", "ok", 4000);
-    setTimeout(() => {
-      state.briefDate = null; // force re-fetch
-      fetchBrief().then(renderBrief).then(() => {
+    showRefreshToast(isZh ? "✅ 简报生成中…" : "✅ Generating…", "ok", 3000);
+    // Subprocess does 5 LLM calls (~60-90s). Poll every 5s up to 18 attempts.
+    // Stop early when daily_briefs gets a row for the target date.
+    const initialCount = Object.keys(state.brief || {}).length;
+    let attempts = 0;
+    const maxAttempts = 18;
+    const poll = async () => {
+      attempts++;
+      state.briefDate = null;  // bust the fetchBrief cache
+      await fetchBrief();
+      const briefs = state.brief || {};
+      const cats = Object.keys(briefs);
+      // Detect change: either cats count changed, or any generated_at is newer
+      const changed = cats.length !== initialCount ||
+        (cats.length > 0 && cats.some(c => briefs[c].generated_at && briefs[c].generated_at > (new Date(Date.now() - 120000)).toISOString()));
+      if (changed && cats.length > 0) {
+        renderBrief();
         showRefreshToast(isZh ? "✅ 简报已更新" : "✅ Brief updated", "ok", 3000);
-      });
-    }, 15000);
+        return;
+      }
+      if (attempts < maxAttempts) {
+        if (attempts % 3 === 0) {
+          showRefreshToast(isZh ? `⏳ 生成中... (${attempts*5}s)` : `⏳ Generating... (${attempts*5}s)`, "ok", 2500);
+        }
+        setTimeout(poll, 5000);
+      } else {
+        renderBrief();
+        showRefreshToast(
+          isZh ? "⚠ 90s 内未生成。可能该日无相关分类文章，或后台 LLM 调用慢/失败" :
+                 "⚠ Not generated within 90s. Day may have no classified articles, or LLM is slow",
+          "warn", 8000);
+      }
+    };
+    setTimeout(poll, 5000);
     return;
   }
   showRefreshToast(`${t("refresh.failed")}: HTTP ${r.status}`, "error", 5000);
@@ -1592,14 +1633,38 @@ document.addEventListener("click", (e) => {
   renderVulnList(); renderNewsList();
 });
 
-// search
+// ─── search: server-side global ────────────────────────────────────────────
+// state._searchResults: null = not searching; array = results (covers normal
+// news list when set). q < 2 chars falls back to client-side filtering on
+// the currently-loaded slice (cheap + responsive for short queries).
 let searchTimer;
+state._searchResults = null;
+
+async function performGlobalSearch(q) {
+  if (!q || q.length < 2) {
+    state._searchResults = null;
+    renderNewsList(); renderVulnList();
+    return;
+  }
+  try {
+    // Hit the API without date filter — searches the full 30-day window in
+    // SQLite (already mtime-cached so this is ~5ms after the first hit).
+    const r = await fetch(`/api/news?q=${encodeURIComponent(q)}&limit=200`);
+    if (r.ok) {
+      state._searchResults = await r.json();
+    } else {
+      state._searchResults = [];
+    }
+  } catch (e) {
+    state._searchResults = [];
+  }
+  renderNewsList(); renderVulnList();
+}
+
 document.getElementById("search").addEventListener("input", (e) => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => {
-    state.q = e.target.value.trim();
-    renderVulnList(); renderNewsList();
-  }, 200);
+  state.q = e.target.value.trim();
+  searchTimer = setTimeout(() => performGlobalSearch(state.q), 250);
 });
 // cmd-k focus
 window.addEventListener("keydown", (e) => {
