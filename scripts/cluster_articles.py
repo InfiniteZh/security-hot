@@ -18,12 +18,15 @@ import numpy as np
 
 import db
 
-# Empirically tuned: 0.85 produces a massive supercluster via transitive
-# closure (A~B~C~D…) on the e5-small + "query:" prefix output for short
-# security titles, because everything has high baseline cosine within the
-# same domain. 0.92 keeps mirrors/paraphrases together while breaking the
-# transitive chains.
-COSINE_THRESHOLD = 0.92
+# Even with the cross-source guard, alternating-source chains
+# A(X)→B(Y)→C(X)→D(Y) form transitive megaclusters at 0.85 because
+# baseline cross-domain cosine on tech-domain titles sits in 0.70-0.85.
+# Empirical: true cross-source mirrors in our data sit at 0.99-1.00
+# (aggregators republishing literally identical titles). 0.95 keeps
+# those while rejecting transitive noise. Paraphrases / translations
+# we miss are rare and acceptable trade-off; raising recall on those
+# would require sub-title features (NER, vendor extraction).
+COSINE_THRESHOLD = 0.95
 
 
 class UnionFind:
@@ -64,10 +67,19 @@ def _pick_primary(group: list[dict]) -> int:
 
 def _cluster_one_day_partition(rows: list, conn, now_iso: str) -> int:
     """Pure clustering pass on articles already filtered to one day.
-    Returns number of new clusters created in this partition."""
+
+    Cross-source only: two articles only union if they're from DIFFERENT
+    source_slugs. 'Mirror' means same story reported by multiple sources;
+    a single source posting 30 batch CVE notices (VulDB, NVD enumerators)
+    is not a mirror — it's that source's high-throughput posting style.
+    Without this guard, template-heavy feeds form huge clusters dominated
+    by their own back-catalog.
+    Returns number of new clusters created in this partition.
+    """
     if len(rows) < 2:
         return 0
     ids = [r["id"] for r in rows]
+    sources = [r.get("source_slug") or "" for r in rows]
     n = len(ids)
     M = np.zeros((n, 384), dtype=np.float32)
     for i, r in enumerate(rows):
@@ -80,6 +92,8 @@ def _cluster_one_day_partition(rows: list, conn, now_iso: str) -> int:
         hits = np.where(row_sim >= COSINE_THRESHOLD)[0]
         for offset in hits:
             j = i + 1 + int(offset)
+            if sources[i] == sources[j]:
+                continue  # same-source pair — not a real mirror
             uf.union(ids[i], ids[j])
 
     members_by_root: dict = {}
@@ -89,6 +103,12 @@ def _cluster_one_day_partition(rows: list, conn, now_iso: str) -> int:
     n_clusters = 0
     for _root_id, group in members_by_root.items():
         if len(group) < 2:
+            continue
+        # Final guard: a cluster must span ≥2 distinct sources. Without
+        # this, a same-source chain could still get pulled in indirectly
+        # via a 3-source A↔B↔C path where B is the only outsider.
+        distinct_sources = {g.get("source_slug") or "" for g in group}
+        if len(distinct_sources) < 2:
             continue
         primary_id = _pick_primary(group)
         mirror_ids = [g["id"] for g in group if g["id"] != primary_id]
@@ -123,7 +143,7 @@ def cluster_articles_in_db(
         # Bucket by publish day; SQLite date() handles both ISO 'T' and ' ' formats.
         rows_by_day: dict[str, list] = {}
         for r in conn.execute("""
-            SELECT a.id, a.title, a.lang, a.fetched_at, e.embedding,
+            SELECT a.id, a.title, a.lang, a.source_slug, a.fetched_at, e.embedding,
                    substr(COALESCE(a.published, a.fetched_at), 1, 10) AS pub_day
             FROM articles a
             JOIN article_embeddings e ON e.article_id = a.id
