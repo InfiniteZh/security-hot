@@ -1179,8 +1179,6 @@ SNAPSHOT_KEYS: list[tuple[str, str, str | None]] = [
     ("pocs", "items", "id"),
     ("itw", "items", "id"),
     ("news", "articles", "link"),
-    ("osv-npm", "items", "id"),
-    ("osv-pypi", "items", "id"),
     ("nuclei", "items", None),
     ("hn", "items", "id"),
     ("masto", "items", "uri"),
