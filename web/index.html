@@ -1417,9 +1417,19 @@ async function regenerateBrief() {
   let token = getRefreshToken();
   if (!token) {
     token = window.prompt(t("refresh.prompt"));
-    if (!token) return;
+    if (token === null) {
+      // User pressed Cancel — silent return is bad UX; surface feedback.
+      showRefreshToast(isZh ? "已取消生成" : "Cancelled", "warn", 3000);
+      return;
+    }
     token = token.trim();
-    if (!token) return;
+    if (!token) {
+      showRefreshToast(
+        isZh ? "❌ 未输入 token，无法生成。请在 .env 配置 SECURITY_HOT_REFRESH_TOKEN 后填入"
+             : "❌ Empty token — set SECURITY_HOT_REFRESH_TOKEN in .env first, then paste it",
+        "error", 6000);
+      return;
+    }
     setRefreshToken(token);
   }
   const targetDate = state.briefDate || state.selectedDate || todayUtc();
