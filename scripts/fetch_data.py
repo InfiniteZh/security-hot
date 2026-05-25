@@ -405,97 +405,6 @@ async def fetch_one_feed(client: httpx.AsyncClient, source: dict, max_entries: i
         return {**source, "ok": False, "error": f"{type(exc).__name__}: {exc}"[:200], "entries": []}
 
 
-async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8, incremental: bool = False) -> dict:
-    sem = asyncio.Semaphore(concurrency)
-
-    async def bounded(src):
-        async with sem:
-            return await fetch_one_feed(client, src)
-
-    sources_to_pull = _news_sources_to_use()
-    print(f"[news] pulling {len(sources_to_pull)} sources (merged.opml + curated)", file=sys.stderr)
-    results = await asyncio.gather(*[bounded(s) for s in sources_to_pull])
-
-    articles = []
-    sources = []
-    for s in results:
-        sources.append({
-            "slug": s["slug"],
-            "title": s["title"],
-            "url": s["url"],
-            "lang": s["lang"],
-            "category": s.get("category"),
-            "ok": s["ok"],
-            "error": s.get("error"),
-            "count": len(s.get("entries", [])),
-        })
-        for e in s.get("entries", []):
-            articles.append({
-                "title": e["title"],
-                "link": e["link"],
-                "published": e["published"],
-                "summary": e["summary"],
-                "source_slug": s["slug"],
-                "source_title": s["title"],
-                "lang": s["lang"],
-                "category": s.get("category"),
-            })
-    # ─── Layer 1+2 pipeline: dedupe then keyword block ───
-    pre_total = len(articles)
-    articles, url_dropped, title_dropped = _articles_dedupe(articles)
-    articles, keyword_dropped = _articles_keyword_filter(articles)
-
-    # ─── Incremental merge: keep existing articles, prepend only new ones ───
-    incremental_new = 0
-    if incremental:
-        news_path = CACHE / "news.json"
-        if news_path.exists():
-            try:
-                prev_data = json.loads(news_path.read_text(encoding="utf-8"))
-                prev_articles = prev_data.get("articles") or []
-                prev_links = {_canonical_url(a.get("link", "")) for a in prev_articles}
-                new_articles = [a for a in articles if _canonical_url(a.get("link", "")) not in prev_links]
-                incremental_new = len(new_articles)
-                articles = new_articles + prev_articles
-                articles = articles[:6000]
-                print(f"[news] incremental: {incremental_new} new, {len(articles)} total", file=sys.stderr)
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    filter_meta = {
-        "raw_articles": pre_total,
-        "url_duplicates": len(url_dropped),
-        "title_duplicates": len(title_dropped),
-        "keyword_filtered": len(keyword_dropped),
-        "kept": len(articles),
-        "incremental_new": incremental_new,
-    }
-
-    filtered_sample = (
-        url_dropped[:100] + title_dropped[:50] + keyword_dropped[:50]
-    )
-
-    out = {
-        "articles": articles,
-        "sources": sources,
-        "count": len(articles),
-        "filter_meta": filter_meta,
-        "filtered_out": filtered_sample,
-        "fetched_at": now_iso(),
-    }
-    write_json("news.json", out)
-
-    # LLM scoring is fully decoupled. Run `python scripts/llm_rank.py` separately.
-    llm_meta = None
-
-    return {
-        "name": "news",
-        "count": len(articles),
-        "filter_meta": filter_meta,
-        "llm_meta": llm_meta,
-    }
-
-
 # ────────── Layer 1: URL + title dedupe ──────────
 # Prefix-based instead of a named whitelist: tracking params multiply faster
 # than we can enumerate. Anything starting with these prefixes (case-insensitive)
@@ -540,53 +449,6 @@ def _canonical_url(url: str) -> str:
     if host.startswith("www."):
         host = host[4:]
     return f"{p.scheme.lower()}://{host}{path}" + (f"?{query}" if query else "")
-
-
-def _title_signature(title: str) -> str:
-    """Lowercase, drop punctuation/whitespace, keep CJK + alphanum, first
-    80 chars. Catches re-titled reposts where spacing or punctuation
-    drifts but the core text is the same."""
-    if not title:
-        return ""
-    sig = re.sub(r"[^\w一-鿿]+", "", title.lower())
-    return sig[:80]
-
-
-def _articles_dedupe(articles: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
-    """Return (kept, url_duplicates, title_duplicates).
-
-    Two passes: URL first (stronger signal), then title (catches reposts
-    with different paths). Sources earlier in the list win ties — the
-    fetch is already ordered by NEWS_SOURCES order, so curated supply-
-    intel vendors get keep-priority over bulk OPML mirrors of the same
-    story.
-
-    Kept entries get their `link` rewritten to the canonical form so the
-    downstream LLM-incremental check (which keys off `link`) doesn't
-    re-score the same article when a different upstream re-shares it
-    with different tracking params.
-    """
-    seen_urls: set[str] = set()
-    seen_titles: set[str] = set()
-    kept: list[dict] = []
-    url_dropped: list[dict] = []
-    title_dropped: list[dict] = []
-    for a in articles:
-        u = _canonical_url(a.get("link") or "")
-        if u and u in seen_urls:
-            url_dropped.append({**a, "drop_reason": "url-dup"})
-            continue
-        t = _title_signature(a.get("title") or "")
-        if t and t in seen_titles:
-            title_dropped.append({**a, "drop_reason": "title-dup"})
-            continue
-        if u:
-            seen_urls.add(u)
-            a["link"] = u  # write canonical back so incremental key is stable
-        if t:
-            seen_titles.add(t)
-        kept.append(a)
-    return kept, url_dropped, title_dropped
 
 
 # ────────── Layer 2: keyword blocklist ──────────
@@ -713,20 +575,30 @@ async def _fetch_one_source_to_sqlite(
 
     parsed = feedparser.parse(r.content)
     first_seen_date = now_iso[:10]
+
+    entries_raw = [{
+        "title": (e.get("title") or "(untitled)")[:500],
+        "summary": (e.get("summary") or "")[:2000],
+        "link": _make_canonical(e.get("link", "")),
+        "_raw": e,
+    } for e in parsed.entries[:80] if e.get("link")]
+
+    # Layer 2: keyword block (Layer 1 dedupe is handled by SQLite UNIQUE)
+    kept, _dropped = _articles_keyword_filter(entries_raw)
+
     n = 0
-    for entry in parsed.entries[:80]:  # match existing per-source cap
-        link = _make_canonical(entry.get("link", ""))
-        if not link:
+    for art in kept:
+        if not art["link"]:
             continue
         rowid = _db.upsert_article(conn, {
-            "canonical_url": link,
-            "title": (entry.get("title") or "(untitled)")[:500],
-            "summary": (entry.get("summary") or "")[:2000],
+            "canonical_url": art["link"],
+            "title": art["title"],
+            "summary": art["summary"],
             "source_slug": src["slug"],
             "source_title": src.get("title"),
             "lang": src.get("lang"),
             "rss_category": None,
-            "published": _entry_published_iso(entry),
+            "published": _entry_published_iso(art["_raw"]),
             "fetched_at": now_iso,
             "first_seen_date": first_seen_date,
         })
