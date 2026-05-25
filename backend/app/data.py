@@ -17,6 +17,8 @@ from .models import (
     NewsCategory,
     PocLink,
     Reference,
+    SearchLink,
+    SearchResult,
     SourceStatus,
     Severity,
     TodaySummary,
@@ -993,3 +995,56 @@ def today_summary() -> TodaySummary:
         sev_breakdown=sev,
         last_fetch=manifest().fetched_at,
     )
+
+
+_CVE_SEARCH_RE = re.compile(r"CVE-\d{4}-\d{4,}", re.IGNORECASE)
+
+
+def search_aggregated(q: str, limit: int = 10) -> SearchResult:
+    """Cross-domain search: news + vulns + CVE-based links between them."""
+    # --- News ---
+    raw_news = search_articles(q, limit=max(limit * 3, 300))
+    # Filter out uncategorized articles (same rule as /api/news)
+    filtered_news = [
+        a for a in raw_news
+        if a.llm_category not in (None, "", "uncategorized")
+    ]
+    filtered_news.sort(key=lambda a: a.llm_score if a.llm_score is not None else -1, reverse=True)
+    news = filtered_news[:limit]
+
+    # --- Vulns ---
+    ql = q.lower()
+    matched_vulns = [
+        v for v in all_vulns()
+        if any(
+            ql in (f or "").lower()
+            for f in (v.title, v.summary, v.cve_id, v.ghsa_id, v.package, v.vendor, v.product)
+        )
+    ]
+    matched_vulns.sort(key=lambda v: -v.heat)
+    vulns = matched_vulns[:limit]
+
+    # --- CVE links ---
+    cve_to_news: dict[str, list[int]] = {}
+    for a in news:
+        text = (a.title or "") + " " + (a.summary or "") + " " + (a.llm_summary_zh or "")
+        for m in _CVE_SEARCH_RE.findall(text):
+            cve = m.upper()
+            cve_to_news.setdefault(cve, [])
+            if a.id is not None and a.id not in cve_to_news[cve]:
+                cve_to_news[cve].append(a.id)
+
+    cve_to_vuln: dict[str, list[str]] = {}
+    for v in vulns:
+        if v.cve_id:
+            cve_to_vuln.setdefault(v.cve_id, [])
+            if v.id not in cve_to_vuln[v.cve_id]:
+                cve_to_vuln[v.cve_id].append(v.id)
+
+    links = [
+        SearchLink(cve_id=cve, vuln_ids=cve_to_vuln[cve], news_ids=cve_to_news[cve])
+        for cve in cve_to_news
+        if cve in cve_to_vuln
+    ]
+
+    return SearchResult(query=q, vulns=vulns, news=news, links=links)

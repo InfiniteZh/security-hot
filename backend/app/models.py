@@ -127,3 +127,16 @@ class TodaySummary(BaseModel):
 class Manifest(BaseModel):
     fetched_at: str
     results: list[FetcherStatus] = Field(default_factory=list)
+
+
+class SearchLink(BaseModel):
+    cve_id: str
+    vuln_ids: list[str] = Field(default_factory=list)
+    news_ids: list[int] = Field(default_factory=list)
+
+
+class SearchResult(BaseModel):
+    query: str
+    vulns: list[Vuln] = Field(default_factory=list)
+    news: list[Article] = Field(default_factory=list)
+    links: list[SearchLink] = Field(default_factory=list)

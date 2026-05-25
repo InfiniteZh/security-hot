@@ -49,6 +49,7 @@ from .data import (
     all_vulns,
     heat_board,
     manifest as manifest_fn,
+    search_aggregated,
     search_articles,
     today_summary,
 )
@@ -56,6 +57,7 @@ from .models import (
     Article,
     HeatEntry,
     Manifest,
+    SearchResult,
     SourceStatus,
     TodaySummary,
     Vuln,
@@ -163,6 +165,14 @@ def api_news(
             reverse=True,
         )
     return items[:limit]
+
+
+@app.get("/api/search", response_model=SearchResult, tags=["search"])
+def api_search(
+    q: str = Query(..., min_length=2, description="Search query"),
+    limit: int = Query(default=10, ge=1, le=30, description="Max results per category"),
+) -> SearchResult:
+    return search_aggregated(q, limit)
 
 
 @app.get("/api/vuln", response_model=list[Vuln], tags=["vulnerability"])
