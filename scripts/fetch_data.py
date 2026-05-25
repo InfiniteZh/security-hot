@@ -41,9 +41,12 @@ from xml.etree import ElementTree as ET
 import feedparser
 import httpx
 
+import db as _db  # SQLite helpers from scripts/db.py
+
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "backend" / "cache"
 CACHE.mkdir(parents=True, exist_ok=True)
+ARCHIVE_DIR = ROOT / "backend" / "archive" / "news"
 
 USER_AGENT = (
     "Mozilla/5.0 (compatible; security-hot/1.0; +https://github.com/) "
@@ -654,6 +657,127 @@ def _articles_keyword_filter(articles: list[dict]) -> tuple[list[dict], list[dic
         else:
             kept.append(a)
     return kept, dropped
+
+
+def _entry_published_iso(entry) -> str | None:
+    """Normalize feedparser entry published time to ISO 8601 UTC string."""
+    from time import struct_time
+    pt = entry.get("published_parsed") or entry.get("updated_parsed")
+    if not pt or not isinstance(pt, struct_time):
+        return None
+    try:
+        return datetime(*pt[:6], tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    except (ValueError, OverflowError):
+        return None
+
+
+def _make_canonical(link: str) -> str:
+    """Apply the existing URL canonicalization to a single link."""
+    return _canonical_url(link)
+
+
+async def _fetch_one_source_to_sqlite(
+    client: httpx.AsyncClient,
+    src: dict,
+    conn,
+    now_iso: str,
+) -> tuple[int, int]:
+    """Fetch one RSS source with Conditional GET; upsert into SQLite.
+
+    Returns (n_inserted, status_code). status_code=304 means not modified.
+    """
+    headers: dict[str, str] = {}
+    if src.get("last_etag"):
+        headers["If-None-Match"] = src["last_etag"]
+    if src.get("last_modified"):
+        headers["If-Modified-Since"] = src["last_modified"]
+    try:
+        r = await client.get(src["url"], headers=headers)
+    except Exception as exc:
+        _db.record_source_fetch(conn, src["slug"], now=now_iso,
+                                etag=None, last_modified=None,
+                                ok=False, error=str(exc)[:200])
+        return (0, 0)
+    if r.status_code == 304:
+        _db.record_source_fetch(conn, src["slug"], now=now_iso,
+                                etag=src.get("last_etag"),
+                                last_modified=src.get("last_modified"),
+                                ok=True)
+        print(f"[news] {src['slug']:>20}: 304 not-modified", file=sys.stderr)
+        return (0, 304)
+    if r.status_code >= 400:
+        _db.record_source_fetch(conn, src["slug"], now=now_iso,
+                                etag=None, last_modified=None,
+                                ok=False, error=f"HTTP {r.status_code}")
+        return (0, r.status_code)
+
+    parsed = feedparser.parse(r.content)
+    first_seen_date = now_iso[:10]
+    n = 0
+    for entry in parsed.entries[:80]:  # match existing per-source cap
+        link = _make_canonical(entry.get("link", ""))
+        if not link:
+            continue
+        rowid = _db.upsert_article(conn, {
+            "canonical_url": link,
+            "title": (entry.get("title") or "(untitled)")[:500],
+            "summary": (entry.get("summary") or "")[:2000],
+            "source_slug": src["slug"],
+            "source_title": src.get("title"),
+            "lang": src.get("lang"),
+            "rss_category": None,
+            "published": _entry_published_iso(entry),
+            "fetched_at": now_iso,
+            "first_seen_date": first_seen_date,
+        })
+        if rowid:
+            n += 1
+    _db.record_source_fetch(conn, src["slug"], now=now_iso,
+                            etag=r.headers.get("ETag"),
+                            last_modified=r.headers.get("Last-Modified"),
+                            ok=True)
+    return (n, r.status_code)
+
+
+async def fetch_news_to_sqlite(
+    *,
+    concurrency: int = 8,
+    now_iso: str | None = None,
+    db_path=None,
+) -> dict:
+    """SQLite-backed news fetcher. Replaces the news.json write path.
+
+    Picks 'due' sources via db.due_sources(), respects ETag/If-Modified-Since,
+    upserts new articles into the articles table.
+    """
+    ts = now_iso if now_iso is not None else now_iso()
+    conn = _db.connect(db_path)
+    _db.init_schema(conn)  # idempotent — safe to call every run
+    due = _db.due_sources(conn, ts)
+    print(f"[news] {len(due)} sources due (out of total in sources table)", file=sys.stderr)
+
+    sem = asyncio.Semaphore(concurrency)
+    inserted_total = 0
+    not_modified = 0
+
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    async with httpx.AsyncClient(headers=HEADERS, timeout=timeout,
+                                  follow_redirects=True) as client:
+        async def one(src):
+            nonlocal inserted_total, not_modified
+            async with sem:
+                n, status = await _fetch_one_source_to_sqlite(client, dict(src), conn, ts)
+                inserted_total += n
+                if status == 304:
+                    not_modified += 1
+        await asyncio.gather(*[one(s) for s in due])
+
+    conn.close()
+    return {
+        "name": "news", "ok": True, "status": "ok",
+        "count": inserted_total, "due_sources": len(due),
+        "not_modified": not_modified,
+    }
 
 
 async def fetch_epss(client: httpx.AsyncClient) -> dict:
