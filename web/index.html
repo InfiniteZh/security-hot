@@ -303,7 +303,7 @@
     font-weight: 400;
   }
 
-  /* — Filter pills — */
+  /* — Filter pills (primary: categories) — */
   .pill {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 5px 12px;
@@ -330,6 +330,57 @@
     font-weight: 400;
   }
   .pill[data-on="true"] .count { color: rgba(255,255,255,0.55); }
+
+  /* — Secondary controls (sort, lang, hidden) — quieter, smaller, group together — */
+  .controls-row {
+    display: flex; align-items: center; gap: 14px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed var(--hairline);
+    font-family: "Geist Mono", monospace;
+    font-size: 11.5px;
+    color: var(--paper-faint);
+    flex-wrap: wrap;
+  }
+  .controls-row .label {
+    color: var(--paper-veil);
+    letter-spacing: 0.04em;
+  }
+  .seg {
+    display: inline-flex;
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+  .seg button {
+    background: transparent;
+    border: none;
+    padding: 4px 10px;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--paper-faint);
+    cursor: pointer;
+    transition: all 120ms;
+    border-right: 1px solid var(--hairline);
+  }
+  .seg button:last-child { border-right: none; }
+  .seg button:hover { background: var(--surface-2); color: var(--ink); }
+  .seg button[data-on="true"] {
+    background: var(--ink);
+    color: var(--surface);
+  }
+  .text-link {
+    background: transparent;
+    border: none;
+    color: var(--paper-faint);
+    cursor: pointer;
+    font: inherit;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: all 120ms;
+  }
+  .text-link:hover { color: var(--ink); background: var(--surface-2); }
 
   /* — Article cards (editorial light) — */
   .article {
@@ -377,9 +428,40 @@
     color: var(--paper-dim);
     max-width: 76ch;
   }
-  /* Lead article — slightly larger headline, no drop cap on light (looks too magazine-y) */
-  .article.lead .article-title { font-size: 24px; line-height: 1.18; }
-  .article.lead .article-summary { font-size: 14.5px; }
+  /* Lead distinction dropped — uniform reading rhythm is cleaner.
+     (If we ever want to mark the lead, do it with a thin colored marker
+     to the left, not a font-size jump.) */
+
+  /* — AI summary block — sits visibly distinct from original summary so users see */
+  /*   immediately that this is the model's Chinese gloss, not the source's words.   */
+  .ai-summary {
+    margin-top: 8px;
+    padding: 10px 12px 10px 14px;
+    background: #F7F9F6;
+    border-left: 2px solid var(--ok);
+    border-radius: 6px;
+    max-width: 76ch;
+  }
+  .ai-summary-tag {
+    display: inline-block;
+    font-family: "Geist Mono", monospace;
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ok);
+    margin-bottom: 4px;
+    padding: 1px 7px;
+    background: rgba(16,163,127,0.10);
+    border-radius: 3px;
+  }
+  .ai-summary-text {
+    font-family: "Geist", sans-serif;
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--paper-dim);
+    margin: 0;
+  }
 
   /* — Mirror cluster strip — */
   .mirror-strip {
@@ -872,42 +954,44 @@
           </button>
         </nav>
 
-        <!-- CONTEXTUAL FILTER ROW (changes per tab) -->
-        <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
-          <div class="flex items-center gap-2 flex-wrap">
-            <!-- vuln-only kind sub-filter -->
-            <div id="vuln-subfilter" class="flex items-center gap-2 flex-wrap" style="display:none">
-              <button class="pill" data-on="true" data-kind="all"><span data-i18n="vk.all">全部</span> <span class="count" data-count="all">—</span></button>
-              <button class="pill" data-kind="cve"><span data-i18n="vk.cve">CVE · 0day</span> <span class="count" data-count="cve">—</span></button>
-              <button class="pill" data-kind="supply"><span data-i18n="vk.supply">供应链投毒</span> <span class="count" data-count="supply">—</span></button>
-              <button class="pill" data-kind="poc"><span data-i18n="vk.poc">PoC 首发</span> <span class="count" data-count="poc">—</span></button>
-              <button class="pill" data-kind="itw"><span data-i18n="vk.itw">在野利用</span> <span class="count" data-count="itw">—</span></button>
-            </div>
-            <!-- news-only category sub-filter -->
-            <div id="news-catfilter" class="flex items-center gap-2 flex-wrap">
-              <button class="pill" data-on="true" data-cat="all"><span data-i18n="cat.all">全部</span> <span class="count" data-catcount="all">—</span></button>
-              <button class="pill" data-cat="incident"><span data-i18n="cat.incident">安全事件</span> <span class="count" data-catcount="incident">—</span></button>
-              <button class="pill" data-cat="vuln"><span data-i18n="cat.vuln">漏洞情报</span> <span class="count" data-catcount="vuln">—</span></button>
-              <button class="pill" data-cat="supply-chain"><span data-i18n="cat.supply-chain">供应链投毒</span> <span class="count" data-catcount="supply-chain">—</span></button>
-              <button class="pill" data-cat="research"><span data-i18n="cat.research">安全研究</span> <span class="count" data-catcount="research">—</span></button>
-              <button class="pill" data-cat="industry"><span data-i18n="cat.industry">行业动态</span> <span class="count" data-catcount="industry">—</span></button>
-            </div>
+        <!-- PRIMARY FILTER ROW: category pills (high visual weight) -->
+        <div class="mb-3">
+          <!-- vuln-only kind sub-filter -->
+          <div id="vuln-subfilter" class="flex items-center gap-2 flex-wrap" style="display:none">
+            <button class="pill" data-on="true" data-kind="all"><span data-i18n="vk.all">全部</span> <span class="count" data-count="all">—</span></button>
+            <button class="pill" data-kind="cve"><span data-i18n="vk.cve">CVE · 0day</span> <span class="count" data-count="cve">—</span></button>
+            <button class="pill" data-kind="supply"><span data-i18n="vk.supply">供应链投毒</span> <span class="count" data-count="supply">—</span></button>
+            <button class="pill" data-kind="poc"><span data-i18n="vk.poc">PoC 首发</span> <span class="count" data-count="poc">—</span></button>
+            <button class="pill" data-kind="itw"><span data-i18n="vk.itw">在野利用</span> <span class="count" data-count="itw">—</span></button>
           </div>
+          <!-- news-only category sub-filter -->
+          <div id="news-catfilter" class="flex items-center gap-2 flex-wrap">
+            <button class="pill" data-on="true" data-cat="all"><span data-i18n="cat.all">全部</span> <span class="count" data-catcount="all">—</span></button>
+            <button class="pill" data-cat="incident"><span data-i18n="cat.incident">安全事件</span> <span class="count" data-catcount="incident">—</span></button>
+            <button class="pill" data-cat="vuln"><span data-i18n="cat.vuln">漏洞情报</span> <span class="count" data-catcount="vuln">—</span></button>
+            <button class="pill" data-cat="supply-chain"><span data-i18n="cat.supply-chain">供应链投毒</span> <span class="count" data-catcount="supply-chain">—</span></button>
+            <button class="pill" data-cat="research"><span data-i18n="cat.research">安全研究</span> <span class="count" data-catcount="research">—</span></button>
+            <button class="pill" data-cat="industry"><span data-i18n="cat.industry">行业动态</span> <span class="count" data-catcount="industry">—</span></button>
+          </div>
+        </div>
 
-          <div class="flex items-center gap-2">
-            <div class="flex">
-              <button data-sort="heat" class="sort-btn pill" data-on="true"><span data-i18n="sort.heat">AI 排序</span></button>
-              <button data-sort="time" class="sort-btn pill" data-on="false"><span data-i18n="sort.time">时间倒序</span></button>
-            </div>
-            <div id="news-lang-filter" class="flex">
-              <button data-news-lang="all" class="newslang-btn pill" data-on="true"><span data-i18n="lang.all">全部</span></button>
-              <button data-news-lang="zh" class="newslang-btn pill" data-on="false">中</button>
-              <button data-news-lang="en" class="newslang-btn pill" data-on="false">EN</button>
-            </div>
-            <button onclick="toggleHidden()" id="hidden-toggle" class="hidden-toggle" aria-label="隐藏离题">
-              ⊘ <span id="hidden-count">0</span> <span data-i18n="news.hiddenLabel">已隐藏</span>
-            </button>
+        <!-- SECONDARY CONTROLS: sort + lang + hidden — quieter visual weight, one row -->
+        <div class="controls-row mb-5">
+          <span class="label" data-i18n="controls.sort">排序</span>
+          <div class="seg">
+            <button data-sort="heat" class="sort-btn" data-on="true"><span data-i18n="sort.heat">AI 排序</span></button>
+            <button data-sort="time" class="sort-btn" data-on="false"><span data-i18n="sort.time">时间</span></button>
           </div>
+          <span style="color:var(--paper-veil);">·</span>
+          <span class="label" data-i18n="controls.lang">语言</span>
+          <div id="news-lang-filter" class="seg">
+            <button data-news-lang="all" class="newslang-btn" data-on="true"><span data-i18n="lang.all">全</span></button>
+            <button data-news-lang="zh" class="newslang-btn" data-on="false">中</button>
+            <button data-news-lang="en" class="newslang-btn" data-on="false">EN</button>
+          </div>
+          <button onclick="toggleHidden()" id="hidden-toggle" class="text-link ml-auto" aria-label="隐藏离题">
+            ⊘ <span id="hidden-count">0</span> <span data-i18n="news.hiddenLabel">已隐藏</span>
+          </button>
         </div>
 
         <!-- vuln severity multi-filter (only when on vuln tab) -->
@@ -1376,16 +1460,18 @@ function newsCatPill(cat) {
   return `<span class="cat-pill cat-${cat}">${escapeHtml(label)}</span>`;
 }
 
-function renderNewsCard(a, opts = {}) {
-  const isLead = !!opts.lead;
+function renderNewsCard(a) {
   const cat = a.llm_category;
   const catLabel = cat ? (t("cat." + cat) || cat) : "";
-  const showZhSummary = a.lang === "en" && a.llm_summary_zh;
-  const summary = showZhSummary ? a.llm_summary_zh : (a.summary || "");
+  // Show AI Chinese summary whenever it exists, regardless of lang field.
+  // Some sources (defend.network, vulners) leave lang=''; restricting to
+  // lang==='en' dropped the AI summary for them.
+  const aiSummary = a.llm_summary_zh && a.llm_summary_zh.trim();
+  const origSummary = (a.summary || "").trim();
   const byline = a.source_title || a.source_slug || "";
   const absTime = a.published || a.fetched_at || "";
   return `
-    <article class="article ${isLead ? 'lead' : ''}">
+    <article class="article">
       <div class="article-eyebrow">
         ${cat ? `<span class="article-cat cat-${cat}">${escapeHtml(catLabel)}</span>` : ''}
         <span class="article-byline"><span class="byline-by">${lang === 'zh' ? '来自' : 'BY'}</span> ${escapeHtml(byline.toUpperCase())}</span>
@@ -1394,9 +1480,14 @@ function renderNewsCard(a, opts = {}) {
         ${a.llm_score != null ? `<span style="color:var(--paper-veil);">·</span><span class="text-paper-faint">AI ${a.llm_score}</span>` : ''}
       </div>
       <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener">
-        <h3 class="article-title ${isLead ? '' : 'clamp-2'}">${escapeHtml(a.title)}</h3>
+        <h3 class="article-title clamp-2">${escapeHtml(a.title)}</h3>
       </a>
-      ${summary ? `<p class="article-summary ${isLead ? '' : 'clamp-2'}">${escapeHtml(summary)}</p>` : ''}
+      ${aiSummary ? `
+        <div class="ai-summary">
+          <span class="ai-summary-tag">AI 摘要</span>
+          <p class="ai-summary-text clamp-3">${escapeHtml(aiSummary)}</p>
+        </div>
+      ` : (origSummary ? `<p class="article-summary clamp-2">${escapeHtml(origSummary)}</p>` : '')}
       ${(a.mirror_count || 0) > 0 ? `
         <div class="mirror-strip" data-article-id="${a.id}" onclick="expandMirrors(this, ${JSON.stringify(a.id)})">
           ${'<span class="mirror-dot"></span>'.repeat(Math.min(a.mirror_count, 3))}
@@ -1442,12 +1533,8 @@ function renderNewsList() {
       <div class="font-display text-[26px] text-paper-dim" style="font-variation-settings:'opsz' 36;">${t("no_data")}</div>
     </div>`;
   } else {
-    // First article = lead (only when sorting by AI rank, not by time).
-    // Lead gets drop-cap + larger headline.
-    const isLeadEligible = state.sort === "heat" && state._searchResults === null && state.newsCategory === "all";
-    let html = searchBanner;
-    html += limited.map((a, i) => renderNewsCard(a, { lead: i === 0 && isLeadEligible })).join("");
-    el.innerHTML = html;
+    // Uniform card rhythm — no lead enlargement (looked visually unbalanced).
+    el.innerHTML = searchBanner + limited.map(renderNewsCard).join("");
   }
 
   // tab counts

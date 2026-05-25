@@ -327,10 +327,13 @@ async def summarize_news(
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
         limit_clause = f"LIMIT {limit}" if limit else ""
+        # Anything that isn't explicitly Chinese gets a zh summary. OPML
+        # sources don't always tag lang, so 'lang=en' alone misses a lot of
+        # legitimate English articles (saw ~110 missing on the live DB).
         rows = list(conn.execute(f"""
             SELECT id, title, summary
             FROM articles
-            WHERE lang = 'en'
+            WHERE (lang != 'zh' OR lang IS NULL OR lang = '')
               AND llm_score >= ?
               AND is_relevant = 1
               AND llm_summary_zh IS NULL
