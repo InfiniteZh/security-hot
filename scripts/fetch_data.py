@@ -912,6 +912,7 @@ async def _fetch_one_osv_ecosystem(client: httpx.AsyncClient, ecosystem: str) ->
             if entry.get("is_malware"):
                 items.append(entry)
     items.sort(key=lambda x: x.get("modified", ""), reverse=True)
+    items = items[:500]
     out = {
         "ecosystem": ecosystem,
         "items": items,
