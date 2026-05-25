@@ -1402,14 +1402,16 @@ document.getElementById("brief-toggle").addEventListener("click", () => {
 });
 
 async function regenerateBrief() {
-  let token = localStorage.getItem('refreshToken');
+  // Share the same localStorage key as triggerRefresh() so users only enter
+  // their token once across the app (see REFRESH_TOKEN_KEY at top).
+  let token = getRefreshToken();
   if (!token) {
     const isZh = (typeof lang !== 'undefined' && lang === 'zh');
     token = prompt(isZh
       ? 'Refresh token（在 .env 里的 SECURITY_HOT_REFRESH_TOKEN）：'
       : 'Refresh token (from .env SECURITY_HOT_REFRESH_TOKEN):');
     if (!token) return;
-    localStorage.setItem('refreshToken', token);
+    setRefreshToken(token.trim());
   }
   try {
     const r = await fetch('/api/brief/regenerate', {
@@ -1417,7 +1419,7 @@ async function regenerateBrief() {
       headers: {'X-Refresh-Token': token},
     });
     if (r.status === 401) {
-      localStorage.removeItem('refreshToken');
+      clearRefreshToken();
       alert((typeof lang !== 'undefined' && lang === 'zh') ? 'Token 无效，已清除，请重试' : 'Token invalid, cleared, retry');
       return;
     }

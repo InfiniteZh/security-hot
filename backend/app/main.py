@@ -214,18 +214,26 @@ def api_manifest() -> Manifest:
 def api_brief(
     date: str | None = Query(default=None, description="YYYY-MM-DD; default today"),
 ) -> JSONResponse:
-    """Return daily briefing per category for a given date."""
-    from datetime import datetime as _dt, timezone as _tz
-    import json as _json
-    target = date or _dt.now(_tz.utc).strftime("%Y-%m-%d")
-    brief_path = ROOT / "backend" / "cache" / "daily_brief.json"
-    if not brief_path.exists():
+    """Return daily briefing per category for a given date — reads SQLite `daily_briefs` table."""
+    from .data import _news_conn, _NEWS_DB
+    target = _validate_date(date) or _today_utc_str()
+    if not _NEWS_DB.exists():
         return JSONResponse({"date": target, "briefs": {}})
-    try:
-        all_briefs = _json.loads(brief_path.read_text(encoding="utf-8"))
-    except (_json.JSONDecodeError, OSError):
-        return JSONResponse({"date": target, "briefs": {}})
-    return JSONResponse({"date": target, "briefs": all_briefs.get(target, {})})
+    conn = _news_conn()
+    rows = list(conn.execute(
+        "SELECT category, text, article_count, generated_at FROM daily_briefs WHERE date = ?",
+        [target],
+    ))
+    conn.close()
+    briefs = {
+        r["category"]: {
+            "text": r["text"],
+            "article_count": int(r["article_count"] or 0),
+            "generated_at": r["generated_at"],
+        }
+        for r in rows
+    }
+    return JSONResponse({"date": target, "briefs": briefs})
 
 
 def _today_utc_str() -> str:
@@ -255,7 +263,7 @@ async def regenerate_brief(
     Requires SECURITY_HOT_REFRESH_TOKEN header match.
     """
     expected = os.environ.get("SECURITY_HOT_REFRESH_TOKEN")
-    if not expected or x_refresh_token != expected:
+    if not expected or not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
         raise HTTPException(status_code=401, detail="invalid refresh token")
     target = _validate_date(date) or _today_utc_str()
     background.add_task(_run_llm_brief_subprocess, target)

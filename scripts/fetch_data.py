@@ -432,15 +432,22 @@ def _is_tracking_param(key: str) -> bool:
 def _canonical_url(url: str) -> str:
     """Strip tracking params and normalize host/path so the same article
     on two aggregators (or shared with different `?utm_*` tails) is one
-    URL key for dedupe."""
+    URL key for dedupe.
+
+    Security: rejects any URL whose scheme is not http(s). RSS publishers
+    can inject `javascript:` or `data:` URIs in <link> tags; if those reach
+    the frontend they become stored XSS via clickable href attributes.
+    """
     if not url:
         return ""
     try:
         p = urlparse(url.strip())
     except Exception:
-        return url.strip().lower()
+        return ""
+    if p.scheme.lower() not in ("http", "https"):
+        return ""
     if not p.netloc:
-        return url.strip().lower()
+        return ""
     qs = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
           if not _is_tracking_param(k)]
     query = urlencode(qs)
@@ -645,6 +652,32 @@ async def fetch_news_to_sqlite(
     ts = now_iso if now_iso is not None else datetime.now(timezone.utc).isoformat()
     conn = _db.connect(db_path)
     _db.init_schema(conn)  # idempotent — safe to call every run
+
+    # Self-bootstrap: seed sources table from NEWS_SOURCES + OPML if empty.
+    # Avoids needing migrate_to_sqlite as a separate step on fresh deployments.
+    # On subsequent runs the table is non-empty and we skip the upsert loop
+    # (saves O(700) writes per cron tick); operators can manually edit the
+    # sources table to add/remove feeds.
+    existing_sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+    if existing_sources == 0:
+        _TOP_SLUGS = {
+            "freebuf", "anquanke", "4hou", "kanxue", "secrss", "qianxin",
+            "thn", "bleeping", "krebs", "schneier", "talos", "unit42",
+            "msrc", "googlep0", "mandiant", "datadog",
+        }
+        for src in _news_sources_to_use():
+            slug = src.get("slug") or _slug_from_url(src.get("url", ""))
+            tier = "top" if slug in _TOP_SLUGS else "tail"
+            _db.upsert_source(conn, {
+                "slug": slug,
+                "title": src.get("title") or slug,
+                "url": src.get("url"),
+                "lang": src.get("lang"),
+                "tier": tier,
+                "interval_minutes": 30 if tier == "top" else 240,
+            })
+        print(f"[news] bootstrapped {conn.execute('SELECT COUNT(*) FROM sources').fetchone()[0]} sources", file=sys.stderr)
+
     due = _db.due_sources(conn, ts)
     print(f"[news] {len(due)} sources due (out of total in sources table)", file=sys.stderr)
 

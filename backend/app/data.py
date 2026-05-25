@@ -37,6 +37,11 @@ _VALID_CATEGORIES: set[str] = {"incident", "vuln", "supply-chain", "research", "
 def _news_conn() -> _sqlite3.Connection:
     c = _sqlite3.connect(str(_NEWS_DB))
     c.row_factory = _sqlite3.Row
+    # foreign_keys is session-scoped; explicit set is required even on WAL-init'd file.
+    # WAL mode is already sticky in the file header but re-stating it is harmless.
+    c.execute("PRAGMA journal_mode = WAL")
+    c.execute("PRAGMA foreign_keys = ON")
+    c.execute("PRAGMA synchronous = NORMAL")
     return c
 
 
