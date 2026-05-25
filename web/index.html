@@ -185,41 +185,35 @@
   }
 
   /* — Date timeline — */
-  .date-strip { display: flex; align-items: stretch; gap: 0; position: relative; }
-  .date-strip::before {
-    content: ""; position: absolute;
-    left: 8px; right: 8px; top: 50%;
-    height: 1px; background: var(--hairline);
-    z-index: 0;
+  .date-strip {
+    display: flex; align-items: center; gap: 4px;
+    padding: 3px; border-radius: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--hairline);
   }
   .date-node {
-    position: relative; z-index: 1;
     flex: 1; min-width: 0;
-    background: var(--bg);
-    padding: 12px 6px 4px;
+    padding: 6px 4px;
     text-align: center;
     cursor: pointer;
     font-family: "Geist Mono", monospace;
-    transition: color 120ms;
+    border-radius: 7px;
+    transition: all 150ms ease;
     color: var(--paper-faint);
+    background: transparent;
+    border: 1px solid transparent;
   }
-  .date-node:hover { color: var(--ink); }
-  .date-node[aria-current="true"] { color: var(--ink); }
-  .date-node[aria-current="true"] .date-dot {
-    background: var(--ink);
-    width: 9px; height: 9px;
-    box-shadow: 0 0 0 4px var(--bg), 0 0 0 5px var(--ink);
+  .date-node:hover { color: var(--ink); background: var(--surface); }
+  .date-node[aria-current="true"] {
+    color: var(--ink);
+    background: var(--surface);
+    border-color: var(--hairline);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    font-weight: 500;
   }
-  .date-node .date-dot {
-    display: block; margin: 0 auto 6px;
-    width: 6px; height: 6px; border-radius: 50%;
-    background: var(--hairline-2);
-    box-shadow: 0 0 0 4px var(--bg);
-    transition: all 180ms;
-  }
-  .date-node:disabled { opacity: 0.3; cursor: not-allowed; }
-  .date-node .date-dow { font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase; }
-  .date-node .date-num { font-size: 13px; margin-top: 2px; font-weight: 500; }
+  .date-node:disabled { opacity: 0.28; cursor: not-allowed; }
+  .date-node .date-dow { font-size: 10px; letter-spacing: 0.06em; color: inherit; opacity: 0.7; }
+  .date-node .date-num { font-size: 13px; margin-top: 1px; font-weight: inherit; }
 
   /* — Hero brief card — */
   .hero-card {
@@ -851,22 +845,6 @@
   }
   @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
 
-  /* — Trend tags — */
-  .trend-tag {
-    display: inline-block;
-    padding: 4px 10px;
-    margin: 0 4px 4px 0;
-    font-family: "Geist Mono", monospace;
-    font-size: 11px;
-    color: var(--paper-dim);
-    background: var(--surface);
-    border: 1px solid var(--hairline);
-    border-radius: 999px;
-    cursor: pointer;
-    transition: all 140ms;
-  }
-  .trend-tag:hover { color: var(--ink); border-color: var(--hairline-2); background: var(--surface-2); }
-
   /* — Pipeline rows (right rail) — */
   .pipe-summary {
     display: flex; justify-content: space-between; align-items: baseline;
@@ -1078,14 +1056,16 @@
 
     <!-- ─────────── DATE TIMELINE ─────────── -->
     <nav class="pt-6 pb-2 above-grain" aria-label="date">
-      <div class="flex items-center gap-3 mb-1.5 font-mono text-[10px] tracking-[0.18em] uppercase text-paper-faint">
-        <span data-i18n="date.timeline">日期轴</span>
-        <span class="flex-1 h-px" style="background:var(--hairline);"></span>
-        <button id="date-prev" class="hover:text-paper transition">◀ <span data-i18n="date.prev">上周</span></button>
-        <button id="date-today" class="hover:text-paper transition" data-i18n="date.today">今日</button>
-        <button id="date-next" class="hover:text-paper transition"><span data-i18n="date.next">下周</span> ▶</button>
+      <div class="flex items-center gap-3">
+        <button id="date-prev" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <ol id="date-strip" class="date-strip flex-1"></ol>
+        <button id="date-next" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
+        <button id="date-today" class="shrink-0 font-mono text-[11px] px-2.5 py-1 rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);" data-i18n="date.today">今日</button>
       </div>
-      <ol id="date-strip" class="date-strip"></ol>
     </nav>
 
     <!-- ─────────── HERO: TODAY'S BRIEFING (CTA → modal) ─────────── -->
@@ -1231,14 +1211,6 @@
           <ol id="heat-list"></ol>
         </section>
 
-        <!-- Trending keywords -->
-        <section>
-          <div class="heat-section-title">
-            <span data-i18n="rail.trends">趋势关键词</span>
-          </div>
-          <div id="trends-list"></div>
-        </section>
-
         <!-- Pipeline status -->
         <section>
           <div class="heat-section-title">
@@ -1253,7 +1225,7 @@
     <!-- ─────────── DETAIL DRAWER (preserved) ─────────── -->
     <div id="detail-overlay" class="fixed inset-0 z-40 hidden" style="background:rgba(7,6,10,0.7); backdrop-filter:blur(6px);" aria-hidden="true"></div>
     <aside id="detail-drawer" class="fixed top-0 right-0 h-full w-full md:w-[560px] z-50 translate-x-full transition-transform duration-200 ease-out overflow-y-auto scrollbar-thin"
-           style="background:var(--ink); border-left:1px solid var(--hairline-2);"
+           style="background:var(--surface); border-left:1px solid var(--hairline); box-shadow:-8px 0 30px rgba(0,0,0,0.08);"
            role="dialog" aria-modal="true" aria-hidden="true">
       <div id="detail-content"></div>
     </aside>
@@ -1557,7 +1529,7 @@ function renderStats() {
     const dt = new Date(d.last_fetch);
     if (!isNaN(dt)) {
       const pad = (n) => String(n).padStart(2, "0");
-      syncMeta.textContent = (lang === "zh" ? "更新 " : "SYNC ") + `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      syncMeta.textContent = (lang === "zh" ? "更新 " : "SYNC ") + `${pad(dt.getMonth()+1)}-${pad(dt.getDate())} ${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
     }
   }
 }
@@ -1583,8 +1555,7 @@ function renderDateStrip() {
       <li class="contents">
         <button class="date-node" aria-current="${isSelected ? 'true' : 'false'}"
                 data-date="${cellDate}" ${isFuture ? 'disabled' : ''}>
-          <span class="date-dot"></span>
-          <span class="date-dow">${dow}${isToday ? ' ·' : ''}</span>
+          <span class="date-dow">${dow}</span>
           <span class="date-num">${pad(d.getUTCMonth()+1)}.${pad(d.getUTCDate())}</span>
         </button>
       </li>
@@ -1882,52 +1853,13 @@ function renderHeat() {
   if (railLabel) railLabel.textContent = t(state.activeTab === "news" ? "rail.heat.news" : "rail.heat.vuln");
 }
 
-function renderTrends() {
-  const el = document.getElementById("trends-list");
-  const allText = [...state.news, ...state.vuln].map(x => x.title || "").join(" ");
-  const stopwords = new Set(["the","a","an","in","of","to","for","and","is","on","with","by","at","from","this","that","are","was","be","it","as","or","but","not","has","had","have","will","can","all","new","via","its","our","your","you","we","they","been","do","does","did","may","also","than","more","into","if","up","out","no","only","so","about","what","when","how","which","who","where","why","just","get","set","use","let","now","see","two","one","over","most","very","some","any","many","much","few","after","before","between","through","during","without","within","against","under","above","below","these","those","here","there","then","other","each","every","both","such","should","could","would","might","must","shall","need","want","like","make","take","come","know","think","find","give","tell","call","try","keep","still","even","while","too","same","own","back","first","last","next","high","based","using","used","data","code","security","attack","system","open","update","tool","version","release","report","advisory","critical","patch","blog","post","package","malicious","vulnerability","vulnerabilities","exploit","remote","execution","server","client","access","authenticated","allow","allows","issue","fixed","fix","cve","해","수","등","安全","漏洞","分析","技术","通过","使用","进行","实现","发现","研究","可能","已经","攻击","利用","以及","关于","如何","问题","方法","工具","平台","系统","网络","信息","威胁","检测","防护","恶意","软件","更新","发布","公告"]);
-  const freq = {};
-  // English words
-  for (const word of allText.toLowerCase().replace(/[^a-z0-9\-]/g, " ").split(/\s+/)) {
-    if (word.length < 3 || /^\d+$/.test(word) || stopwords.has(word)) continue;
-    freq[word] = (freq[word] || 0) + 1;
-  }
-  // CJK bigrams
-  const cjk = allText.replace(/[^一-鿿]/g, "");
-  for (let i = 0; i < cjk.length - 1; i++) {
-    const bigram = cjk[i] + cjk[i + 1];
-    if (stopwords.has(bigram)) continue;
-    freq[bigram] = (freq[bigram] || 0) + 1;
-  }
-  const sorted = Object.entries(freq).filter(([,c]) => c >= 2).sort((a, b) => b[1] - a[1]).slice(0, 12);
-  if (sorted.length === 0) {
-    el.innerHTML = `<span class="text-[12px] text-paper-dim">${t("no_data")}</span>`;
-    return;
-  }
-  el.innerHTML = sorted.map(([word, count]) =>
-    `<button class="trend-tag" data-trend="${escapeHtml(word)}">${escapeHtml(word)} <span class="text-paper-faint ml-1">${count}</span></button>`
-  ).join("");
-}
-
 function renderPipeline() {
   const m = state.manifest;
   const el = document.getElementById("pipeline-list");
   if (!m) { el.innerHTML = ""; return; }
   const pad = (n) => String(n).padStart(2,'0');
 
-  // Aggregate top line: total ingested + when fetched
   let topLine = "";
-  if (m.fetched_at) {
-    const d = new Date(m.fetched_at);
-    if (!isNaN(d)) {
-      const totalCount = (m.results || []).reduce((s, r) => s + (r.ok ? (r.count || 0) : 0), 0);
-      topLine = `
-        <div class="pipe-summary">
-          <span>${(lang === 'zh' ? '上次同步' : 'Last sync')}</span>
-          <span class="pipe-summary-val">${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}</span>
-        </div>`;
-    }
-  }
 
   // One row per fetcher: dot · name (left), count · elapsed (right), ⟳ on hover
   const rows = (m.results || []).map(r => {
@@ -2339,7 +2271,6 @@ function renderAll() {
   renderVulnList();
   renderNewsList();
   renderHeat();
-  renderTrends();
   renderPipeline();
   renderBrief();
 }
@@ -2362,7 +2293,7 @@ function setActiveTab(tab) {
   document.getElementById("news-lang-filter").style.display  = tab === "news" ? "flex" : "none";
   document.getElementById("hidden-toggle").style.display     = tab === "news" ? "inline-flex" : "none";
   // Heat board switches data source per-tab
-  if (typeof fetchOne === "function") fetchOne("heat");
+  if (typeof fetchOne === "function") fetchOne("heat").then(() => renderHeat());
 }
 document.querySelectorAll(".tab-btn").forEach(b => {
   b.addEventListener("click", () => setActiveTab(b.dataset.tab));
@@ -2435,16 +2366,6 @@ document.getElementById("news-catfilter").addEventListener("click", (e) => {
   state.newsCategory = btn.dataset.cat;
   state.newsLimit = 40;  // reset pagination on filter change
   renderNewsList();
-});
-
-// trend tag → fill search
-document.addEventListener("click", (e) => {
-  const tag = e.target.closest("[data-trend]");
-  if (!tag) return;
-  const word = tag.dataset.trend;
-  state.q = word;
-  document.getElementById("search").value = word;
-  renderVulnList(); renderNewsList();
 });
 
 // ─── search: server-side global ────────────────────────────────────────────
