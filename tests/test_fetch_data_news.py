@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import io
+import json
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -98,7 +101,55 @@ async def test_ndjson_archive_dumped(tmp_db, archive_dir, monkeypatch):
     assert archive_file.exists()
     lines = archive_file.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 2
-    import json
     parsed = [json.loads(l) for l in lines]
     titles = {p["title"] for p in parsed}
     assert titles == {"T0", "T1"}
+
+
+def _make_osv_zip(entries: list[dict]) -> bytes:
+    """Build an in-memory zip with one JSON file per entry."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for i, e in enumerate(entries):
+            zf.writestr(f"{e.get('id', f'entry-{i}')}.json", json.dumps(e))
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_osv_fetcher_only_stores_malware(tmp_path, monkeypatch):
+    """OSV fetcher must discard non-malware entries at write time."""
+    import scripts.fetch_data as fd
+
+    malware_entry = {
+        "id": "MAL-2026-1234",
+        "summary": "Malicious npm package",
+        "affected": [{"package": {"name": "@evil/pkg", "ecosystem": "npm"}}],
+        "database_specific": {"type": "malware"},
+        "published": "2026-05-25T00:00:00Z",
+        "modified": "2026-05-25T00:00:00Z",
+    }
+    normal_entry = {
+        "id": "GHSA-xxxx-yyyy",
+        "summary": "Normal vulnerability",
+        "affected": [{"package": {"name": "lodash", "ecosystem": "npm"}}],
+        "published": "2026-05-24T00:00:00Z",
+        "modified": "2026-05-24T00:00:00Z",
+    }
+    zip_bytes = _make_osv_zip([malware_entry, normal_entry])
+
+    monkeypatch.setattr(fd, "CACHE", tmp_path)
+
+    class FakeResp:
+        status_code = 200
+        content = zip_bytes
+        def raise_for_status(self): pass
+
+    class FakeClient:
+        async def get(self, *a, **kw):
+            return FakeResp()
+
+    count = await fd._fetch_one_osv_ecosystem(FakeClient(), "npm")
+    written = json.loads((tmp_path / "osv-npm.json").read_text())
+    assert count == 1, f"expected 1 malware entry, got {count}"
+    assert len(written["items"]) == 1
+    assert written["items"][0]["id"] == "MAL-2026-1234"

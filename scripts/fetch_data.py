@@ -858,7 +858,9 @@ async def _fetch_one_osv_ecosystem(client: httpx.AsyncClient, ecosystem: str) ->
                 raw = json.loads(zf.read(name))
             except (json.JSONDecodeError, OSError):
                 continue
-            items.append(_normalize_osv_entry(raw))
+            entry = _normalize_osv_entry(raw)
+            if entry.get("is_malware"):
+                items.append(entry)
     items.sort(key=lambda x: x.get("modified", ""), reverse=True)
     out = {
         "ecosystem": ecosystem,
