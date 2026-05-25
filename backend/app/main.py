@@ -228,6 +228,40 @@ def api_brief(
     return JSONResponse({"date": target, "briefs": all_briefs.get(target, {})})
 
 
+def _today_utc_str() -> str:
+    from datetime import datetime as _dt, timezone as _tz
+    return _dt.now(_tz.utc).strftime("%Y-%m-%d")
+
+
+def _run_llm_brief_subprocess(target_date: str) -> None:
+    """Background-task wrapper. Invoked off the HTTP request path."""
+    try:
+        subprocess.run(
+            ["uv", "run", "python", "scripts/llm_rank.py", "--task", "brief", "--date", target_date],
+            cwd=str(ROOT), check=False, timeout=300,
+        )
+    except Exception as exc:
+        log.error(f"brief regenerate failed: {exc}")
+
+
+@app.post("/api/brief/regenerate", tags=["news"])
+async def regenerate_brief(
+    background: BackgroundTasks,
+    date: str | None = Query(default=None, description="YYYY-MM-DD; default=today"),
+    x_refresh_token: str | None = Header(default=None, alias="X-Refresh-Token"),
+):
+    """Trigger a background regeneration of today's (or specified) daily brief.
+
+    Requires SECURITY_HOT_REFRESH_TOKEN header match.
+    """
+    expected = os.environ.get("SECURITY_HOT_REFRESH_TOKEN")
+    if not expected or x_refresh_token != expected:
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+    target = _validate_date(date) or _today_utc_str()
+    background.add_task(_run_llm_brief_subprocess, target)
+    return JSONResponse(status_code=202, content={"status": "accepted", "date": target})
+
+
 @app.get("/api/diff", tags=["overview"])
 def api_diff(
     since: str = Query(..., description="show items first seen on or after this date (YYYY-MM-DD)"),
