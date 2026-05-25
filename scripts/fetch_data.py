@@ -789,6 +789,56 @@ async def fetch_epss(client: httpx.AsyncClient) -> dict:
     return {"name": "epss", "count": len(items)}
 
 
+def trim_epss_to_referenced(*, cache_dir: Path | None = None) -> int:
+    """Post-fetch step: discard EPSS entries for CVEs not referenced by any vuln source or news.
+
+    Reads KEV/GHSA/PoCs for CVE-IDs, plus news.db for CVE-mentioning article titles.
+    Rewrites epss.json in place with only the intersection.
+    Returns the number of retained entries.
+    """
+    d = cache_dir or CACHE
+    epss_path = d / "epss.json"
+    if not epss_path.exists():
+        return 0
+
+    referenced: set[str] = set()
+
+    for filename, key_path in [("kev.json", "cveID"), ("ghsa.json", "cve_id"), ("pocs.json", "cve_id")]:
+        p = d / filename
+        if not p.exists():
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            for item in data.get("items", []):
+                cve = item.get(key_path)
+                if cve:
+                    referenced.add(cve.upper())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    news_db = d / "news.db"
+    if news_db.exists():
+        try:
+            import sqlite3
+            conn = sqlite3.connect(str(news_db))
+            cve_re = re.compile(r"CVE-\d{4}-\d{4,7}", re.IGNORECASE)
+            for (title,) in conn.execute("SELECT title FROM articles WHERE title LIKE '%CVE-%'"):
+                for m in cve_re.findall(title or ""):
+                    referenced.add(m.upper())
+            conn.close()
+        except Exception:
+            pass
+
+    epss = json.loads(epss_path.read_text(encoding="utf-8"))
+    old_items = epss.get("items", {})
+    new_items = {k: v for k, v in old_items.items() if k.upper() in referenced}
+    epss["items"] = new_items
+    epss["count"] = len(new_items)
+    epss["trimmed_from"] = len(old_items)
+    epss_path.write_text(json.dumps(epss, ensure_ascii=False, indent=2), encoding="utf-8")
+    return len(new_items)
+
+
 def _osv_ecosystem_url(eco: str) -> str:
     return f"https://osv-vulnerabilities.storage.googleapis.com/{eco}/all.zip"
 
@@ -1304,6 +1354,14 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
             r["finished_at"] = now_iso()
             manifest["results"].append(r)
         write_json("manifest.json", manifest)
+
+    # Post-fetch: trim EPSS to only CVEs referenced by other sources
+    if "epss" in selected:
+        try:
+            kept = trim_epss_to_referenced()
+            print(f"[trim] epss: kept {kept} CVEs (from full EPSS dump)", file=sys.stderr)
+        except Exception as exc:
+            print(f"[trim] epss failed: {exc}", file=sys.stderr)
 
     if snapshot:
         # Map fetcher names → the cache files they own. Fetchers writing

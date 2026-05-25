@@ -153,3 +153,46 @@ async def test_osv_fetcher_only_stores_malware(tmp_path, monkeypatch):
     assert count == 1, f"expected 1 malware entry, got {count}"
     assert len(written["items"]) == 1
     assert written["items"][0]["id"] == "MAL-2026-1234"
+
+
+@pytest.mark.asyncio
+async def test_epss_trims_to_referenced_cves(tmp_path, monkeypatch):
+    """EPSS post-fetch trim keeps only CVEs referenced elsewhere."""
+    import scripts.fetch_data as fd
+
+    monkeypatch.setattr(fd, "CACHE", tmp_path)
+
+    # Fake a KEV file with one CVE
+    kev = {"items": [{"cveID": "CVE-2026-1111"}]}
+    (tmp_path / "kev.json").write_text(json.dumps(kev))
+    # Fake GHSA with one CVE
+    ghsa = {"items": [{"cve_id": "CVE-2026-2222"}]}
+    (tmp_path / "ghsa.json").write_text(json.dumps(ghsa))
+    # Fake PoCs with one CVE
+    pocs = {"items": [{"cve_id": "CVE-2026-3333"}]}
+    (tmp_path / "pocs.json").write_text(json.dumps(pocs))
+    # No news.db in tmp_path → skip news CVEs
+
+    # Write a fat EPSS with 4 CVEs (one referenced, three not)
+    epss_data = {
+        "score_date": "2026-05-25",
+        "model_version": "test",
+        "items": {
+            "CVE-2026-1111": {"score": 0.9, "percentile": 0.99},
+            "CVE-2026-2222": {"score": 0.5, "percentile": 0.50},
+            "CVE-2026-9999": {"score": 0.01, "percentile": 0.10},
+            "CVE-2026-8888": {"score": 0.02, "percentile": 0.15},
+        },
+        "count": 4,
+        "fetched_at": "2026-05-25T00:00:00Z",
+    }
+    (tmp_path / "epss.json").write_text(json.dumps(epss_data))
+
+    fd.trim_epss_to_referenced(cache_dir=tmp_path)
+
+    trimmed = json.loads((tmp_path / "epss.json").read_text())
+    assert "CVE-2026-1111" in trimmed["items"]
+    assert "CVE-2026-2222" in trimmed["items"]
+    assert "CVE-2026-9999" not in trimmed["items"]
+    assert "CVE-2026-8888" not in trimmed["items"]
+    assert trimmed["count"] == 2
