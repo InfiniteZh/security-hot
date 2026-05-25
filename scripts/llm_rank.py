@@ -549,17 +549,19 @@ async def generate_daily_brief(
 
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
             for category in ALL_CATEGORIES:
-                # Use published date, NOT first_seen_date. first_seen_date is
-                # "when we ingested it" — for migrated/freshly-fetched data
-                # everything has first_seen_date=today, so historical brief
-                # queries return zero matches. published is the actual publish
-                # day, which is what the user picks from the date strip.
+                # Strictly match published date — NOT first_seen_date and NOT
+                # a fetched_at fallback. The news list view in the frontend
+                # filters by published[:10] == date (with NULL excluded), so
+                # using COALESCE here makes counts inconsistent between brief
+                # and visible articles. Articles without published date won't
+                # appear in any specific day's brief or news view — that's
+                # honest behavior (we don't know when they were published).
                 # is_relevant: accept NULL (not yet classified) so cold-start
                 # works without waiting for classify backlog to finish.
                 rows = list(conn.execute("""
                     SELECT title, summary, source_title, llm_summary_zh
                     FROM articles
-                    WHERE substr(COALESCE(published, fetched_at), 1, 10) = ?
+                    WHERE substr(published, 1, 10) = ?
                       AND llm_category = ?
                       AND (is_relevant = 1 OR is_relevant IS NULL)
                       AND (cluster_id IS NULL OR is_cluster_primary = 1)
