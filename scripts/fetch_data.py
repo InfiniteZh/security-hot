@@ -611,6 +611,26 @@ async def _fetch_one_source_to_sqlite(
     return (n, r.status_code)
 
 
+def dump_ndjson_archive(*, db_path=None, date: str) -> Path:
+    """Dump all articles with first_seen_date == date to a per-day NDJSON.
+
+    Includes is_relevant=0 articles for human audit. Idempotent: overwrites
+    the day's file each time.
+    """
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = ARCHIVE_DIR / f"{date}.jsonl"
+    conn = _db.connect(db_path)
+    rows = conn.execute(
+        "SELECT * FROM articles WHERE first_seen_date = ? ORDER BY fetched_at",
+        [date],
+    )
+    with out_path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
+    conn.close()
+    return out_path
+
+
 async def fetch_news_to_sqlite(
     *,
     concurrency: int = 8,
@@ -645,6 +665,12 @@ async def fetch_news_to_sqlite(
         await asyncio.gather(*[one(s) for s in due])
 
     conn.close()
+    # Dump today's archive (idempotent: overwrites the day's file)
+    today = ts[:10]
+    try:
+        dump_ndjson_archive(db_path=db_path, date=today)
+    except Exception as exc:
+        print(f"[news] archive dump failed: {exc}", file=sys.stderr)
     return {
         "name": "news", "ok": True, "status": "ok",
         "count": inserted_total, "due_sources": len(due),

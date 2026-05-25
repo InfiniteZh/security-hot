@@ -72,3 +72,33 @@ async def test_304_response_does_not_create_articles(tmp_db, monkeypatch, httpx_
     n = c.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
     assert n == 0
     c.close()
+
+
+@pytest.mark.asyncio
+async def test_ndjson_archive_dumped(tmp_db, archive_dir, monkeypatch):
+    """After fetch_news_to_sqlite runs, today's NDJSON dump must contain all
+    fetched articles (one per line)."""
+    db.init_schema(db.connect(tmp_db))
+    # Insert 2 articles directly to skip RSS mocking
+    c = db.connect(tmp_db)
+    for i, link in enumerate(["https://x.com/1", "https://x.com/2"]):
+        db.upsert_article(c, {
+            "canonical_url": link, "title": f"T{i}", "summary": "",
+            "source_slug": "x", "source_title": "X", "lang": "en",
+            "published": None, "fetched_at": "2026-05-25T12:00:00Z",
+            "first_seen_date": "2026-05-25",
+        })
+    c.close()
+
+    import fetch_data
+    monkeypatch.setattr(fetch_data, "ARCHIVE_DIR", archive_dir)
+    fetch_data.dump_ndjson_archive(db_path=tmp_db, date="2026-05-25")
+
+    archive_file = archive_dir / "2026-05-25.jsonl"
+    assert archive_file.exists()
+    lines = archive_file.read_text(encoding="utf-8").strip().split("\n")
+    assert len(lines) == 2
+    import json
+    parsed = [json.loads(l) for l in lines]
+    titles = {p["title"] for p in parsed}
+    assert titles == {"T0", "T1"}
