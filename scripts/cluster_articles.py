@@ -79,7 +79,18 @@ def _cluster_one_day_partition(rows: list, conn, now_iso: str) -> int:
     if len(rows) < 2:
         return 0
     ids = [r["id"] for r in rows]
-    sources = [r.get("source_slug") or "" for r in rows]
+    # Normalize source slug: OPML auto-slugs append TLD suffixes ('_com', '_cc',
+    # '_info', '_org') that the curated NEWS_SOURCES list doesn't use, so
+    # `vuldb` and `vuldb_com` end up looking like different sources even though
+    # they're the same VulDB feed. Strip common TLD suffixes for the cross-
+    # source guard so duplicate-slug feeds don't fool clustering.
+    def _canon_source(slug: str) -> str:
+        s = (slug or "").lower()
+        for suf in ("_com", "_cc", "_info", "_org", "_net", "_io", "_co", "_dev"):
+            if s.endswith(suf):
+                return s[:-len(suf)]
+        return s
+    sources = [_canon_source(r.get("source_slug") or "") for r in rows]
     n = len(ids)
     M = np.zeros((n, 384), dtype=np.float32)
     for i, r in enumerate(rows):
