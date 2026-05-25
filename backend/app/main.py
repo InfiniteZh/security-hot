@@ -199,10 +199,12 @@ def api_vuln_detail(vuln_id: str) -> Vuln:
 def api_heat(
     limit: int = Query(default=10, ge=1, le=50),
     kind: Literal["vuln", "news"] = Query(default="vuln", description="vuln=CVE heat (default, back-compat); news=top AI-scored articles"),
+    date: str | None = Query(default=None, description="YYYY-MM-DD; only news heat honors this (vuln heat is timeless)"),
 ) -> list[HeatEntry]:
     if kind == "news":
         from .data import news_heat_board
-        return news_heat_board(limit)
+        target = _validate_date(date)
+        return news_heat_board(limit, date=target)
     return heat_board(limit)
 
 

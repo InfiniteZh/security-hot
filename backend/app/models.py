@@ -85,6 +85,7 @@ class HeatEntry(BaseModel):
     score: int
     category: VulnKind | NewsCategory | Literal["news"] | None = None
     kind_color: str | None = None
+    link: str | None = None  # for news heat: clicking opens the article URL
 
 
 class SourceStatus(BaseModel):

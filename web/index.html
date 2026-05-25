@@ -1108,9 +1108,12 @@ function renderHeat() {
   el.innerHTML = state.heat.map(h => {
     const pct = Math.max(8, Math.round((h.score / maxScore) * 100));
     const cls = h.kind_color || "muted";
+    // News heat items have h.link (open article); vuln heat items have h.cve_id (open detail).
+    const hrefAttr = h.link ? `href="${escapeHtml(h.link)}" target="_blank" rel="noopener"` : `href="#"`;
+    const dataAttr = h.link ? "" : `data-vuln="${escapeHtml(h.cve_id || h.label)}"`;
     return `
       <li>
-        <a href="#" class="block group cursor-pointer" data-vuln="${escapeHtml(h.cve_id || h.label)}">
+        <a ${hrefAttr} ${dataAttr} class="block group cursor-pointer">
           <div class="flex items-baseline justify-between gap-2 mb-1">
             <span class="font-mono text-[10px] text-dim">${String(h.rank).padStart(2,'0')}</span>
             <span class="font-mono text-[11px] tabular-nums text-ink-soft">${h.score}</span>
@@ -1374,13 +1377,19 @@ function renderBrief() {
   const btn = document.getElementById("brief-toggle");
   const briefs = state.brief || {};
   const cats = Object.keys(briefs);
-  if (cats.length === 0) {
-    container.style.display = "none";
-    return;
-  }
+  // Always show the container so the ⟳ refresh button stays reachable on
+  // historical dates (which may have no brief generated yet).
   container.style.display = "";
   content.style.display = state.briefCollapsed ? "none" : "";
   btn.textContent = state.briefCollapsed ? "▶" : "▼";
+  if (cats.length === 0) {
+    const dateStr = state.briefDate || state.selectedDate || "";
+    const msg = (typeof lang !== "undefined" && lang === "zh")
+      ? `${dateStr} 暂无简报，点 ⟳ 按钮生成（需要 refresh token）`
+      : `No brief for ${dateStr} yet — click ⟳ to generate (refresh token required)`;
+    content.innerHTML = `<div class="text-[12.5px] text-dim italic py-2">${escapeHtml(msg)}</div>`;
+    return;
+  }
   content.innerHTML = cats.map(cat => {
     const b = briefs[cat];
     const label = (CAT_LABELS[cat] || (() => cat))();
@@ -1573,7 +1582,12 @@ const ENDPOINTS = [
   { key: "today",    url: () => "/api/today",                                              dateAware: false },
   { key: "news",     url: () => `/api/news?limit=120${dateQuery()}`,                       dateAware: true },
   { key: "vuln",     url: () => `/api/vuln?limit=120&sort=heat${dateQuery()}`,             dateAware: true },
-  { key: "heat",     url: () => `/api/heat?limit=10&kind=${state.activeTab === "news" ? "news" : "vuln"}`, dateAware: false },
+  { key: "heat",     url: () => {
+      const kind = state.activeTab === "news" ? "news" : "vuln";
+      // News heat is date-aware (today's stories); vuln heat is timeless (KEV/EPSS).
+      const datePart = (kind === "news" && state.selectedDate) ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
+      return `/api/heat?limit=10&kind=${kind}${datePart}`;
+    }, dateAware: true },
   { key: "sources",  url: () => "/api/sources",                                            dateAware: false },
   { key: "manifest", url: () => "/api/manifest",                                           dateAware: false },
 ];

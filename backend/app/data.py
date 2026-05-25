@@ -714,30 +714,65 @@ def heat_board(limit: int = 10) -> list[HeatEntry]:
     return out
 
 
-def news_heat_board(limit: int = 10) -> list[HeatEntry]:
-    """Top news articles by LLM score for the 行业资讯 tab right rail.
+_CAT_COLOR = {
+    "incident": "itw",
+    "vuln": "crit",
+    "supply-chain": "itw",
+    "research": "poc",
+    "industry": "muted",
+}
 
-    Pulls primary articles only (no mirrors), is_relevant != 0, sorted by
-    llm_score desc then recency. Falls back gracefully on cold start (no
-    LLM scores yet → returns whatever's at the top of all_articles)."""
+
+def _news_heat_score(a: "Article", now_utc: datetime) -> int:
+    """Composite score that pulls apart the clumping at LLM score 9.
+
+    base       = llm_score × 10               (0-100, but in practice most live
+                                               at 80-90 due to LLM bias)
+    recency    = max(0, 24 - age_hours)       (0-24, favors today's stories)
+    cluster_bonus = mirror_count × 3          (0-30, multi-source events rise)
+    """
+    base = (a.llm_score or 0) * 10
+    age_h = 0.0
+    pub = a.published or ""
+    if pub:
+        try:
+            dt = datetime.fromisoformat(pub.replace("Z", "+00:00"))
+            age_h = max(0.0, (now_utc - dt).total_seconds() / 3600)
+        except (ValueError, TypeError):
+            pass
+    recency = max(0, int(24 - age_h)) if age_h <= 24 else 0
+    cluster_bonus = (a.mirror_count or 0) * 3
+    return base + recency + cluster_bonus
+
+
+def news_heat_board(limit: int = 10, date: str | None = None) -> list[HeatEntry]:
+    """Top news articles for the 行业资讯 tab right rail.
+
+    Composite score combines LLM rank + recency + mirror count to differentiate
+    items the LLM clumped at the same score. If `date` is given, restricts to
+    articles published (or first-seen) on that date — gives a per-day heat view
+    that tracks the date strip; otherwise returns the global top.
+    """
     articles = all_articles()
+    if date:
+        articles = [a for a in articles
+                    if (a.published or "")[:10] == date or
+                       (not a.published and date)]  # accept undated for today
+    now_utc = datetime.now(timezone.utc)
+    scored = sorted(
+        ((_news_heat_score(a, now_utc), a) for a in articles),
+        key=lambda t: -t[0],
+    )
     out: list[HeatEntry] = []
-    _CAT_COLOR = {
-        "incident": "itw",
-        "vuln": "crit",
-        "supply-chain": "itw",
-        "research": "poc",
-        "industry": "muted",
-    }
-    for i, a in enumerate(articles[:limit], start=1):
-        score = a.llm_score if a.llm_score is not None else 0
+    for i, (score, a) in enumerate(scored[:limit], start=1):
         out.append(HeatEntry(
             rank=i,
             label=a.title[:48] + ("…" if len(a.title) > 48 else ""),
             cve_id=None,
-            score=int(score * 10),  # scale 0-10 → 0-100 to match vuln heat range
+            score=score,
             category=a.llm_category,
             kind_color=_CAT_COLOR.get(a.llm_category or "", "muted"),
+            link=a.link,
         ))
     return out
 
