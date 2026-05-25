@@ -482,19 +482,8 @@ async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8, incrementa
     }
     write_json("news.json", out)
 
-    # Layer 3: incremental LLM scoring when LLM_API_KEY is set. Inline import
-    # so the dependency on llm_rank.py is lazy — same-directory script.
-    # Only Phase 1 (classify+score) is auto-triggered; Phase 2 summarization,
-    # vuln assessment, and daily brief are manual via `python scripts/llm_rank.py`.
+    # LLM scoring is fully decoupled. Run `python scripts/llm_rank.py` separately.
     llm_meta = None
-    if os.environ.get("LLM_API_KEY"):
-        try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from llm_rank import classify_news  # type: ignore
-            llm_meta = await classify_news(verbose=True)
-        except Exception as exc:
-            print(f"[news] llm_rank step failed: {exc}", file=sys.stderr)
-            llm_meta = {"error": str(exc)[:200]}
 
     return {
         "name": "news",
