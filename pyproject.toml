@@ -10,6 +10,7 @@ dependencies = [
   "feedparser>=6.0",
   "pydantic>=2.6",
   "sentence-transformers>=3.0",
+  "python-dotenv>=1.0",
 ]
 
 [tool.uv]

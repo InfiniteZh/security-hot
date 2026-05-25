@@ -29,6 +29,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+# Load .env BEFORE any code reads os.environ. `uv run uvicorn ...` does not
+# auto-load .env, which silently disables the brief regenerate endpoint and
+# breaks the LLM background subprocess that inherits this process's env.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
 # Centralised logging so subprocess output + app logs share a single format.
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -43,6 +49,7 @@ from .data import (
     all_vulns,
     heat_board,
     manifest as manifest_fn,
+    search_articles,
     today_summary,
 )
 from .models import (
@@ -123,7 +130,19 @@ def api_news(
     sort: str = Query(default="heat", description="'heat' = LLM priority desc then time desc; 'time' = pure chronological."),
 ) -> list[Article]:
     target_date = _validate_date(date)
-    items = all_articles()
+    # Search path: when q is set, use FTS5 (title + summary + llm_summary_zh)
+    # unioned with a source_title LIKE filter. This gives ranked full-text
+    # results that include Chinese AI summaries and ensures CVE-IDs and other
+    # punctuated tokens are matched as phrases. Other filters still apply on
+    # top so search composes with category/lang/date pickers.
+    if q and q.strip():
+        items = search_articles(q, limit=max(limit * 3, 300))
+    else:
+        items = all_articles()
+    # Uncategorized articles flow into the hidden bucket (see /api/news/hidden).
+    # The main news view always excludes them — no opt-in filter, since there's
+    # no UI affordance to see them other than the hidden audit drawer.
+    items = [a for a in items if a.llm_category not in (None, "", "uncategorized")]
     if lang != "all":
         items = [a for a in items if a.lang == lang]
     if category != "all":
@@ -131,8 +150,6 @@ def api_news(
     if source:
         slugs = {s.strip() for s in source.split(",") if s.strip()}
         items = [a for a in items if a.source_slug in slugs]
-    if q:
-        items = [a for a in items if _contains(q, a.title, a.summary, a.source_title)]
     if target_date:
         items = [a for a in items if _matches_date(a.published, target_date)]
     if sort == "time":
@@ -421,19 +438,37 @@ def api_refresh(
 
 @app.get("/api/news/hidden", response_model=list[Article], tags=["news"])
 def api_news_hidden(
-    date: str | None = Query(default=None, description="YYYY-MM-DD; default=today UTC"),
-    limit: int = Query(default=50, ge=1, le=200),
+    date: str | None = Query(default=None, description="YYYY-MM-DD published date; default = today UTC"),
+    limit: int = Query(default=50, ge=1, le=1000),
 ) -> list[Article]:
-    """Articles judged is_relevant=0 — for human audit of LLM filter."""
+    """Articles judged is_relevant=0 — for human audit of LLM filter.
+
+    Filtered by **published** date (falls back to fetched_at when published is
+    NULL) to match /api/news semantics — the date strip in the UI selects a
+    publish day, and the hidden view should respect that selection.
+    """
     from .data import _news_conn, _NEWS_DB, _row_to_article
     if not _NEWS_DB.exists():
         return []
     target = _validate_date(date) or _today_utc_str()
     conn = _news_conn()
+    # The hidden bucket has two membership rules:
+    #   1. is_relevant=0 (LLM explicitly judged off-topic) — date-filtered
+    #   2. llm_category IS NULL/'uncategorized' (no category assigned) —
+    #      NOT date-filtered, since these articles never make it onto any
+    #      specific day's news view anyway, and burying them by date would
+    #      leave no place to review them.
     rows = list(conn.execute("""
         SELECT * FROM articles
-        WHERE is_relevant = 0 AND first_seen_date = ?
-        ORDER BY fetched_at DESC LIMIT ?
+        WHERE (
+            (is_relevant = 0
+             AND substr(COALESCE(published, fetched_at), 1, 10) = ?)
+            OR (is_relevant != 0
+                AND (llm_category IS NULL
+                     OR llm_category = ''
+                     OR llm_category = 'uncategorized'))
+        )
+        ORDER BY published DESC, fetched_at DESC LIMIT ?
     """, [target, limit]))
     conn.close()
     return [_row_to_article(r, {}) for r in rows]

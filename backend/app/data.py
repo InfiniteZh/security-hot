@@ -670,6 +670,126 @@ def all_articles() -> list[Article]:
     return items
 
 
+_CJK_RE = re.compile(r"[一-鿿　-ヿ＀-￯]")
+
+
+def search_articles(q: str, limit: int = 200) -> list[Article]:
+    """Full-text article search across title + summary + llm_summary_zh + source_title.
+
+    Two paths, chosen by query character set:
+
+    * Pure ASCII (vendors, CVE-IDs, English keywords) → FTS5 MATCH on
+      `articles_fts` (unicode61 tokenizer). CVE-IDs and other hyphenated
+      tokens are quoted as phrases; short ASCII words get a trailing `*`
+      for prefix search.
+    * Anything containing CJK characters → LIKE %q% scan across all four
+      columns. FTS5 unicode61 doesn't segment Chinese (it lumps each
+      no-space run into one token), so MATCH would return nothing useful
+      for queries like "备份" or "微软". The LIKE scan is slower but works
+      directly on the indexed string and gives substring semantics users
+      expect.
+
+    Source-name hits (e.g. "BleepingComputer") work in either path: ASCII
+    path adds a source_title LIKE union; CJK path already covers source_title.
+    Restricts to primary cluster articles where is_relevant != 0.
+    """
+    q = (q or "").strip()
+    if not q or len(q) < 2:
+        return []
+    if not _NEWS_DB.exists():
+        return []
+
+    conn = _news_conn()
+    try:
+        mirror_titles: dict = {}
+        for r in conn.execute(
+            "SELECT cluster_id, source_title FROM articles "
+            "WHERE cluster_id IS NOT NULL AND is_cluster_primary = 0 "
+            "ORDER BY fetched_at ASC"
+        ):
+            mirror_titles.setdefault(r["cluster_id"], []).append(r["source_title"] or "")
+
+        rows_by_id: dict[int, tuple[float, dict]] = {}
+        has_cjk = bool(_CJK_RE.search(q))
+
+        if not has_cjk:
+            # FTS5 path. Build a syntactically-safe query string.
+            tokens = [t for t in re.split(r"\s+", q) if t]
+            fts_terms: list[str] = []
+            for t in tokens:
+                if re.search(r"[^A-Za-z0-9]", t):
+                    fts_terms.append('"' + t.replace('"', '""') + '"')
+                else:
+                    fts_terms.append(t + "*")
+            fts_query = " ".join(fts_terms)
+            try:
+                for r in conn.execute(
+                    """
+                    SELECT a.*, fts.rank AS fts_rank
+                    FROM articles a
+                    JOIN articles_fts fts ON fts.rowid = a.id
+                    WHERE articles_fts MATCH ?
+                      AND (a.is_relevant = 1 OR a.is_relevant IS NULL)
+                      AND (a.cluster_id IS NULL OR a.is_cluster_primary = 1)
+                    ORDER BY fts.rank
+                    LIMIT ?
+                    """,
+                    [fts_query, limit],
+                ):
+                    rows_by_id[r["id"]] = (r["fts_rank"] or 0.0, dict(r))
+            except _sqlite3.OperationalError:
+                pass  # bad FTS5 syntax; LIKE fallback below still runs
+
+        # LIKE path. For CJK (and mixed ASCII+CJK) queries, FTS5 is skipped
+        # above so this path covers title/summary/llm_summary_zh/source_title.
+        # For pure-ASCII queries, this only adds source_title (FTS5 doesn't
+        # index source name).
+        #
+        # Multi-token queries combine with AND across columns: every
+        # whitespace-separated token must appear in at least one of the
+        # searched columns. This makes "Kopia 备份" match an article whose
+        # title contains "Kopia" and whose Chinese summary contains "备份".
+        tokens = [t.lower() for t in re.split(r"\s+", q) if t]
+        if has_cjk:
+            per_token = (
+                "(lower(title) LIKE ? OR lower(summary) LIKE ? "
+                "OR lower(llm_summary_zh) LIKE ? OR lower(source_title) LIKE ?)"
+            )
+            where_clauses = [per_token] * len(tokens)
+            params: list = []
+            for t in tokens:
+                pat = f"%{t}%"
+                params.extend([pat, pat, pat, pat])
+            params.append(limit)
+            sql = f"""
+                SELECT * FROM articles
+                WHERE {' AND '.join(where_clauses)}
+                  AND (is_relevant = 1 OR is_relevant IS NULL)
+                  AND (cluster_id IS NULL OR is_cluster_primary = 1)
+                ORDER BY COALESCE(llm_score, -1) DESC,
+                         COALESCE(published, fetched_at) DESC
+                LIMIT ?
+            """
+        else:
+            sql = """
+                SELECT * FROM articles
+                WHERE lower(source_title) LIKE ?
+                  AND (is_relevant = 1 OR is_relevant IS NULL)
+                  AND (cluster_id IS NULL OR is_cluster_primary = 1)
+                LIMIT ?
+            """
+            params = [f"%{q.lower()}%", limit]
+        for i, r in enumerate(conn.execute(sql, params)):
+            if r["id"] not in rows_by_id:
+                # Stable rank-after-FTS for LIKE-only hits.
+                rows_by_id[r["id"]] = (1e9 + i, dict(r))
+
+        sorted_rows = sorted(rows_by_id.values(), key=lambda t: t[0])[:limit]
+        return [_row_to_article(r[1], mirror_titles) for r in sorted_rows]
+    finally:
+        conn.close()
+
+
 def all_sources() -> list[SourceStatus]:
     """News sources from SQLite sources table."""
     if not _NEWS_DB.exists():
@@ -755,9 +875,13 @@ def news_heat_board(limit: int = 10, date: str | None = None) -> list[HeatEntry]
     """
     articles = all_articles()
     if date:
-        articles = [a for a in articles
-                    if (a.published or "")[:10] == date or
-                       (not a.published and date)]  # accept undated for today
+        # Strict publish-date match. The previous code accepted *all* undated
+        # articles for *any* selected date, which flooded every day's heat
+        # board with the freshest fetch batch (e.g. a NULL-dated curl batch
+        # appearing on 05.22's board even though it was fetched on 05.25).
+        # Articles without a published date simply don't appear in any
+        # specific day's heat — same rule as /api/news and the daily brief.
+        articles = [a for a in articles if (a.published or "")[:10] == date]
     now_utc = datetime.now(timezone.utc)
     scored = sorted(
         ((_news_heat_score(a, now_utc), a) for a in articles),

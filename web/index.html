@@ -674,6 +674,57 @@
   }
   .modal-close:hover { color: var(--ink); border-color: var(--hairline-2); background: var(--surface); }
   .modal-body { padding: 22px 32px 32px; }
+  .brief-tabs {
+    display: flex; gap: 4px; padding: 0 32px;
+    border-bottom: 1px solid var(--hairline);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .brief-tabs::-webkit-scrollbar { display: none; }
+  .brief-tab {
+    flex: 0 0 auto;
+    background: transparent;
+    border: none;
+    padding: 12px 14px 14px;
+    font-family: "Geist", sans-serif;
+    font-weight: 500;
+    font-size: 13px;
+    color: var(--paper-faint);
+    cursor: pointer;
+    position: relative;
+    display: flex; align-items: center; gap: 8px;
+    transition: color 120ms;
+    white-space: nowrap;
+  }
+  .brief-tab:hover { color: var(--paper-dim); }
+  .brief-tab .marker {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--paper-veil);
+  }
+  .brief-tab[data-on="true"] {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .brief-tab[data-on="true"]::after {
+    content: "";
+    position: absolute;
+    left: 12px; right: 12px; bottom: -1px;
+    height: 2px;
+    background: var(--ink);
+  }
+  .brief-tab[data-on="true"][data-cat="incident"]::after { background: var(--signal); }
+  .brief-tab[data-on="true"][data-cat="vuln"]::after { background: var(--warn); }
+  .brief-tab[data-on="true"][data-cat="supply-chain"]::after { background: #C2410C; }
+  .brief-tab[data-on="true"][data-cat="research"]::after { background: var(--info); }
+  .brief-tab[data-on="true"][data-cat="industry"]::after { background: var(--paper-dim); }
+  .brief-tab .count {
+    font-family: "Geist Mono", monospace;
+    font-size: 10.5px;
+    color: var(--paper-veil);
+    letter-spacing: 0.04em;
+  }
+  .brief-tab[data-on="true"] .count { color: var(--paper-faint); }
+  .brief-tab[disabled] { opacity: 0.35; cursor: not-allowed; }
   .brief-section {
     padding: 20px 0;
     border-bottom: 1px solid var(--hairline);
@@ -707,10 +758,66 @@
   .brief-text {
     font-family: "Geist", sans-serif;
     font-size: 14.5px;
-    line-height: 1.7;
+    line-height: 1.75;
     color: var(--paper-dim);
-    white-space: pre-line;
-    max-width: 70ch;
+    max-width: 72ch;
+  }
+  .brief-text > *:first-child { margin-top: 0; }
+  .brief-text > *:last-child  { margin-bottom: 0; }
+  .brief-text p   { margin: 0 0 12px; }
+  .brief-text h3  {
+    font-family: "Geist", sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--ink);
+    margin: 18px 0 8px;
+    letter-spacing: -0.005em;
+  }
+  .brief-text h4 {
+    font-family: "Geist", sans-serif;
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--ink);
+    margin: 14px 0 6px;
+  }
+  .brief-text ul, .brief-text ol { margin: 4px 0 14px; padding-left: 22px; }
+  .brief-text ul { list-style: none; padding-left: 0; }
+  .brief-text ul > li {
+    position: relative;
+    padding-left: 18px;
+    margin: 6px 0;
+  }
+  .brief-text ul > li::before {
+    content: "";
+    position: absolute;
+    left: 4px; top: 0.78em;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--paper-faint);
+  }
+  .brief-text ol > li { margin: 6px 0; padding-left: 4px; }
+  .brief-text strong { color: var(--ink); font-weight: 600; }
+  .brief-text em     { color: var(--paper); font-style: italic; }
+  .brief-text code   {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 12.5px;
+    padding: 1px 6px;
+    background: var(--surface-2);
+    border-radius: 4px;
+    color: var(--ink);
+  }
+  .brief-text a {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--hairline-2);
+    text-underline-offset: 3px;
+  }
+  .brief-text a:hover { text-decoration-color: var(--ink); }
+  .brief-text blockquote {
+    margin: 10px 0;
+    padding: 4px 14px;
+    border-left: 2px solid var(--hairline-2);
+    color: var(--paper-faint);
   }
 
   /* — Buttons / minor — */
@@ -1166,6 +1273,7 @@
               <button class="modal-close" onclick="closeBrief()" data-i18n="modal.close">关闭 ✕</button>
             </div>
           </header>
+          <nav class="brief-tabs" id="brief-tabs" role="tablist"></nav>
           <div class="modal-body" id="brief-content"></div>
         </article>
       </div>
@@ -1256,6 +1364,7 @@ const state = {
   brief: null,
   briefDate: null,
   briefCollapsed: false,
+  briefCat: null,       // active category tab inside the brief modal
   q: "",
   selectedDate: null,   // YYYY-MM-DD; null = "today"
   windowEnd: null,      // YYYY-MM-DD of right-most date cell
@@ -1320,6 +1429,59 @@ function relTime(iso) {
 }
 function severityClass(s) { return "sev sev-" + s; }
 function escapeHtml(s) { return (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// Minimal safe markdown → HTML for LLM-generated brief text.
+// Supports: # / ## / ### headings, - / * bullets, 1. ordered lists,
+// **bold**, *italic*, `code`, [text](url), > blockquote, paragraphs.
+// HTML in the source is escaped first so LLM output cannot inject tags.
+function renderMarkdown(md) {
+  if (!md) return "";
+  // 1) escape HTML
+  let s = md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  // 2) inline: code, bold, italic, links (code first so its content isn't re-parsed)
+  const codeStash = [];
+  s = s.replace(/`([^`\n]+)`/g, (_, c) => { codeStash.push(c); return ` ${codeStash.length-1} `; });
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, text, url) => {
+    if (!/^(https?:\/\/|\/)/i.test(url)) return text;  // drop unsafe schemes
+    return `<a href="${url}" target="_blank" rel="noopener">${text}</a>`;
+  });
+  s = s.replace(/ (\d+) /g, (_, i) => `<code>${codeStash[+i]}</code>`);
+  // 3) block: line-by-line walk, group consecutive bullets / ol / paragraphs
+  const lines = s.split("\n");
+  const out = [];
+  let inList = null;     // 'ul' | 'ol' | null
+  let para = [];
+  const flushPara = () => { if (para.length) { out.push(`<p>${para.join("<br>")}</p>`); para = []; } };
+  const flushList = () => { if (inList) { out.push(`</${inList}>`); inList = null; } };
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { flushPara(); flushList(); continue; }
+    let m;
+    if ((m = line.match(/^(#{1,3})\s+(.+)$/))) {
+      flushPara(); flushList();
+      const level = Math.min(m[1].length + 2, 4);  // # → h3, ## → h4, ### → h4 cap
+      out.push(`<h${level}>${m[2]}</h${level}>`);
+    } else if ((m = line.match(/^[-*]\s+(.+)$/))) {
+      flushPara();
+      if (inList !== "ul") { flushList(); out.push("<ul>"); inList = "ul"; }
+      out.push(`<li>${m[1]}</li>`);
+    } else if ((m = line.match(/^\d+\.\s+(.+)$/))) {
+      flushPara();
+      if (inList !== "ol") { flushList(); out.push("<ol>"); inList = "ol"; }
+      out.push(`<li>${m[1]}</li>`);
+    } else if ((m = line.match(/^>\s?(.*)$/))) {
+      flushPara(); flushList();
+      out.push(`<blockquote>${m[1]}</blockquote>`);
+    } else {
+      flushList();
+      para.push(line);
+    }
+  }
+  flushPara(); flushList();
+  return out.join("\n");
+}
 
 // ───────────────────── mirror expand ─────────────────────
 async function expandMirrors(stripEl, articleId) {
@@ -1649,9 +1811,17 @@ function renderNewsList() {
 state.showHidden = false;
 state.hiddenNews = [];
 
+function _hiddenUrl() {
+  // Honor the currently selected date so the hidden audit view matches the
+  // date strip; without this the endpoint defaults to today UTC and shows
+  // ~26-day-old articles when user is browsing today.
+  const datePart = state.selectedDate ? `&date=${encodeURIComponent(state.selectedDate)}` : '';
+  return `/api/news/hidden?limit=1000${datePart}`;
+}
+
 async function refreshHiddenCount() {
   try {
-    const r = await fetch('/api/news/hidden?limit=500');
+    const r = await fetch(_hiddenUrl());
     if (!r.ok) return;
     const items = await r.json();
     state.hiddenNews = items;  // keep in sync so the count and the view match
@@ -1667,7 +1837,7 @@ async function toggleHidden() {
   if (state.showHidden) {
     // Refresh once on opening so we don't show stale data
     try {
-      const r = await fetch('/api/news/hidden?limit=500');
+      const r = await fetch(_hiddenUrl());
       if (r.ok) state.hiddenNews = await r.json();
     } catch (e) { console.warn('hidden fetch failed', e); }
   }
@@ -1994,21 +2164,48 @@ function renderBrief() {
     </div>`;
     return;
   }
-  // Display categories in canonical order
+  // Display categories as tabs (each category gets its own panel; only one
+  // visible at a time). Default to first non-empty category, or remember the
+  // user's last selection in state.briefCat.
   const order = ["incident", "vuln", "supply-chain", "research", "industry"];
   const sortedCats = order.filter(c => cats.includes(c)).concat(cats.filter(c => !order.includes(c)));
-  content.innerHTML = sortedCats.map(cat => {
-    const b = briefs[cat];
-    const label = (CAT_LABELS[cat] || (() => cat))();
-    return `
-      <section class="brief-section">
-        <div class="brief-section-head">
-          <div class="brief-cat cat-${cat}"><span class="marker"></span>${escapeHtml(label)}</div>
-          <div class="brief-count">${b.article_count || 0} ${lang === 'zh' ? '篇' : 'articles'}</div>
-        </div>
-        <div class="brief-text">${escapeHtml(b.text || "")}</div>
-      </section>`;
-  }).join("");
+
+  // Ensure briefCat points at an available category.
+  if (!state.briefCat || !sortedCats.includes(state.briefCat)) {
+    state.briefCat = sortedCats[0];
+  }
+  const activeCat = state.briefCat;
+
+  const tabBar = document.getElementById("brief-tabs");
+  if (tabBar) {
+    tabBar.innerHTML = sortedCats.map(cat => {
+      const b = briefs[cat];
+      const label = (CAT_LABELS[cat] || (() => cat))();
+      const on = cat === activeCat ? "true" : "false";
+      const cnt = b.article_count || 0;
+      return `<button class="brief-tab" data-cat="${cat}" data-on="${on}" role="tab" aria-selected="${on}">
+        <span class="marker" style="background:${
+          cat === 'incident' ? 'var(--signal)' :
+          cat === 'vuln' ? 'var(--warn)' :
+          cat === 'supply-chain' ? '#C2410C' :
+          cat === 'research' ? 'var(--info)' :
+          'var(--paper-dim)'
+        }"></span>
+        <span>${escapeHtml(label)}</span>
+        <span class="count">${cnt}</span>
+      </button>`;
+    }).join("");
+  }
+
+  const b = briefs[activeCat] || {};
+  content.innerHTML = `
+    <section class="brief-section" style="border-bottom:none; padding-top:8px;">
+      <div class="brief-section-head">
+        <div class="brief-cat cat-${activeCat}"><span class="marker"></span>${escapeHtml((CAT_LABELS[activeCat] || (() => activeCat))())}</div>
+        <div class="brief-count">${b.article_count || 0} ${lang === 'zh' ? '篇' : 'articles'}</div>
+      </div>
+      <div class="brief-text">${renderMarkdown(b.text || "")}</div>
+    </section>`;
 }
 
 // — Brief modal open/close —
@@ -2031,6 +2228,13 @@ document.getElementById("open-brief")?.addEventListener("click", openBrief);
 // ESC to close
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeBrief();
+});
+// Brief tab switching — delegate on the strip so re-rendered tabs keep binding.
+document.getElementById("brief-tabs")?.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-cat]");
+  if (!btn || btn.disabled) return;
+  state.briefCat = btn.dataset.cat;
+  renderBrief();
 });
 
 async function regenerateBrief() {
@@ -2326,6 +2530,7 @@ async function fetchOne(key) {
 async function fetchAll() {
   await Promise.allSettled(ENDPOINTS.map(ep => fetchOne(ep.key)));
   await fetchBrief();
+  await refreshHiddenCount();  // date-sensitive — must refresh whenever date changes
   renderAll();
   renderToasts();
 }

@@ -44,6 +44,15 @@ import httpx
 import db as _db
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Load .env so `uv run python scripts/llm_rank.py …` works without a manual
+# `source .env`. Also applies when uvicorn shells out via subprocess for the
+# /api/brief/regenerate background task.
+try:
+    from dotenv import load_dotenv as _load_dotenv
+    _load_dotenv(ROOT / ".env")
+except ImportError:
+    pass  # optional dep — env vars must be exported manually if missing
 VULN_AI_JSON = ROOT / "backend" / "cache" / "vuln_ai.json"
 
 # ── Prompts ──
@@ -106,7 +115,25 @@ def _extract_json(content: str) -> dict:
         m = re.search(r"\{[\s\S]+\}", content)
         if m:
             content = m.group(0)
-    return json.loads(content)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        # LLMs frequently embed unescaped real newlines inside string values
+        # when the value is markdown — strict JSON forbids that. Fall back to
+        # a tolerant single-key extraction for the brief envelope {"text": "..."}.
+        m = re.search(r'"text"\s*:\s*"([\s\S]*)"\s*\}\s*$', content)
+        if m:
+            raw = m.group(1)
+            # Decode the common escape sequences a well-behaved LLM would use
+            # (\\n \\" \\\\) without going through json.loads.
+            decoded = (raw
+                       .replace("\\\\", "\x00")  # protect literal backslash
+                       .replace("\\n", "\n")
+                       .replace("\\t", "\t")
+                       .replace('\\"', '"')
+                       .replace("\x00", "\\"))
+            return {"text": decoded}
+        raise
 
 
 async def _llm_call(client, system_prompt, user_msg, base_url, api_key, model, timeout):
@@ -566,11 +593,22 @@ async def generate_daily_brief(
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         summaries: dict[str, dict] = {}
 
-        system_prompt = """你是安全资讯日报编辑。
-基于给定的当日 N 篇文章, 撰写一段 300-500 字的中文摘要,
-开头点明今日该领域的核心动态, 中间用 3-5 条点列重要事件, 结尾给一句总结。
-输出 JSON: {"text": "..."}
-不要 markdown 之外的修饰。"""
+        system_prompt = """你是安全资讯日报编辑。基于给定的当日 N 篇文章，撰写中文 markdown 日报。
+
+格式要求（严格 markdown，前端会渲染）：
+1. **开篇导语**：1-2 句话总览今日该领域核心动态，独立一段
+2. **核心要点**：3-5 个要点，每条以无序列表项 `- ` 开头，建议结构：
+   - `- **关键词/事件名**：1-2 句简述（涉及的厂商、产品、CVE、影响范围）`
+3. **态势总结**：结尾另起一段，可用 `**总结**：` 前缀，给出一句总评
+
+排版细则：
+- 重要实体（CVE 编号、厂商名、工具名、零日代号）用 `**加粗**`
+- 技术术语、命令、文件名、代码片段用反引号 `` ` ``
+- 段落之间用空行分隔；列表项之间不要空行
+- 总长度 300-500 字；不要使用一级标题 `#`，最多用 `###` 三级标题分节
+- 不要输出 "今日"/"日报" 等冗余开场白
+
+输出格式：仅输出一个 JSON 对象 `{"text": "..."}`，其中 text 的值是**纯 markdown 字符串**（不是再嵌套的 JSON）。markdown 中的换行用 `\\n`、引号用 `\\"` 转义即可。除该 JSON 外不要任何前后文字、不要 ```json 围栏。"""
 
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
             for category in ALL_CATEGORIES:
@@ -607,6 +645,16 @@ async def generate_daily_brief(
                         cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
                     )
                     text = result.get("text") or ""
+                    # Some models nest the JSON envelope inside the text field
+                    # (returning {"text": "{\"text\": \"...\"}"}). Unwrap once.
+                    stripped = text.lstrip()
+                    if stripped.startswith("{") and '"text"' in stripped[:20]:
+                        try:
+                            inner = json.loads(stripped)
+                            if isinstance(inner, dict) and isinstance(inner.get("text"), str):
+                                text = inner["text"]
+                        except json.JSONDecodeError:
+                            pass
                     _db.upsert_brief(
                         conn, date=target_date, category=category,
                         text=text, article_count=len(rows), generated_at=now_iso,
