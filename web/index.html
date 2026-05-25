@@ -381,6 +381,11 @@
     transition: all 120ms;
   }
   .text-link:hover { color: var(--ink); background: var(--surface-2); }
+  .text-link[data-on="true"] {
+    color: var(--signal);
+    background: #FEF2F2;
+  }
+  .text-link[data-on="true"]:hover { background: #FECACA; }
 
   /* — Article cards (editorial light) — */
   .article {
@@ -1579,7 +1584,15 @@ function renderNewsCard(a) {
 }
 
 function renderNewsList() {
-  let items = state._searchResults !== null ? state._searchResults : state.news;
+  // Data source precedence:
+  //   showHidden  → state.hiddenNews (off-topic articles, audit view)
+  //   else search → state._searchResults
+  //   else        → state.news (date-filtered slice)
+  // In all three modes the same filters (lang, category, q, sort) apply,
+  // so the controls feel consistent.
+  let items;
+  if (state.showHidden) items = state.hiddenNews;
+  else items = state._searchResults !== null ? state._searchResults : state.news;
   if (state.newsLang !== "all") items = items.filter(a => a.lang === state.newsLang);
   if (state.newsCategory !== "all") items = items.filter(a => a.llm_category === state.newsCategory);
   const q = state.q.toLowerCase();
@@ -1594,10 +1607,17 @@ function renderNewsList() {
   const limited = sorted.slice(0, state.newsLimit);
   const el = document.getElementById("news-list");
 
-  let searchBanner = "";
-  if (state._searchResults !== null) {
+  let banner = "";
+  if (state.showHidden) {
     const isZh = lang === "zh";
-    searchBanner = `<div class="search-banner">
+    banner = `<div class="search-banner" style="background:#FEF2F2; border-color:#FCA5A5; color:#991B1B;">
+      <span>⊘</span>
+      <span>${isZh ? "已隐藏视图" : "Hidden view"} · ${state.hiddenNews.length} ${isZh ? "篇被 LLM 判为离题(is_relevant=0). 排序/分类/语言筛选照常生效." : "off-topic articles. Sort / category / lang filters still apply."}</span>
+      <button class="clear-btn" style="color:#991B1B;" onclick="toggleHidden()">${isZh ? "退出" : "Exit"}</button>
+    </div>`;
+  } else if (state._searchResults !== null) {
+    const isZh = lang === "zh";
+    banner = `<div class="search-banner">
       <span>🔍</span>
       <span>${isZh ? "全局搜索" : "Global search"}: <span class="text-paper">"${escapeHtml(state.q)}"</span> · ${state._searchResults.length} ${isZh ? "条结果 · 跨 30 天" : "results · 30-day window"}</span>
       <button class="clear-btn" onclick="document.getElementById('search').value=''; state.q=''; state._searchResults=null; renderNewsList(); renderVulnList();">${isZh ? "清除" : "Clear"}</button>
@@ -1605,12 +1625,11 @@ function renderNewsList() {
   }
 
   if (limited.length === 0) {
-    el.innerHTML = searchBanner + `<div class="py-20 text-center" style="border:1px solid var(--hairline);">
+    el.innerHTML = banner + `<div class="py-20 text-center" style="border:1px solid var(--hairline);">
       <div class="font-display text-[26px] text-paper-dim" style="font-variation-settings:'opsz' 36;">${t("no_data")}</div>
     </div>`;
   } else {
-    // Uniform card rhythm — no lead enlargement (looked visually unbalanced).
-    el.innerHTML = searchBanner + limited.map(renderNewsCard).join("");
+    el.innerHTML = banner + limited.map(renderNewsCard).join("");
   }
 
   // tab counts
@@ -1624,46 +1643,36 @@ function renderNewsList() {
 }
 
 // ─── hidden articles toggle ───────────────────────────────────────────────────
-let _hiddenVisible = false;
+// When ON, renderNewsList reads from state.hiddenNews (instead of state.news /
+// _searchResults) so all the regular controls — sort, category, lang, search
+// banner — apply uniformly. Visually we mark the button with data-on="true".
+state.showHidden = false;
+state.hiddenNews = [];
 
 async function refreshHiddenCount() {
   try {
-    const r = await fetch('/api/news/hidden?limit=200');
+    const r = await fetch('/api/news/hidden?limit=500');
     if (!r.ok) return;
     const items = await r.json();
+    state.hiddenNews = items;  // keep in sync so the count and the view match
     const el = document.getElementById('hidden-count');
     if (el) el.textContent = items.length;
   } catch (e) { console.warn('hidden count fetch failed', e); }
 }
 
 async function toggleHidden() {
-  _hiddenVisible = !_hiddenVisible;
-  if (_hiddenVisible) {
+  state.showHidden = !state.showHidden;
+  const btn = document.getElementById('hidden-toggle');
+  if (btn) btn.dataset.on = state.showHidden ? 'true' : 'false';
+  if (state.showHidden) {
+    // Refresh once on opening so we don't show stale data
     try {
-      const r = await fetch('/api/news/hidden?limit=200');
-      const items = await r.json();
-      const container = document.getElementById('news-list');
-      if (!container) {
-        console.warn('news list container not found');
-        _hiddenVisible = false;
-        return;
-      }
-      const bannerText = (typeof lang !== 'undefined' && lang === 'zh')
-        ? `${items.length} 篇被判离题的文章 · 点击"⊘"按钮回到正常视图`
-        : `${items.length} hidden off-topic articles · click ⊘ to return`;
-      container.innerHTML = `
-        <div class="p-3 mb-3 bg-surface border hairline rounded text-xs text-paper-faint lg:col-span-2">
-          ${bannerText}
-        </div>
-        ${items.map(renderNewsCard).join('')}
-      `;
-    } catch (e) {
-      console.error('hidden toggle failed', e);
-      _hiddenVisible = false;
-    }
-  } else {
-    renderNewsList();
+      const r = await fetch('/api/news/hidden?limit=500');
+      if (r.ok) state.hiddenNews = await r.json();
+    } catch (e) { console.warn('hidden fetch failed', e); }
   }
+  state.newsLimit = 40;  // reset pagination
+  renderNewsList();
 }
 
 document.addEventListener('DOMContentLoaded', () => {
