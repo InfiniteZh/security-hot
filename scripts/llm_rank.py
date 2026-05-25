@@ -41,6 +41,8 @@ from pathlib import Path
 
 import httpx
 
+import db as _db
+
 ROOT = Path(__file__).resolve().parent.parent
 NEWS_JSON = ROOT / "backend" / "cache" / "news.json"
 VULN_AI_JSON = ROOT / "backend" / "cache" / "vuln_ai.json"
@@ -180,202 +182,205 @@ async def _run_concurrent(items, process_fn, concurrency, lock, flush_fn=None, f
 
 # ── Phase 1: Fast classification + scoring ──
 
-async def classify_news(days: int = 30, rescore: bool = False, limit: int | None = None, verbose: bool = True) -> dict:
+_CLASSIFY_SYSTEM_PROMPT = """你是安全资讯分类助手。
+
+对每篇文章输出 5 个字段：
+  • id           — 直接复用输入里的 id
+  • score        — 0-10 的整数，10=极重要 / 7=值得关注 / 4=一般 / 0=低质量或噪音
+  • category     — incident | vuln | supply-chain | research | industry
+                   （仅当 is_relevant=true 时填，否则 null）
+  • is_relevant  — true / false
+                   true:  文章主题属于网络安全 / 信息安全 / 软件安全 / 漏洞研究 /
+                          威胁情报 / 攻防对抗 / 数据泄露 / 隐私 / 合规 / 加密
+                   false: 一般科技新闻 / 大模型行业评论 / 编程语言资讯 /
+                          产品发布会 / 个人生活随笔 / 财经娱乐 / 等
+                   注意: "AI 投毒" 既可能是 ML 安全也可能是大模型八卦,
+                         判断时看实质内容而非关键词
+  • reason       — 1 句话理由 (中文, <= 80 字)
+
+只输出 JSON,格式: {"items": [{...}, {...}]}
+不要 markdown,不要解释,不要前缀,只 JSON。
+"""
+
+
+def _build_classify_user_msg(batch: list) -> str:
+    """Pack a batch of articles into a single user message for the LLM."""
+    lines = []
+    for row in batch:
+        lines.append(
+            f"id={row['id']} | source={row['source_title']} | lang={row['lang']}\n"
+            f"title: {row['title']}\n"
+            f"summary: {(row['summary'] or '')[:300]}\n"
+        )
+    return "\n---\n".join(lines)
+
+
+async def classify_news(
+    days: int = 30,
+    rescore: bool = False,
+    limit: int | None = None,
+    verbose: bool = True,
+) -> dict:
+    """Phase 1: classify + score un-scored articles.
+
+    Reads articles WHERE llm_score IS NULL AND published >= now - days
+    (unless --rescore, in which case all articles in window are re-scored).
+    Calls LLM in batches of LLM_BATCH_SIZE (default 80).
+    Writes back llm_score / llm_category / llm_reason / is_relevant / llm_scored_at.
+    """
     cfg = _get_config()
     if not cfg["api_key"]:
-        if verbose:
-            print("[phase1] LLM_API_KEY not set, skipping", file=sys.stderr)
-        return {"skipped": True}
+        return {"error": "LLM_API_KEY not set"}
+    batch_size = int(os.environ.get("LLM_BATCH_SIZE", "80"))
 
-    if not NEWS_JSON.exists():
-        return {"error": "news.json missing"}
-    data = json.loads(NEWS_JSON.read_text(encoding="utf-8"))
-    articles = data.get("articles") or []
-
-    def needs_work(a):
-        has_score = isinstance(a.get("llm_score"), (int, float))
-        has_cat = a.get("llm_category") in VALID_CATS
-        if rescore:
-            return not has_cat
-        return not (has_score and has_cat)
-
-    needs = [(i, a) for i, a in enumerate(articles)
-             if needs_work(a) and _is_within_days(a.get("published"), days)]
+    conn = _db.connect()
+    where = "WHERE 1=1"
+    params: list = []
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        where += " AND COALESCE(published, fetched_at) >= ?"
+        params.append(cutoff)
+    if not rescore:
+        where += " AND llm_score IS NULL"
     if limit:
-        needs = needs[:limit]
-    if not needs:
-        if verbose:
-            print(f"[phase1] nothing to classify (total={len(articles)})", file=sys.stderr)
-        return {"classified": 0, "reason": "all-cached"}
+        tail = f" LIMIT {limit}"
+    else:
+        tail = ""
 
-    batch_size = 80
+    rows = list(conn.execute(
+        f"SELECT id, title, summary, source_title, lang FROM articles {where}{tail}",
+        params,
+    ))
     if verbose:
-        print(f"[phase1] classifying {len(needs)} articles, batch={batch_size}, concurrency={cfg['concurrency']}", file=sys.stderr)
+        print(f"[phase1] {len(rows)} articles to classify, batch={batch_size}", file=sys.stderr)
 
-    scored = 0
-    errors = 0
-    lock = asyncio.Lock()
-    t0 = time.monotonic()
+    # Build batches
+    batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    all_chunks = [needs[i:i + batch_size] for i in range(0, min(len(needs), cfg["max_batches"] * batch_size), batch_size)]
+    system_prompt = _CLASSIFY_SYSTEM_PROMPT
+    sem = asyncio.Semaphore(cfg["concurrency"])
 
-    async def process(chunk, batch_num, client):
-        nonlocal scored, errors
-        msg_parts = []
-        for lid, (_, a) in enumerate(chunk):
-            title = (a.get("title") or "").strip().replace("\n", " ")[:240]
-            summary = (a.get("summary") or "").strip().replace("\n", " ")[:200]
-            source = a.get("source_title") or ""
-            msg_parts.append(f"[{lid}] ({source}) {title} — {summary}")
-        user_msg = "请为下面这批文章打分并分类：\n\n" + "\n\n".join(msg_parts)
-
-        parsed = None
-        for attempt in range(3):
+    async def process(batch, batch_num, client):
+        user_msg = _build_classify_user_msg(batch)
+        async with sem:
             try:
-                parsed = await _llm_call(client, CLASSIFY_PROMPT, user_msg, cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"])
-                break
+                result = await _llm_call(
+                    client, system_prompt, user_msg,
+                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                )
             except Exception as exc:
                 if verbose:
-                    print(f"[phase1] batch {batch_num} attempt {attempt+1} failed: {exc}", file=sys.stderr)
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt * 3)
-
-        if parsed is None:
-            async with lock:
-                errors += 1
-            return
-
-        batch_n = 0
-        async with lock:
-            for item in parsed.get("results") or []:
-                if not isinstance(item, dict):
+                    print(f"[phase1] batch {batch_num} failed: {exc}", file=sys.stderr)
+                return
+            items = result.get("items", [])
+            for item in items:
+                rowid = item.get("id")
+                if not rowid:
                     continue
-                try:
-                    lid = int(item["id"])
-                    if lid < 0 or lid >= len(chunk):
-                        continue
-                    idx = chunk[lid][0]
-                    score = max(1, min(10, int(item["score"])))
-                    cat = item.get("cat", "")
-                    reason = str(item.get("reason") or "").strip()[:60]
-                except (KeyError, TypeError, ValueError):
-                    continue
-                articles[idx]["llm_score"] = score
-                articles[idx]["llm_reason"] = reason
-                if cat in VALID_CATS:
-                    articles[idx]["llm_category"] = cat
-                scored += 1
-                batch_n += 1
-        if verbose:
-            print(f"[phase1] batch {batch_num}/{len(all_chunks)}: +{batch_n}, total {scored}", file=sys.stderr)
+                cat = item.get("category")
+                if cat not in {"incident", "vuln", "supply-chain", "research", "industry"}:
+                    cat = None
+                conn.execute("""
+                    UPDATE articles SET
+                      llm_score = ?, llm_category = ?, llm_reason = ?,
+                      is_relevant = ?, llm_scored_at = ?
+                    WHERE id = ?
+                """, [
+                    int(item.get("score") or 0),
+                    cat,
+                    (item.get("reason") or "")[:300],
+                    1 if item.get("is_relevant") else 0,
+                    now_iso, rowid,
+                ])
+            conn.commit()
+            if verbose:
+                print(f"[phase1] batch {batch_num}/{len(batches)}: +{len(items)}", file=sys.stderr)
 
-    def flush():
-        NEWS_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+        await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
 
-    await _run_concurrent(
-        {"chunks": all_chunks, "timeout": cfg["timeout"]},
-        process, cfg["concurrency"], lock, flush
-    )
-    flush()
-    elapsed = round(time.monotonic() - t0, 1)
-    if verbose:
-        print(f"[phase1] done: {scored} classified in {elapsed}s ({errors} errors)", file=sys.stderr)
-    return {"classified": scored, "errors": errors, "elapsed_s": elapsed}
+    conn.close()
+    return {"classified": len(rows), "batches": len(batches)}
 
 
 # ── Phase 2: Targeted summarization for high-score English articles ──
 
-async def summarize_news(min_score: int = 5, days: int = 30, limit: int | None = None, verbose: bool = True) -> dict:
+async def summarize_news(
+    min_score: int = 5,
+    days: int = 30,
+    limit: int | None = None,
+    verbose: bool = True,
+) -> dict:
+    """Phase 2: generate Chinese summaries for high-score English articles.
+
+    Filter: lang='en' AND llm_score >= min_score AND is_relevant=1
+            AND llm_summary_zh IS NULL.
+    """
+    from datetime import datetime, timezone, timedelta
     cfg = _get_config()
     if not cfg["api_key"]:
-        return {"skipped": True}
+        return {"error": "LLM_API_KEY not set"}
+    batch_size = int(os.environ.get("LLM_BATCH_SIZE", "30"))
 
-    if not NEWS_JSON.exists():
-        return {"error": "news.json missing"}
-    data = json.loads(NEWS_JSON.read_text(encoding="utf-8"))
-    articles = data.get("articles") or []
+    conn = _db.connect()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    limit_clause = f"LIMIT {limit}" if limit else ""
+    rows = list(conn.execute(f"""
+        SELECT id, title, summary
+        FROM articles
+        WHERE lang = 'en'
+          AND llm_score >= ?
+          AND is_relevant = 1
+          AND llm_summary_zh IS NULL
+          AND COALESCE(published, fetched_at) >= ?
+        ORDER BY llm_score DESC
+        {limit_clause}
+    """, [min_score, cutoff]))
 
-    needs = [(i, a) for i, a in enumerate(articles)
-             if a.get("lang") == "en"
-             and isinstance(a.get("llm_score"), (int, float))
-             and int(a["llm_score"]) >= min_score
-             and not a.get("llm_summary_zh")
-             and _is_within_days(a.get("published"), days)]
-    if limit:
-        needs = needs[:limit]
-    if not needs:
-        if verbose:
-            print(f"[phase2] no articles need summarization (min_score={min_score})", file=sys.stderr)
-        return {"summarized": 0}
-
-    batch_size = 30
     if verbose:
-        print(f"[phase2] summarizing {len(needs)} high-score EN articles, batch={batch_size}", file=sys.stderr)
+        print(f"[phase2] {len(rows)} articles to summarize, batch={batch_size}", file=sys.stderr)
 
-    summarized = 0
-    errors = 0
-    lock = asyncio.Lock()
-    t0 = time.monotonic()
+    batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    all_chunks = [needs[i:i + batch_size] for i in range(0, min(len(needs), cfg["max_batches"] * batch_size), batch_size)]
+    system_prompt = """你是安全资讯翻译/摘要助手。
+为每篇英文安全文章生成 1-2 句中文摘要（<=120 字）, 重点保留 CVE 编号 / 厂商 / 漏洞类型 / 影响范围。
+输出 JSON: {"items": [{"id": <int>, "summary": "中文摘要..."}]}
+不要 markdown, 不要前缀。"""
 
-    async def process(chunk, batch_num, client):
-        nonlocal summarized, errors
-        msg_parts = []
-        for lid, (_, a) in enumerate(chunk):
-            title = (a.get("title") or "").strip().replace("\n", " ")[:240]
-            summary = (a.get("summary") or "").strip().replace("\n", " ")[:400]
-            msg_parts.append(f"[{lid}] {title}\n{summary}")
-        user_msg = "请为以下英文文章写中文摘要：\n\n" + "\n\n".join(msg_parts)
+    sem = asyncio.Semaphore(cfg["concurrency"])
 
-        parsed = None
-        for attempt in range(3):
+    async def process(batch, batch_num, client):
+        user_msg = "\n---\n".join(
+            f"id={r['id']}\ntitle: {r['title']}\nsummary: {(r['summary'] or '')[:500]}"
+            for r in batch
+        )
+        async with sem:
             try:
-                parsed = await _llm_call(client, SUMMARIZE_PROMPT, user_msg, cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"])
-                break
+                result = await _llm_call(
+                    client, system_prompt, user_msg,
+                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                )
             except Exception as exc:
                 if verbose:
-                    print(f"[phase2] batch {batch_num} attempt {attempt+1} failed: {exc}", file=sys.stderr)
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt * 3)
+                    print(f"[phase2] batch {batch_num} failed: {exc}", file=sys.stderr)
+                return
+            for item in result.get("items", []):
+                conn.execute(
+                    "UPDATE articles SET llm_summary_zh = ?, llm_summarized_at = ? WHERE id = ?",
+                    [(item.get("summary") or "")[:500], now_iso, item.get("id")],
+                )
+            conn.commit()
+            if verbose:
+                print(f"[phase2] batch {batch_num}/{len(batches)}: +{len(result.get('items', []))}",
+                      file=sys.stderr)
 
-        if parsed is None:
-            async with lock:
-                errors += 1
-            return
+    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+        await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
 
-        batch_n = 0
-        async with lock:
-            for item in parsed.get("results") or []:
-                if not isinstance(item, dict):
-                    continue
-                try:
-                    lid = int(item["id"])
-                    if lid < 0 or lid >= len(chunk):
-                        continue
-                    idx = chunk[lid][0]
-                    sz = str(item.get("summary_zh") or "").strip()[:300]
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if sz:
-                    articles[idx]["llm_summary_zh"] = sz
-                    summarized += 1
-                    batch_n += 1
-        if verbose:
-            print(f"[phase2] batch {batch_num}/{len(all_chunks)}: +{batch_n}, total {summarized}", file=sys.stderr)
-
-    def flush():
-        NEWS_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    await _run_concurrent(
-        {"chunks": all_chunks, "timeout": cfg["timeout"]},
-        process, cfg["concurrency"], lock, flush
-    )
-    flush()
-    elapsed = round(time.monotonic() - t0, 1)
-    if verbose:
-        print(f"[phase2] done: {summarized} summarized in {elapsed}s ({errors} errors)", file=sys.stderr)
-    return {"summarized": summarized, "errors": errors, "elapsed_s": elapsed}
+    conn.close()
+    return {"summarized": len(rows), "batches": len(batches)}
 
 
 # ── Vulnerability AI assessment ──
@@ -510,76 +515,77 @@ CAT_NAMES = {
     "industry": "行业动态",
 }
 
+ALL_CATEGORIES = ["incident", "vuln", "supply-chain", "research", "industry"]
 
-async def generate_daily_brief(target_date: str | None = None, verbose: bool = True) -> dict:
+
+async def generate_daily_brief(
+    target_date: str | None = None,
+    verbose: bool = True,
+) -> dict:
+    """Generate a daily brief for each of the 5 categories.
+
+    For each category, pull top N high-score relevant articles published on
+    target_date, summarize via LLM, INSERT OR REPLACE into daily_briefs.
+    """
     cfg = _get_config()
     if not cfg["api_key"]:
-        return {"skipped": True}
+        return {"error": "LLM_API_KEY not set"}
 
-    if not NEWS_JSON.exists():
-        return {"error": "news.json missing"}
-    data = json.loads(NEWS_JSON.read_text(encoding="utf-8"))
-    articles = data.get("articles") or []
-
-    if not target_date:
+    if target_date is None:
         target_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    by_cat: dict[str, list[dict]] = {c: [] for c in VALID_CATS}
-    for a in articles:
-        pub = (a.get("published") or "")[:10]
-        cat = a.get("llm_category")
-        if pub == target_date and cat in VALID_CATS:
-            by_cat[cat].append(a)
+    conn = _db.connect()
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    summaries: dict[str, dict] = {}
 
-    existing = {}
-    if BRIEF_JSON.exists():
-        try:
-            existing = json.loads(BRIEF_JSON.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    briefs = existing.get(target_date, {})
-    generated = 0
+    system_prompt = """你是安全资讯日报编辑。
+基于给定的当日 N 篇文章, 撰写一段 300-500 字的中文摘要,
+开头点明今日该领域的核心动态, 中间用 3-5 条点列重要事件, 结尾给一句总结。
+输出 JSON: {"text": "..."}
+不要 markdown 之外的修饰。"""
 
     async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        for cat, cat_articles in by_cat.items():
-            if len(cat_articles) < 2:
+        for category in ALL_CATEGORIES:
+            rows = list(conn.execute("""
+                SELECT title, summary, source_title, llm_summary_zh
+                FROM articles
+                WHERE first_seen_date = ?
+                  AND llm_category = ?
+                  AND is_relevant = 1
+                  AND (cluster_id IS NULL OR is_cluster_primary = 1)
+                ORDER BY llm_score DESC
+                LIMIT 12
+            """, [target_date, category]))
+            if not rows:
+                if verbose:
+                    print(f"[brief] {category}: 0 articles, skipped", file=sys.stderr)
                 continue
-            if cat in briefs:
-                continue
-
-            sorted_arts = sorted(cat_articles, key=lambda a: -(a.get("llm_score") or 0))[:20]
-            lines = []
-            for i, a in enumerate(sorted_arts):
-                title = (a.get("title") or "").strip()[:120]
-                score = a.get("llm_score", "?")
-                lines.append(f"[{i+1}] (score={score}) {title}")
-
-            user_msg = f"分类：{CAT_NAMES.get(cat, cat)}，日期：{target_date}\n\n今日文章（按重要度排序）：\n" + "\n".join(lines)
-
+            user_msg = f"分类: {category}\n" + "\n---\n".join(
+                f"[{r['source_title']}] {r['title']}\n摘要: {r['llm_summary_zh'] or r['summary'] or ''}"
+                for r in rows
+            )
             try:
-                parsed = await _llm_call(client, DAILY_BRIEF_PROMPT, user_msg, cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"])
-                brief_text = parsed.get("brief", "")
-                if brief_text:
-                    briefs[cat] = {
-                        "text": brief_text,
-                        "article_count": len(cat_articles),
-                        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    }
-                    generated += 1
-                    if verbose:
-                        print(f"[brief] {cat}: {len(brief_text)} chars from {len(cat_articles)} articles", file=sys.stderr)
+                result = await _llm_call(
+                    client, system_prompt, user_msg,
+                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                )
+                text = result.get("text") or ""
+                _db.upsert_brief(
+                    conn, date=target_date, category=category,
+                    text=text, article_count=len(rows), generated_at=now_iso,
+                )
+                summaries[category] = {"chars": len(text), "articles": len(rows)}
+                if verbose:
+                    print(f"[brief] {category}: {len(text)} chars from {len(rows)} articles",
+                          file=sys.stderr)
             except Exception as exc:
                 if verbose:
-                    print(f"[brief] {cat} failed: {exc}", file=sys.stderr)
+                    print(f"[brief] {category} failed: {exc}", file=sys.stderr)
 
-    if generated > 0:
-        existing[target_date] = briefs
-        BRIEF_JSON.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-
+    conn.close()
     if verbose:
-        print(f"[brief] done: {generated} categories for {target_date}", file=sys.stderr)
-    return {"date": target_date, "generated": generated, "categories": list(briefs.keys())}
+        print(f"[brief] done: {len(summaries)} categories for {target_date}", file=sys.stderr)
+    return {"date": target_date, "categories": summaries}
 
 
 # ── CLI ──

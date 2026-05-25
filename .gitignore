@@ -19,6 +19,7 @@ venv/
 # The CI workflow pushes these to the `data` branch instead of `main`.
 backend/cache/
 backend/history/
+backend/archive/
 scripts/output/
 
 # Editor / OS

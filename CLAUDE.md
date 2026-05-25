@@ -102,7 +102,7 @@ uv run python scripts/fetch_data.py --concurrency 12 # 提升 news RSS 并发
 | pocs | `poc-in-github.motikan2010.net/api/v1` | 最近 100 个 PoC 仓库 |
 | itw | `inthewild.io/feed` | RSS（feed 当前可能为空） |
 | heat | `cvecrowd.com/api/cves` | 端点格式可能变了，目前 fallback 到 0 |
-| news | 713 个聚合源（merged.opml + curated） | 每源取近期文章；总条目数可达 4-5k |
+| news | 713 个聚合源（merged.opml + curated） | **写 SQLite (`news.db`)**，按 `sources.interval_minutes` 智能挑源；带 Conditional GET |
 | epss | `epss.empiricalsecurity.com/.../v202X.csv.gz` | FIRST.org EPSS 每日全量 CSV，>30 万条 CVE→exploit 概率 |
 | osv | `osv-vulnerabilities.storage.googleapis.com` | OSV.dev 全量 ecosystem dump（npm + PyPI），>20 万条 |
 | nuclei | `api.github.com/repos/projectdiscovery/nuclei-templates/git/trees` | 列出所有 CVE 模板（用于 vuln 详情外链） |
@@ -131,6 +131,35 @@ uv run python scripts/llm_rank.py --min-score 7                 # 仅 >=7 分的
 - 新闻分类为 5 类：`incident / vuln / supply-chain / research / industry`
 - 漏洞 AI 评估产出 `ai_severity`（独立于 CVSS 判断）和中文概述
 - 日报按分类生成当日摘要，存入 `daily_brief.json`
+
+## 行业资讯链路（SQLite 重构后）
+
+**数据底座**：`backend/cache/news.db` (SQLite + FTS5)
+
+**首次部署**：
+```bash
+uv run python scripts/migrate_to_sqlite.py            # 一次性迁移 news.json → news.db
+```
+
+**日常操作**：
+```bash
+uv run python scripts/fetch_data.py --only news --incremental    # 智能挑源（按 last_fetched + interval_minutes）
+uv run python scripts/cluster_articles.py                         # 镜像聚类（Jaccard 3-shingle）
+uv run python scripts/llm_rank.py --task classify                 # 仅给未打分的 articles 打分
+uv run python scripts/llm_rank.py --task summarize                # 高分英文文章 → 中文摘要
+uv run python scripts/llm_rank.py --task brief                    # 5 类日报，写入 daily_briefs 表
+uv run python scripts/llm_rank.py --task brief --date 2026-05-25  # 指定日期重跑
+```
+
+**fetch_data 与 LLM 完全解耦**：fetch 写 articles (LLM 字段 NULL)；llm_rank 独立扫 `WHERE llm_score IS NULL` 并填上。
+两个进程通过 SQLite WAL 模式并发，0 import 关系。
+
+**Agent / Claude 查询**：
+- 直接读 SQLite：`sqlite3 backend/cache/news.db "SELECT * FROM articles WHERE date(published)='2026-05-25' AND llm_score >= 7"`
+- FTS5 全文搜：`sqlite3 backend/cache/news.db "SELECT title FROM articles_fts WHERE articles_fts MATCH 'CVE-2025'"`
+- 当天 NDJSON 归档：`Read backend/archive/news/2026-05-25.jsonl`
+
+**Cron 部署**：参考 `docs/cron-template.txt`。
 
 ## 前端
 

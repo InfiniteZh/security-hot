@@ -13,6 +13,7 @@ SortBy = Literal["heat", "time"]
 
 
 class Article(BaseModel):
+    id: int | None = None
     title: str
     link: str
     published: str = ""
@@ -26,6 +27,9 @@ class Article(BaseModel):
     llm_category: NewsCategory | None = None
     llm_summary_zh: str | None = None
     tags: list[str] = Field(default_factory=list)
+    is_relevant: bool | None = None
+    mirror_count: int = 0
+    mirror_source_titles: list[str] = Field(default_factory=list)
 
 
 class PocLink(BaseModel):

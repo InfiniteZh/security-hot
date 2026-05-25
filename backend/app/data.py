@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3 as _sqlite3
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -25,7 +26,50 @@ from .models import (
 ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "backend" / "cache"
 
+_NEWS_DB = ROOT / "backend" / "cache" / "news.db"
+
 _RELOAD_TTL = 30  # seconds
+_VALID_CATEGORIES: set[str] = {"incident", "vuln", "supply-chain", "research", "industry"}
+
+
+# ─────────── SQLite helpers ───────────
+
+def _news_conn() -> _sqlite3.Connection:
+    c = _sqlite3.connect(str(_NEWS_DB))
+    c.row_factory = _sqlite3.Row
+    # foreign_keys is session-scoped; explicit set is required even on WAL-init'd file.
+    # WAL mode is already sticky in the file header but re-stating it is harmless.
+    c.execute("PRAGMA journal_mode = WAL")
+    c.execute("PRAGMA foreign_keys = ON")
+    c.execute("PRAGMA synchronous = NORMAL")
+    return c
+
+
+def _row_to_article(row, mirror_titles_by_cluster: dict) -> Article:
+    cluster_id = row["cluster_id"]
+    mirror_titles = mirror_titles_by_cluster.get(cluster_id, []) if cluster_id else []
+    raw_cat = row["llm_category"]
+    llm_cat: NewsCategory | None = raw_cat if raw_cat in _VALID_CATEGORIES else None
+    return Article(
+        id=row["id"],
+        title=row["title"] or "",
+        link=row["canonical_url"] or "",
+        published=row["published"] or "",
+        summary=row["summary"] or "",
+        source_slug=row["source_slug"] or "",
+        source_title=row["source_title"] or "",
+        lang=row["lang"] if row["lang"] in ("zh", "en") else "en",
+        category=row["rss_category"],
+        llm_score=int(row["llm_score"]) if row["llm_score"] is not None else None,
+        llm_reason=row["llm_reason"],
+        llm_category=llm_cat,
+        llm_summary_zh=row["llm_summary_zh"],
+        is_relevant=bool(row["is_relevant"]) if row["is_relevant"] is not None else None,
+        mirror_count=len(mirror_titles),
+        mirror_source_titles=mirror_titles[:6],
+    )
+
+
 _state: dict[str, tuple[float, Any]] = {}
 
 
@@ -590,51 +634,52 @@ def compute_heat(v: Vuln) -> int:
     return min(h, 100)
 
 
-_VALID_CATEGORIES: set[str] = {"incident", "vuln", "supply-chain", "research", "industry"}
-
-
 def all_articles() -> list[Article]:
-    raw = _load_json("news.json", {"articles": [], "sources": []})
-    out: list[Article] = []
-    for a in raw.get("articles", []):
-        score = a.get("llm_score")
-        score_int = int(score) if isinstance(score, (int, float)) else None
-        if score_int is not None and score_int <= 2:
-            continue
-        raw_cat = a.get("llm_category")
-        llm_cat: NewsCategory | None = raw_cat if raw_cat in _VALID_CATEGORIES else None
-        out.append(Article(
-            title=a.get("title", ""),
-            link=a.get("link", ""),
-            published=a.get("published", ""),
-            summary=a.get("summary", ""),
-            source_slug=a.get("source_slug", ""),
-            source_title=a.get("source_title", ""),
-            lang=a.get("lang", "en"),
-            category=a.get("category"),
-            llm_score=score_int,
-            llm_reason=a.get("llm_reason"),
-            llm_category=llm_cat,
-            llm_summary_zh=a.get("llm_summary_zh"),
-            tags=[(a.get("source_title") or "").upper()] if a.get("source_title") else [],
-        ))
-    return out
+    """SQLite-backed: primary articles (or unclustered) where is_relevant != 0,
+    with mirror_source_titles attached for the cluster."""
+    if not _NEWS_DB.exists():
+        return []
+    conn = _news_conn()
+    # Pre-fetch mirror source titles, grouped by cluster
+    mirror_titles: dict = {}
+    for r in conn.execute("""
+        SELECT cluster_id, source_title
+        FROM articles
+        WHERE cluster_id IS NOT NULL AND is_cluster_primary = 0
+        ORDER BY fetched_at ASC
+    """):
+        mirror_titles.setdefault(r["cluster_id"], []).append(r["source_title"] or "")
+
+    rows = list(conn.execute("""
+        SELECT * FROM articles
+        WHERE (is_relevant = 1 OR is_relevant IS NULL)
+          AND (cluster_id IS NULL OR is_cluster_primary = 1)
+        ORDER BY COALESCE(llm_score, -1) DESC, COALESCE(published, fetched_at) DESC
+    """))
+    conn.close()
+    return [_row_to_article(r, mirror_titles) for r in rows]
 
 
 def all_sources() -> list[SourceStatus]:
-    raw = _load_json("news.json", {"sources": []})
+    """News sources from SQLite sources table."""
+    if not _NEWS_DB.exists():
+        return []
     out: list[SourceStatus] = []
-    for s in raw.get("sources", []):
+    conn = _news_conn()
+    for r in conn.execute("""
+        SELECT slug, title, url, lang, ok, error,
+               (SELECT COUNT(*) FROM articles WHERE source_slug = sources.slug) AS count
+        FROM sources
+    """):
+        lang_raw = r["lang"]
+        lang_val = lang_raw if lang_raw in ("zh", "en") else "mixed"
         out.append(SourceStatus(
-            slug=s.get("slug", ""),
-            title=s.get("title", ""),
-            url=s.get("url", ""),
-            lang=s.get("lang", "en"),
-            category=s.get("category"),
-            ok=bool(s.get("ok")),
-            count=int(s.get("count", 0)),
-            error=s.get("error"),
+            slug=r["slug"], title=r["title"] or r["slug"], url=r["url"] or "",
+            lang=lang_val,
+            ok=bool(r["ok"]), count=int(r["count"] or 0),
+            error=r["error"],
         ))
+    conn.close()
     return out
 
 

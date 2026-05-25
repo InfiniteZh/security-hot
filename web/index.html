@@ -500,6 +500,12 @@
           <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="industry">
             <span data-i18n="cat.industry">行业动态</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="industry">—</span>
           </button>
+          <button onclick="toggleHidden()" id="hidden-toggle"
+                  class="ml-auto text-xs text-dim hover:text-fg font-mono px-2.5 py-1 hover:bg-surface rounded"
+                  data-i18n-title="news.hiddenLabel"
+                  aria-label="已隐藏 LLM 判定为离题的文章">
+            ⊘ <span id="hidden-count">0</span> <span data-i18n="news.hiddenLabel">已隐藏</span>
+          </button>
         </div>
 
         <!-- panel: NEWS -->
@@ -508,7 +514,13 @@
           <div id="daily-brief" class="border hairline bg-surface rounded-xl p-5 mb-4" style="display:none">
             <div class="flex items-center justify-between mb-3">
               <h3 class="text-[14px] font-semibold tracking-tight" data-i18n="brief.title">今日简报</h3>
-              <button id="brief-toggle" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest">▼</button>
+              <div class="flex items-center gap-2">
+                <button onclick="regenerateBrief()"
+                        class="text-xs text-dim hover:text-fg ml-auto font-mono px-2 py-1 hover:bg-surface rounded"
+                        data-i18n-title="news.refreshBrief"
+                        aria-label="刷新简报">⟳</button>
+                <button id="brief-toggle" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest">▼</button>
+              </div>
             </div>
             <div id="brief-content" class="space-y-4"></div>
           </div>
@@ -725,6 +737,32 @@ function relTime(iso) {
 }
 function severityClass(s) { return "sev sev-" + s; }
 function escapeHtml(s) { return (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+// ───────────────────── mirror expand ─────────────────────
+async function expandMirrors(stripEl, articleId) {
+  const container = stripEl.nextElementSibling;
+  if (!container || !container.classList.contains('mirrors-expanded')) return;
+  const chevron = stripEl.querySelector('.mirror-chevron');
+  if (!container.classList.contains('hidden')) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    if (chevron) chevron.textContent = '▾';
+    return;
+  }
+  try {
+    const r = await fetch(`/api/news/${articleId}/mirrors`);
+    if (!r.ok) return;
+    const mirrors = await r.json();
+    container.innerHTML = mirrors.map(m => `
+      <div class="py-1.5 text-xs">
+        <span class="font-mono text-dim mr-2">${escapeHtml(m.source_title)}</span>
+        <a href="${escapeHtml(m.link)}" target="_blank" rel="noopener" class="hover:underline">${escapeHtml(m.title)}</a>
+      </div>
+    `).join('');
+    container.classList.remove('hidden');
+    if (chevron) chevron.textContent = '▴';
+  } catch (e) { console.warn('expand failed', e); }
+}
 
 // ───────────────────── renderers ─────────────────────
 function renderStatsSkeleton() {
@@ -959,6 +997,17 @@ function renderNewsCard(a) {
           </a>
           ${showZhSummary ? `<p class="text-[12px] text-ink-soft leading-relaxed mt-1.5 clamp-3">${escapeHtml(a.llm_summary_zh)}</p>` : ''}
           ${(!showZhSummary && a.summary) ? `<p class="text-[12px] text-muted leading-relaxed mt-1 clamp-2">${escapeHtml(a.summary)}</p>` : ''}
+          ${(a.mirror_count || 0) > 0 ? `
+          <div class="mirror-strip mt-3 pt-3 border-t hairline flex items-center gap-2 text-xs text-dim cursor-pointer hover:text-fg" data-article-id="${a.id}" onclick="expandMirrors(this, ${JSON.stringify(a.id)})">
+            <div class="flex gap-1">
+              ${'<div class="w-1.5 h-1.5 rounded-full bg-muted inline-block"></div>'.repeat(Math.min(a.mirror_count, 3))}
+            </div>
+            <span class="font-mono">+${a.mirror_count} ${escapeHtml(t('news.mirrors'))}</span>
+            <span class="text-dim">· ${escapeHtml((a.mirror_source_titles || []).slice(0,3).join(' / '))}${(a.mirror_source_titles || []).length > 3 ? '…' : ''}</span>
+            <span class="ml-auto mirror-chevron">▾</span>
+          </div>
+          <div class="mirrors-expanded hidden mt-2 pl-4 border-l-2 border-stroke"></div>
+          ` : ''}
         </div>
       </div>
     </article>
@@ -999,6 +1048,55 @@ function renderNewsList() {
     document.querySelectorAll(`[data-catcount="${c}"]`).forEach(n => n.textContent = count);
   });
 }
+
+// ─── hidden articles toggle ───────────────────────────────────────────────────
+let _hiddenVisible = false;
+
+async function refreshHiddenCount() {
+  try {
+    const r = await fetch('/api/news/hidden?limit=200');
+    if (!r.ok) return;
+    const items = await r.json();
+    const el = document.getElementById('hidden-count');
+    if (el) el.textContent = items.length;
+  } catch (e) { console.warn('hidden count fetch failed', e); }
+}
+
+async function toggleHidden() {
+  _hiddenVisible = !_hiddenVisible;
+  if (_hiddenVisible) {
+    try {
+      const r = await fetch('/api/news/hidden?limit=200');
+      const items = await r.json();
+      const container = document.getElementById('news-list');
+      if (!container) {
+        console.warn('news list container not found');
+        _hiddenVisible = false;
+        return;
+      }
+      const bannerText = (typeof lang !== 'undefined' && lang === 'zh')
+        ? `${items.length} 篇被判离题的文章 · 点击"⊘"按钮回到正常视图`
+        : `${items.length} hidden off-topic articles · click ⊘ to return`;
+      container.innerHTML = `
+        <div class="p-3 mb-3 bg-surface border hairline rounded text-xs text-dim lg:col-span-2">
+          ${bannerText}
+        </div>
+        ${items.map(renderNewsCard).join('')}
+      `;
+    } catch (e) {
+      console.error('hidden toggle failed', e);
+      _hiddenVisible = false;
+    }
+  } else {
+    renderNewsList();
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  refreshHiddenCount();
+  setInterval(refreshHiddenCount, 60000);
+});
+// ─────────────────────────────────────────────────────────────────────────────
 
 function renderHeat() {
   const el = document.getElementById("heat-list");
@@ -1302,6 +1400,40 @@ document.getElementById("brief-toggle").addEventListener("click", () => {
   state.briefCollapsed = !state.briefCollapsed;
   renderBrief();
 });
+
+async function regenerateBrief() {
+  // Share the same localStorage key as triggerRefresh() so users only enter
+  // their token once across the app (see REFRESH_TOKEN_KEY at top).
+  let token = getRefreshToken();
+  if (!token) {
+    const isZh = (typeof lang !== 'undefined' && lang === 'zh');
+    token = prompt(isZh
+      ? 'Refresh token（在 .env 里的 SECURITY_HOT_REFRESH_TOKEN）：'
+      : 'Refresh token (from .env SECURITY_HOT_REFRESH_TOKEN):');
+    if (!token) return;
+    setRefreshToken(token.trim());
+  }
+  try {
+    const r = await fetch('/api/brief/regenerate', {
+      method: 'POST',
+      headers: {'X-Refresh-Token': token},
+    });
+    if (r.status === 401) {
+      clearRefreshToken();
+      alert((typeof lang !== 'undefined' && lang === 'zh') ? 'Token 无效，已清除，请重试' : 'Token invalid, cleared, retry');
+      return;
+    }
+    if (r.status === 202) {
+      console.log('brief regen accepted, refetching in 10s');
+      setTimeout(() => {
+        state.briefDate = null; // force re-fetch
+        fetchBrief().then(renderBrief);
+      }, 10000);
+    }
+  } catch (e) {
+    console.error('regen failed', e);
+  }
+}
 
 function renderAll() {
   applyI18n();

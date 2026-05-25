@@ -41,9 +41,12 @@ from xml.etree import ElementTree as ET
 import feedparser
 import httpx
 
+import db as _db  # SQLite helpers from scripts/db.py
+
 ROOT = Path(__file__).resolve().parent.parent
 CACHE = ROOT / "backend" / "cache"
 CACHE.mkdir(parents=True, exist_ok=True)
+ARCHIVE_DIR = ROOT / "backend" / "archive" / "news"
 
 USER_AGENT = (
     "Mozilla/5.0 (compatible; security-hot/1.0; +https://github.com/) "
@@ -402,108 +405,6 @@ async def fetch_one_feed(client: httpx.AsyncClient, source: dict, max_entries: i
         return {**source, "ok": False, "error": f"{type(exc).__name__}: {exc}"[:200], "entries": []}
 
 
-async def fetch_news(client: httpx.AsyncClient, concurrency: int = 8, incremental: bool = False) -> dict:
-    sem = asyncio.Semaphore(concurrency)
-
-    async def bounded(src):
-        async with sem:
-            return await fetch_one_feed(client, src)
-
-    sources_to_pull = _news_sources_to_use()
-    print(f"[news] pulling {len(sources_to_pull)} sources (merged.opml + curated)", file=sys.stderr)
-    results = await asyncio.gather(*[bounded(s) for s in sources_to_pull])
-
-    articles = []
-    sources = []
-    for s in results:
-        sources.append({
-            "slug": s["slug"],
-            "title": s["title"],
-            "url": s["url"],
-            "lang": s["lang"],
-            "category": s.get("category"),
-            "ok": s["ok"],
-            "error": s.get("error"),
-            "count": len(s.get("entries", [])),
-        })
-        for e in s.get("entries", []):
-            articles.append({
-                "title": e["title"],
-                "link": e["link"],
-                "published": e["published"],
-                "summary": e["summary"],
-                "source_slug": s["slug"],
-                "source_title": s["title"],
-                "lang": s["lang"],
-                "category": s.get("category"),
-            })
-    # ─── Layer 1+2 pipeline: dedupe then keyword block ───
-    pre_total = len(articles)
-    articles, url_dropped, title_dropped = _articles_dedupe(articles)
-    articles, keyword_dropped = _articles_keyword_filter(articles)
-
-    # ─── Incremental merge: keep existing articles, prepend only new ones ───
-    incremental_new = 0
-    if incremental:
-        news_path = CACHE / "news.json"
-        if news_path.exists():
-            try:
-                prev_data = json.loads(news_path.read_text(encoding="utf-8"))
-                prev_articles = prev_data.get("articles") or []
-                prev_links = {_canonical_url(a.get("link", "")) for a in prev_articles}
-                new_articles = [a for a in articles if _canonical_url(a.get("link", "")) not in prev_links]
-                incremental_new = len(new_articles)
-                articles = new_articles + prev_articles
-                articles = articles[:6000]
-                print(f"[news] incremental: {incremental_new} new, {len(articles)} total", file=sys.stderr)
-            except (json.JSONDecodeError, OSError):
-                pass
-
-    filter_meta = {
-        "raw_articles": pre_total,
-        "url_duplicates": len(url_dropped),
-        "title_duplicates": len(title_dropped),
-        "keyword_filtered": len(keyword_dropped),
-        "kept": len(articles),
-        "incremental_new": incremental_new,
-    }
-
-    filtered_sample = (
-        url_dropped[:100] + title_dropped[:50] + keyword_dropped[:50]
-    )
-
-    out = {
-        "articles": articles,
-        "sources": sources,
-        "count": len(articles),
-        "filter_meta": filter_meta,
-        "filtered_out": filtered_sample,
-        "fetched_at": now_iso(),
-    }
-    write_json("news.json", out)
-
-    # Layer 3: incremental LLM scoring when LLM_API_KEY is set. Inline import
-    # so the dependency on llm_rank.py is lazy — same-directory script.
-    # Only Phase 1 (classify+score) is auto-triggered; Phase 2 summarization,
-    # vuln assessment, and daily brief are manual via `python scripts/llm_rank.py`.
-    llm_meta = None
-    if os.environ.get("LLM_API_KEY"):
-        try:
-            sys.path.insert(0, str(Path(__file__).resolve().parent))
-            from llm_rank import classify_news  # type: ignore
-            llm_meta = await classify_news(verbose=True)
-        except Exception as exc:
-            print(f"[news] llm_rank step failed: {exc}", file=sys.stderr)
-            llm_meta = {"error": str(exc)[:200]}
-
-    return {
-        "name": "news",
-        "count": len(articles),
-        "filter_meta": filter_meta,
-        "llm_meta": llm_meta,
-    }
-
-
 # ────────── Layer 1: URL + title dedupe ──────────
 # Prefix-based instead of a named whitelist: tracking params multiply faster
 # than we can enumerate. Anything starting with these prefixes (case-insensitive)
@@ -531,15 +432,22 @@ def _is_tracking_param(key: str) -> bool:
 def _canonical_url(url: str) -> str:
     """Strip tracking params and normalize host/path so the same article
     on two aggregators (or shared with different `?utm_*` tails) is one
-    URL key for dedupe."""
+    URL key for dedupe.
+
+    Security: rejects any URL whose scheme is not http(s). RSS publishers
+    can inject `javascript:` or `data:` URIs in <link> tags; if those reach
+    the frontend they become stored XSS via clickable href attributes.
+    """
     if not url:
         return ""
     try:
         p = urlparse(url.strip())
     except Exception:
-        return url.strip().lower()
+        return ""
+    if p.scheme.lower() not in ("http", "https"):
+        return ""
     if not p.netloc:
-        return url.strip().lower()
+        return ""
     qs = [(k, v) for k, v in parse_qsl(p.query, keep_blank_values=False)
           if not _is_tracking_param(k)]
     query = urlencode(qs)
@@ -548,53 +456,6 @@ def _canonical_url(url: str) -> str:
     if host.startswith("www."):
         host = host[4:]
     return f"{p.scheme.lower()}://{host}{path}" + (f"?{query}" if query else "")
-
-
-def _title_signature(title: str) -> str:
-    """Lowercase, drop punctuation/whitespace, keep CJK + alphanum, first
-    80 chars. Catches re-titled reposts where spacing or punctuation
-    drifts but the core text is the same."""
-    if not title:
-        return ""
-    sig = re.sub(r"[^\w一-鿿]+", "", title.lower())
-    return sig[:80]
-
-
-def _articles_dedupe(articles: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
-    """Return (kept, url_duplicates, title_duplicates).
-
-    Two passes: URL first (stronger signal), then title (catches reposts
-    with different paths). Sources earlier in the list win ties — the
-    fetch is already ordered by NEWS_SOURCES order, so curated supply-
-    intel vendors get keep-priority over bulk OPML mirrors of the same
-    story.
-
-    Kept entries get their `link` rewritten to the canonical form so the
-    downstream LLM-incremental check (which keys off `link`) doesn't
-    re-score the same article when a different upstream re-shares it
-    with different tracking params.
-    """
-    seen_urls: set[str] = set()
-    seen_titles: set[str] = set()
-    kept: list[dict] = []
-    url_dropped: list[dict] = []
-    title_dropped: list[dict] = []
-    for a in articles:
-        u = _canonical_url(a.get("link") or "")
-        if u and u in seen_urls:
-            url_dropped.append({**a, "drop_reason": "url-dup"})
-            continue
-        t = _title_signature(a.get("title") or "")
-        if t and t in seen_titles:
-            title_dropped.append({**a, "drop_reason": "title-dup"})
-            continue
-        if u:
-            seen_urls.add(u)
-            a["link"] = u  # write canonical back so incremental key is stable
-        if t:
-            seen_titles.add(t)
-        kept.append(a)
-    return kept, url_dropped, title_dropped
 
 
 # ────────── Layer 2: keyword blocklist ──────────
@@ -665,6 +526,189 @@ def _articles_keyword_filter(articles: list[dict]) -> tuple[list[dict], list[dic
         else:
             kept.append(a)
     return kept, dropped
+
+
+def _entry_published_iso(entry) -> str | None:
+    """Normalize feedparser entry published time to ISO 8601 UTC string."""
+    from time import struct_time
+    pt = entry.get("published_parsed") or entry.get("updated_parsed")
+    if not pt or not isinstance(pt, struct_time):
+        return None
+    try:
+        return datetime(*pt[:6], tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+    except (ValueError, OverflowError):
+        return None
+
+
+def _make_canonical(link: str) -> str:
+    """Apply the existing URL canonicalization to a single link."""
+    return _canonical_url(link)
+
+
+async def _fetch_one_source_to_sqlite(
+    client: httpx.AsyncClient,
+    src: dict,
+    conn,
+    now_iso: str,
+) -> tuple[int, int]:
+    """Fetch one RSS source with Conditional GET; upsert into SQLite.
+
+    Returns (n_inserted, status_code). status_code=304 means not modified.
+    """
+    headers: dict[str, str] = {}
+    if src.get("last_etag"):
+        headers["If-None-Match"] = src["last_etag"]
+    if src.get("last_modified"):
+        headers["If-Modified-Since"] = src["last_modified"]
+    try:
+        r = await client.get(src["url"], headers=headers)
+    except Exception as exc:
+        _db.record_source_fetch(conn, src["slug"], now=now_iso,
+                                etag=None, last_modified=None,
+                                ok=False, error=str(exc)[:200])
+        return (0, 0)
+    if r.status_code == 304:
+        _db.record_source_fetch(conn, src["slug"], now=now_iso,
+                                etag=src.get("last_etag"),
+                                last_modified=src.get("last_modified"),
+                                ok=True)
+        print(f"[news] {src['slug']:>20}: 304 not-modified", file=sys.stderr)
+        return (0, 304)
+    if r.status_code >= 400:
+        _db.record_source_fetch(conn, src["slug"], now=now_iso,
+                                etag=None, last_modified=None,
+                                ok=False, error=f"HTTP {r.status_code}")
+        return (0, r.status_code)
+
+    parsed = feedparser.parse(r.content)
+    first_seen_date = now_iso[:10]
+
+    entries_raw = [{
+        "title": (e.get("title") or "(untitled)")[:500],
+        "summary": (e.get("summary") or "")[:2000],
+        "link": _make_canonical(e.get("link", "")),
+        "_raw": e,
+    } for e in parsed.entries[:80] if e.get("link")]
+
+    # Layer 2: keyword block (Layer 1 dedupe is handled by SQLite UNIQUE)
+    kept, _dropped = _articles_keyword_filter(entries_raw)
+
+    n = 0
+    for art in kept:
+        if not art["link"]:
+            continue
+        rowid = _db.upsert_article(conn, {
+            "canonical_url": art["link"],
+            "title": art["title"],
+            "summary": art["summary"],
+            "source_slug": src["slug"],
+            "source_title": src.get("title"),
+            "lang": src.get("lang"),
+            "rss_category": None,
+            "published": _entry_published_iso(art["_raw"]),
+            "fetched_at": now_iso,
+            "first_seen_date": first_seen_date,
+        })
+        if rowid:
+            n += 1
+    _db.record_source_fetch(conn, src["slug"], now=now_iso,
+                            etag=r.headers.get("ETag"),
+                            last_modified=r.headers.get("Last-Modified"),
+                            ok=True)
+    return (n, r.status_code)
+
+
+def dump_ndjson_archive(*, db_path=None, date: str) -> Path:
+    """Dump all articles with first_seen_date == date to a per-day NDJSON.
+
+    Includes is_relevant=0 articles for human audit. Idempotent: overwrites
+    the day's file each time.
+    """
+    ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
+    out_path = ARCHIVE_DIR / f"{date}.jsonl"
+    conn = _db.connect(db_path)
+    rows = conn.execute(
+        "SELECT * FROM articles WHERE first_seen_date = ? ORDER BY fetched_at",
+        [date],
+    )
+    with out_path.open("w", encoding="utf-8") as f:
+        for row in rows:
+            f.write(json.dumps(dict(row), ensure_ascii=False) + "\n")
+    conn.close()
+    return out_path
+
+
+async def fetch_news_to_sqlite(
+    *,
+    concurrency: int = 8,
+    now_iso: str | None = None,
+    db_path=None,
+) -> dict:
+    """SQLite-backed news fetcher. Replaces the news.json write path.
+
+    Picks 'due' sources via db.due_sources(), respects ETag/If-Modified-Since,
+    upserts new articles into the articles table.
+    """
+    ts = now_iso if now_iso is not None else datetime.now(timezone.utc).isoformat()
+    conn = _db.connect(db_path)
+    _db.init_schema(conn)  # idempotent — safe to call every run
+
+    # Self-bootstrap: seed sources table from NEWS_SOURCES + OPML if empty.
+    # Avoids needing migrate_to_sqlite as a separate step on fresh deployments.
+    # On subsequent runs the table is non-empty and we skip the upsert loop
+    # (saves O(700) writes per cron tick); operators can manually edit the
+    # sources table to add/remove feeds.
+    existing_sources = conn.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
+    if existing_sources == 0:
+        _TOP_SLUGS = {
+            "freebuf", "anquanke", "4hou", "kanxue", "secrss", "qianxin",
+            "thn", "bleeping", "krebs", "schneier", "talos", "unit42",
+            "msrc", "googlep0", "mandiant", "datadog",
+        }
+        for src in _news_sources_to_use():
+            slug = src.get("slug") or _slug_from_url(src.get("url", ""))
+            tier = "top" if slug in _TOP_SLUGS else "tail"
+            _db.upsert_source(conn, {
+                "slug": slug,
+                "title": src.get("title") or slug,
+                "url": src.get("url"),
+                "lang": src.get("lang"),
+                "tier": tier,
+                "interval_minutes": 30 if tier == "top" else 240,
+            })
+        print(f"[news] bootstrapped {conn.execute('SELECT COUNT(*) FROM sources').fetchone()[0]} sources", file=sys.stderr)
+
+    due = _db.due_sources(conn, ts)
+    print(f"[news] {len(due)} sources due (out of total in sources table)", file=sys.stderr)
+
+    sem = asyncio.Semaphore(concurrency)
+    inserted_total = 0
+    not_modified = 0
+
+    timeout = httpx.Timeout(30.0, connect=10.0)
+    async with httpx.AsyncClient(headers=HEADERS, timeout=timeout,
+                                  follow_redirects=True) as client:
+        async def one(src):
+            nonlocal inserted_total, not_modified
+            async with sem:
+                n, status = await _fetch_one_source_to_sqlite(client, dict(src), conn, ts)
+                inserted_total += n
+                if status == 304:
+                    not_modified += 1
+        await asyncio.gather(*[one(s) for s in due])
+
+    conn.close()
+    # Dump today's archive (idempotent: overwrites the day's file)
+    today = ts[:10]
+    try:
+        dump_ndjson_archive(db_path=db_path, date=today)
+    except Exception as exc:
+        print(f"[news] archive dump failed: {exc}", file=sys.stderr)
+    return {
+        "name": "news", "ok": True, "status": "ok",
+        "count": inserted_total, "due_sources": len(due),
+        "not_modified": not_modified,
+    }
 
 
 async def fetch_epss(client: httpx.AsyncClient) -> dict:
@@ -1031,7 +1075,7 @@ FETCHERS = {
     "pocs": fetch_pocs,
     "itw": fetch_itw,
     "heat": fetch_heat,
-    "news": fetch_news,
+    "news": fetch_news_to_sqlite,   # ← changed from fetch_news (legacy will be removed in T2.4)
     "epss": fetch_epss,
     "osv": fetch_osv,
     "nuclei": fetch_nuclei,
@@ -1208,7 +1252,11 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
             try:
                 fn = FETCHERS[name]
                 if name == "news":
-                    r = await fn(client, concurrency, incremental=incremental)
+                    # New SQLite news fetcher manages its own httpx client (needs per-source
+                    # Conditional GET headers). `incremental` is now a no-op — Conditional
+                    # GET is always on, so re-running with the same content is naturally
+                    # cheap (304 responses skip article writes entirely).
+                    r = await fn(concurrency=concurrency)
                 else:
                     r = await fn(client)
                 elapsed = round(time.monotonic() - t0, 2)
@@ -1242,7 +1290,8 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
         # fetchers not tracked in SNAPSHOT_KEYS (epss/heat) map to empty.
         FETCHER_TO_CACHES = {
             "kev": ["kev"], "ghsa": ["ghsa"], "pocs": ["pocs"], "itw": ["itw"],
-            "news": ["news"], "osv": ["osv-npm", "osv-pypi"],
+            "news": [],  # SQLite fetcher (T2.x): no longer writes news.json
+            "osv": ["osv-npm", "osv-pypi"],
             "nuclei": ["nuclei"], "hn": ["hn"], "masto": ["masto"],
             # Enrichment-style caches (no per-item first_seen tracking needed)
             "heat": [], "epss": [],

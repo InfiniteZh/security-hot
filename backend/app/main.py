@@ -214,18 +214,60 @@ def api_manifest() -> Manifest:
 def api_brief(
     date: str | None = Query(default=None, description="YYYY-MM-DD; default today"),
 ) -> JSONResponse:
-    """Return daily briefing per category for a given date."""
+    """Return daily briefing per category for a given date — reads SQLite `daily_briefs` table."""
+    from .data import _news_conn, _NEWS_DB
+    target = _validate_date(date) or _today_utc_str()
+    if not _NEWS_DB.exists():
+        return JSONResponse({"date": target, "briefs": {}})
+    conn = _news_conn()
+    rows = list(conn.execute(
+        "SELECT category, text, article_count, generated_at FROM daily_briefs WHERE date = ?",
+        [target],
+    ))
+    conn.close()
+    briefs = {
+        r["category"]: {
+            "text": r["text"],
+            "article_count": int(r["article_count"] or 0),
+            "generated_at": r["generated_at"],
+        }
+        for r in rows
+    }
+    return JSONResponse({"date": target, "briefs": briefs})
+
+
+def _today_utc_str() -> str:
     from datetime import datetime as _dt, timezone as _tz
-    import json as _json
-    target = date or _dt.now(_tz.utc).strftime("%Y-%m-%d")
-    brief_path = ROOT / "backend" / "cache" / "daily_brief.json"
-    if not brief_path.exists():
-        return JSONResponse({"date": target, "briefs": {}})
+    return _dt.now(_tz.utc).strftime("%Y-%m-%d")
+
+
+def _run_llm_brief_subprocess(target_date: str) -> None:
+    """Background-task wrapper. Invoked off the HTTP request path."""
     try:
-        all_briefs = _json.loads(brief_path.read_text(encoding="utf-8"))
-    except (_json.JSONDecodeError, OSError):
-        return JSONResponse({"date": target, "briefs": {}})
-    return JSONResponse({"date": target, "briefs": all_briefs.get(target, {})})
+        subprocess.run(
+            ["uv", "run", "python", "scripts/llm_rank.py", "--task", "daily_brief", "--date", target_date],
+            cwd=str(ROOT), check=False, timeout=300,
+        )
+    except Exception as exc:
+        log.error(f"brief regenerate failed: {exc}")
+
+
+@app.post("/api/brief/regenerate", tags=["news"])
+async def regenerate_brief(
+    background: BackgroundTasks,
+    date: str | None = Query(default=None, description="YYYY-MM-DD; default=today"),
+    x_refresh_token: str | None = Header(default=None, alias="X-Refresh-Token"),
+):
+    """Trigger a background regeneration of today's (or specified) daily brief.
+
+    Requires SECURITY_HOT_REFRESH_TOKEN header match.
+    """
+    expected = os.environ.get("SECURITY_HOT_REFRESH_TOKEN")
+    if not expected or not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+    target = _validate_date(date) or _today_utc_str()
+    background.add_task(_run_llm_brief_subprocess, target)
+    return JSONResponse(status_code=202, content={"status": "accepted", "date": target})
 
 
 @app.get("/api/diff", tags=["overview"])
@@ -350,6 +392,48 @@ def api_refresh(
     chosen = [s.strip() for s in only.split(",") if s.strip()] if only else None
     background.add_task(_run_fetcher, chosen)
     return JSONResponse({"queued": True, "only": chosen}, status_code=202)
+
+
+@app.get("/api/news/hidden", response_model=list[Article], tags=["news"])
+def api_news_hidden(
+    date: str | None = Query(default=None, description="YYYY-MM-DD; default=today UTC"),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[Article]:
+    """Articles judged is_relevant=0 — for human audit of LLM filter."""
+    from .data import _news_conn, _NEWS_DB, _row_to_article
+    if not _NEWS_DB.exists():
+        return []
+    target = _validate_date(date) or _today_utc_str()
+    conn = _news_conn()
+    rows = list(conn.execute("""
+        SELECT * FROM articles
+        WHERE is_relevant = 0 AND first_seen_date = ?
+        ORDER BY fetched_at DESC LIMIT ?
+    """, [target, limit]))
+    conn.close()
+    return [_row_to_article(r, {}) for r in rows]
+
+
+@app.get("/api/news/{article_id}/mirrors", response_model=list[Article], tags=["news"])
+def api_article_mirrors(article_id: int) -> list[Article]:
+    """Return all mirror articles in the same cluster (excludes primary)."""
+    from .data import _news_conn, _NEWS_DB, _row_to_article
+    if not _NEWS_DB.exists():
+        raise HTTPException(status_code=404, detail="news.db not found")
+    conn = _news_conn()
+    primary = conn.execute(
+        "SELECT cluster_id FROM articles WHERE id = ?", [article_id]
+    ).fetchone()
+    if not primary or not primary["cluster_id"]:
+        conn.close()
+        raise HTTPException(status_code=404, detail="no cluster for this article")
+    rows = list(conn.execute("""
+        SELECT * FROM articles
+        WHERE cluster_id = ? AND id != ?
+        ORDER BY fetched_at ASC
+    """, [primary["cluster_id"], article_id]))
+    conn.close()
+    return [_row_to_article(r, {}) for r in rows]
 
 
 # mount frontend static files
