@@ -231,3 +231,45 @@ def test_record_source_failure_increments_failures(conn):
     assert row["consecutive_failures"] == 1
     assert row["ok"] == 0
     assert row["error"] == "HTTP 500"
+
+
+def test_create_cluster_links_articles(conn):
+    db.init_schema(conn)
+    # Insert 3 articles
+    ids = []
+    for i in range(3):
+        ids.append(db.upsert_article(conn, {
+            "canonical_url": f"https://a.com/{i}", "title": f"T{i}", "summary": "",
+            "source_slug": "x", "source_title": "X", "lang": "en",
+            "published": None, "fetched_at": "2026-05-25T11:00:00Z",
+            "first_seen_date": "2026-05-25",
+        }))
+    cluster_id = db.create_cluster(conn, primary_id=ids[0], mirror_ids=[ids[1], ids[2]],
+                                   created_at="2026-05-25T12:00:00Z")
+    assert cluster_id > 0
+    members = list(conn.execute(
+        "SELECT id, is_cluster_primary FROM articles WHERE cluster_id = ?", [cluster_id]
+    ))
+    assert len(members) == 3
+    primary = [m for m in members if m["is_cluster_primary"]]
+    assert len(primary) == 1 and primary[0]["id"] == ids[0]
+    cluster_row = conn.execute(
+        "SELECT member_count FROM clusters WHERE id = ?", [cluster_id]
+    ).fetchone()
+    assert cluster_row["member_count"] == 3
+
+
+def test_upsert_brief_replaces_on_conflict(conn):
+    db.init_schema(conn)
+    db.upsert_brief(conn, date="2026-05-25", category="vuln",
+                    text="first version", article_count=3,
+                    generated_at="2026-05-25T12:00:00Z")
+    db.upsert_brief(conn, date="2026-05-25", category="vuln",
+                    text="second version", article_count=5,
+                    generated_at="2026-05-25T13:00:00Z")
+    row = conn.execute(
+        "SELECT text, article_count FROM daily_briefs WHERE date=? AND category=?",
+        ["2026-05-25", "vuln"]
+    ).fetchone()
+    assert row["text"] == "second version"
+    assert row["article_count"] == 5

@@ -207,3 +207,56 @@ def record_source_fetch(
             WHERE slug = ?
         """, [now, error, slug])
     conn.commit()
+
+
+def create_cluster(
+    conn: sqlite3.Connection,
+    *,
+    primary_id: int,
+    mirror_ids: list[int],
+    created_at: str,
+) -> int:
+    """Create a cluster row + link primary and mirror articles in one txn.
+
+    Use defer_foreign_keys to handle the articles<->clusters cycle.
+    """
+    member_count = 1 + len(mirror_ids)
+    conn.execute("PRAGMA defer_foreign_keys = ON")
+    cur = conn.execute(
+        "INSERT INTO clusters (primary_article_id, member_count, created_at) VALUES (?, ?, ?)",
+        [primary_id, member_count, created_at],
+    )
+    cluster_id = cur.lastrowid
+    conn.execute(
+        "UPDATE articles SET cluster_id = ?, is_cluster_primary = 1 WHERE id = ?",
+        [cluster_id, primary_id],
+    )
+    if mirror_ids:
+        placeholders = ",".join("?" for _ in mirror_ids)
+        conn.execute(
+            f"UPDATE articles SET cluster_id = ?, is_cluster_primary = 0 WHERE id IN ({placeholders})",
+            [cluster_id, *mirror_ids],
+        )
+    conn.commit()
+    return cluster_id
+
+
+def upsert_brief(
+    conn: sqlite3.Connection,
+    *,
+    date: str,
+    category: str,
+    text: str,
+    article_count: int,
+    generated_at: str,
+) -> None:
+    """INSERT OR REPLACE — re-running on the same (date, category) overwrites."""
+    conn.execute("""
+        INSERT INTO daily_briefs (date, category, text, article_count, generated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(date, category) DO UPDATE SET
+          text = excluded.text,
+          article_count = excluded.article_count,
+          generated_at = excluded.generated_at
+    """, [date, category, text, article_count, generated_at])
+    conn.commit()
