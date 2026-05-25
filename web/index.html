@@ -1309,6 +1309,15 @@ function renderStats() {
       : `${d.news_today} articles · ${d.vuln_today} vulns · ${d.sources_alive}/${d.sources_total} sources`;
   }
 
+  // Inject the live source count into the hero sub-headline so the claim
+  // matches reality (was hard-coded '1.7k' which is the OPML candidate
+  // count, not the actually-registered source count).
+  const heroSub = document.querySelector('[data-i18n="hero.sub"]');
+  if (heroSub && d.sources_alive) {
+    const v = t("hero.sub", d.sources_alive);
+    if (typeof v === "string") heroSub.textContent = v;
+  }
+
   // last sync stamp in the right-rail meta
   if (syncMeta && d.last_fetch) {
     const dt = new Date(d.last_fetch);
