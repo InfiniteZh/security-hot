@@ -73,6 +73,7 @@ const I18N = {
     "kind.cve": "CVE", "kind.supply": "供应链", "kind.poc": "PoC", "kind.itw": "ITW",
     "sev.critical": "严重", "sev.high": "高危", "sev.medium": "中危", "sev.low": "低危", "sev.unknown": "未评估",
     "pipe.last": "上次同步",
+    "news.mirrors": "镜像源",
   },
   en: {
     "brand.tag": "Daily security intel",
@@ -148,5 +149,6 @@ const I18N = {
     "kind.cve": "CVE", "kind.supply": "SUPPLY", "kind.poc": "POC", "kind.itw": "ITW",
     "sev.critical": "Critical", "sev.high": "High", "sev.medium": "Medium", "sev.low": "Low", "sev.unknown": "Unknown",
     "pipe.last": "Last fetch",
+    "news.mirrors": "mirrors",
   },
 };

@@ -726,6 +726,32 @@ function relTime(iso) {
 function severityClass(s) { return "sev sev-" + s; }
 function escapeHtml(s) { return (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
+// ───────────────────── mirror expand ─────────────────────
+async function expandMirrors(stripEl, articleId) {
+  const container = stripEl.nextElementSibling;
+  if (!container || !container.classList.contains('mirrors-expanded')) return;
+  const chevron = stripEl.querySelector('.mirror-chevron');
+  if (!container.classList.contains('hidden')) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    if (chevron) chevron.textContent = '▾';
+    return;
+  }
+  try {
+    const r = await fetch(`/api/news/${articleId}/mirrors`);
+    if (!r.ok) return;
+    const mirrors = await r.json();
+    container.innerHTML = mirrors.map(m => `
+      <div class="py-1.5 text-xs">
+        <span class="font-mono text-dim mr-2">${escapeHtml(m.source_title)}</span>
+        <a href="${escapeHtml(m.link)}" target="_blank" rel="noopener" class="hover:underline">${escapeHtml(m.title)}</a>
+      </div>
+    `).join('');
+    container.classList.remove('hidden');
+    if (chevron) chevron.textContent = '▴';
+  } catch (e) { console.warn('expand failed', e); }
+}
+
 // ───────────────────── renderers ─────────────────────
 function renderStatsSkeleton() {
   const grid = document.getElementById("stats-grid");
@@ -959,6 +985,17 @@ function renderNewsCard(a) {
           </a>
           ${showZhSummary ? `<p class="text-[12px] text-ink-soft leading-relaxed mt-1.5 clamp-3">${escapeHtml(a.llm_summary_zh)}</p>` : ''}
           ${(!showZhSummary && a.summary) ? `<p class="text-[12px] text-muted leading-relaxed mt-1 clamp-2">${escapeHtml(a.summary)}</p>` : ''}
+          ${(a.mirror_count || 0) > 0 ? `
+          <div class="mirror-strip mt-3 pt-3 border-t hairline flex items-center gap-2 text-xs text-dim cursor-pointer hover:text-fg" data-article-id="${a.id}" onclick="expandMirrors(this, ${JSON.stringify(a.id)})">
+            <div class="flex gap-1">
+              ${'<div class="w-1.5 h-1.5 rounded-full bg-muted inline-block"></div>'.repeat(Math.min(a.mirror_count, 3))}
+            </div>
+            <span class="font-mono">+${a.mirror_count} ${escapeHtml(t('news.mirrors'))}</span>
+            <span class="text-dim">· ${escapeHtml((a.mirror_source_titles || []).slice(0,3).join(' / '))}${(a.mirror_source_titles || []).length > 3 ? '…' : ''}</span>
+            <span class="ml-auto mirror-chevron">▾</span>
+          </div>
+          <div class="mirrors-expanded hidden mt-2 pl-4 border-l-2 border-stroke"></div>
+          ` : ''}
         </div>
       </div>
     </article>
