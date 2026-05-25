@@ -306,97 +306,81 @@ async def classify_news(
 
 # ── Phase 2: Targeted summarization for high-score English articles ──
 
-async def summarize_news(min_score: int = 5, days: int = 30, limit: int | None = None, verbose: bool = True) -> dict:
+async def summarize_news(
+    min_score: int = 5,
+    days: int = 30,
+    limit: int | None = None,
+    verbose: bool = True,
+) -> dict:
+    """Phase 2: generate Chinese summaries for high-score English articles.
+
+    Filter: lang='en' AND llm_score >= min_score AND is_relevant=1
+            AND llm_summary_zh IS NULL.
+    """
+    from datetime import datetime, timezone, timedelta
     cfg = _get_config()
     if not cfg["api_key"]:
-        return {"skipped": True}
+        return {"error": "LLM_API_KEY not set"}
+    batch_size = int(os.environ.get("LLM_BATCH_SIZE", "30"))
 
-    if not NEWS_JSON.exists():
-        return {"error": "news.json missing"}
-    data = json.loads(NEWS_JSON.read_text(encoding="utf-8"))
-    articles = data.get("articles") or []
+    conn = _db.connect()
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+    limit_clause = f"LIMIT {limit}" if limit else ""
+    rows = list(conn.execute(f"""
+        SELECT id, title, summary
+        FROM articles
+        WHERE lang = 'en'
+          AND llm_score >= ?
+          AND is_relevant = 1
+          AND llm_summary_zh IS NULL
+          AND COALESCE(published, fetched_at) >= ?
+        ORDER BY llm_score DESC
+        {limit_clause}
+    """, [min_score, cutoff]))
 
-    needs = [(i, a) for i, a in enumerate(articles)
-             if a.get("lang") == "en"
-             and isinstance(a.get("llm_score"), (int, float))
-             and int(a["llm_score"]) >= min_score
-             and not a.get("llm_summary_zh")
-             and _is_within_days(a.get("published"), days)]
-    if limit:
-        needs = needs[:limit]
-    if not needs:
-        if verbose:
-            print(f"[phase2] no articles need summarization (min_score={min_score})", file=sys.stderr)
-        return {"summarized": 0}
-
-    batch_size = 30
     if verbose:
-        print(f"[phase2] summarizing {len(needs)} high-score EN articles, batch={batch_size}", file=sys.stderr)
+        print(f"[phase2] {len(rows)} articles to summarize, batch={batch_size}", file=sys.stderr)
 
-    summarized = 0
-    errors = 0
-    lock = asyncio.Lock()
-    t0 = time.monotonic()
+    batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    all_chunks = [needs[i:i + batch_size] for i in range(0, min(len(needs), cfg["max_batches"] * batch_size), batch_size)]
+    system_prompt = """你是安全资讯翻译/摘要助手。
+为每篇英文安全文章生成 1-2 句中文摘要（<=120 字）, 重点保留 CVE 编号 / 厂商 / 漏洞类型 / 影响范围。
+输出 JSON: {"items": [{"id": <int>, "summary": "中文摘要..."}]}
+不要 markdown, 不要前缀。"""
 
-    async def process(chunk, batch_num, client):
-        nonlocal summarized, errors
-        msg_parts = []
-        for lid, (_, a) in enumerate(chunk):
-            title = (a.get("title") or "").strip().replace("\n", " ")[:240]
-            summary = (a.get("summary") or "").strip().replace("\n", " ")[:400]
-            msg_parts.append(f"[{lid}] {title}\n{summary}")
-        user_msg = "请为以下英文文章写中文摘要：\n\n" + "\n\n".join(msg_parts)
+    sem = asyncio.Semaphore(cfg["concurrency"])
 
-        parsed = None
-        for attempt in range(3):
+    async def process(batch, batch_num, client):
+        user_msg = "\n---\n".join(
+            f"id={r['id']}\ntitle: {r['title']}\nsummary: {(r['summary'] or '')[:500]}"
+            for r in batch
+        )
+        async with sem:
             try:
-                parsed = await _llm_call(client, SUMMARIZE_PROMPT, user_msg, cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"])
-                break
+                result = await _llm_call(
+                    client, system_prompt, user_msg,
+                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                )
             except Exception as exc:
                 if verbose:
-                    print(f"[phase2] batch {batch_num} attempt {attempt+1} failed: {exc}", file=sys.stderr)
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt * 3)
+                    print(f"[phase2] batch {batch_num} failed: {exc}", file=sys.stderr)
+                return
+            for item in result.get("items", []):
+                conn.execute(
+                    "UPDATE articles SET llm_summary_zh = ?, llm_summarized_at = ? WHERE id = ?",
+                    [(item.get("summary") or "")[:500], now_iso, item.get("id")],
+                )
+            conn.commit()
+            if verbose:
+                print(f"[phase2] batch {batch_num}/{len(batches)}: +{len(result.get('items', []))}",
+                      file=sys.stderr)
 
-        if parsed is None:
-            async with lock:
-                errors += 1
-            return
+    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+        await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
 
-        batch_n = 0
-        async with lock:
-            for item in parsed.get("results") or []:
-                if not isinstance(item, dict):
-                    continue
-                try:
-                    lid = int(item["id"])
-                    if lid < 0 or lid >= len(chunk):
-                        continue
-                    idx = chunk[lid][0]
-                    sz = str(item.get("summary_zh") or "").strip()[:300]
-                except (KeyError, TypeError, ValueError):
-                    continue
-                if sz:
-                    articles[idx]["llm_summary_zh"] = sz
-                    summarized += 1
-                    batch_n += 1
-        if verbose:
-            print(f"[phase2] batch {batch_num}/{len(all_chunks)}: +{batch_n}, total {summarized}", file=sys.stderr)
-
-    def flush():
-        NEWS_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    await _run_concurrent(
-        {"chunks": all_chunks, "timeout": cfg["timeout"]},
-        process, cfg["concurrency"], lock, flush
-    )
-    flush()
-    elapsed = round(time.monotonic() - t0, 1)
-    if verbose:
-        print(f"[phase2] done: {summarized} summarized in {elapsed}s ({errors} errors)", file=sys.stderr)
-    return {"summarized": summarized, "errors": errors, "elapsed_s": elapsed}
+    conn.close()
+    return {"summarized": len(rows), "batches": len(batches)}
 
 
 # ── Vulnerability AI assessment ──
