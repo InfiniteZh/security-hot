@@ -590,8 +590,8 @@
     color: var(--ink);
     font-family: "Geist", sans-serif;
     font-size: 13.5px;
-    width: 320px;
-    max-width: 100%;
+    flex: 1;
+    min-width: 0;
   }
   .search-wrap input::placeholder { color: var(--paper-veil); }
   .search-hint {
@@ -603,7 +603,9 @@
     background: var(--surface-2);
     padding: 1px 6px;
     border-radius: 4px;
+    flex-shrink: 0;
   }
+  .search-wrap:focus-within .search-hint { display: none; }
 
   /* — Brief modal — */
   .modal-backdrop {
