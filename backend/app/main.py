@@ -196,7 +196,13 @@ def api_vuln_detail(vuln_id: str) -> Vuln:
 
 
 @app.get("/api/heat", response_model=list[HeatEntry], tags=["overview"])
-def api_heat(limit: int = Query(default=10, ge=1, le=50)) -> list[HeatEntry]:
+def api_heat(
+    limit: int = Query(default=10, ge=1, le=50),
+    kind: Literal["vuln", "news"] = Query(default="vuln", description="vuln=CVE heat (default, back-compat); news=top AI-scored articles"),
+) -> list[HeatEntry]:
+    if kind == "news":
+        from .data import news_heat_board
+        return news_heat_board(limit)
     return heat_board(limit)
 
 

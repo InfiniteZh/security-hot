@@ -83,7 +83,7 @@ class HeatEntry(BaseModel):
     label: str
     cve_id: str | None = None
     score: int
-    category: VulnKind | Literal["news"] | None = None
+    category: VulnKind | NewsCategory | Literal["news"] | None = None
     kind_color: str | None = None
 
 

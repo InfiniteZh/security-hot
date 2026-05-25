@@ -1414,7 +1414,9 @@ async function regenerateBrief() {
     setRefreshToken(token.trim());
   }
   try {
-    const r = await fetch('/api/brief/regenerate', {
+    // Use the currently-viewed brief date so historical regen works.
+    const targetDate = state.briefDate || todayUtc();
+    const r = await fetch(`/api/brief/regenerate?date=${encodeURIComponent(targetDate)}`, {
       method: 'POST',
       headers: {'X-Refresh-Token': token},
     });
@@ -1466,6 +1468,8 @@ document.querySelectorAll(".tab-pill").forEach(b => {
     }
     const nlf = document.getElementById("news-lang-filter");
     if (state.activeTab === "news") nlf.removeAttribute("hidden"); else nlf.setAttribute("hidden", "");
+    // Heat board data source switches per-tab: news → AI-ranked articles, vuln → CVE heat
+    if (typeof fetchOne === "function") fetchOne("heat");
   });
 });
 
@@ -1569,7 +1573,7 @@ const ENDPOINTS = [
   { key: "today",    url: () => "/api/today",                                              dateAware: false },
   { key: "news",     url: () => `/api/news?limit=120${dateQuery()}`,                       dateAware: true },
   { key: "vuln",     url: () => `/api/vuln?limit=120&sort=heat${dateQuery()}`,             dateAware: true },
-  { key: "heat",     url: () => "/api/heat?limit=10",                                      dateAware: false },
+  { key: "heat",     url: () => `/api/heat?limit=10&kind=${state.activeTab === "news" ? "news" : "vuln"}`, dateAware: false },
   { key: "sources",  url: () => "/api/sources",                                            dateAware: false },
   { key: "manifest", url: () => "/api/manifest",                                           dateAware: false },
 ];

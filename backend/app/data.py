@@ -636,9 +636,17 @@ def compute_heat(v: Vuln) -> int:
 
 def all_articles() -> list[Article]:
     """SQLite-backed: primary articles (or unclustered) where is_relevant != 0,
-    with mirror_source_titles attached for the cluster."""
+    with mirror_source_titles attached for the cluster.
+
+    Cached against news.db mtime — every request was rebuilding ~10k Pydantic
+    models, dominating hot-path latency. Invalidates on any DB write."""
     if not _NEWS_DB.exists():
         return []
+    mtime = _NEWS_DB.stat().st_mtime
+    cached = _state.get("__articles_sqlite__")
+    if cached and cached[0] == mtime:
+        return cached[1]
+
     conn = _news_conn()
     # Pre-fetch mirror source titles, grouped by cluster
     mirror_titles: dict = {}
@@ -657,7 +665,9 @@ def all_articles() -> list[Article]:
         ORDER BY COALESCE(llm_score, -1) DESC, COALESCE(published, fetched_at) DESC
     """))
     conn.close()
-    return [_row_to_article(r, mirror_titles) for r in rows]
+    items = [_row_to_article(r, mirror_titles) for r in rows]
+    _state["__articles_sqlite__"] = (mtime, items)
+    return items
 
 
 def all_sources() -> list[SourceStatus]:
@@ -700,6 +710,34 @@ def heat_board(limit: int = 10) -> list[HeatEntry]:
             score=v.heat,
             category=v.kind,
             kind_color=kind_color,
+        ))
+    return out
+
+
+def news_heat_board(limit: int = 10) -> list[HeatEntry]:
+    """Top news articles by LLM score for the 行业资讯 tab right rail.
+
+    Pulls primary articles only (no mirrors), is_relevant != 0, sorted by
+    llm_score desc then recency. Falls back gracefully on cold start (no
+    LLM scores yet → returns whatever's at the top of all_articles)."""
+    articles = all_articles()
+    out: list[HeatEntry] = []
+    _CAT_COLOR = {
+        "incident": "itw",
+        "vuln": "crit",
+        "supply-chain": "itw",
+        "research": "poc",
+        "industry": "muted",
+    }
+    for i, a in enumerate(articles[:limit], start=1):
+        score = a.llm_score if a.llm_score is not None else 0
+        out.append(HeatEntry(
+            rank=i,
+            label=a.title[:48] + ("…" if len(a.title) > 48 else ""),
+            cve_id=None,
+            score=int(score * 10),  # scale 0-10 → 0-100 to match vuln heat range
+            category=a.llm_category,
+            kind_color=_CAT_COLOR.get(a.llm_category or "", "muted"),
         ))
     return out
 
