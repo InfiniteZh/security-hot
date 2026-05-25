@@ -146,3 +146,64 @@ def upsert_article(conn: sqlite3.Connection, row: dict) -> int:
         [row["canonical_url"]],
     ).fetchone()
     return existing["id"] if existing else 0
+
+
+SOURCE_UPSERT_COLS = ["slug", "title", "url", "lang", "tier", "interval_minutes"]
+
+
+def upsert_source(conn: sqlite3.Connection, row: dict) -> None:
+    """INSERT-or-UPDATE source. Preserves last_fetched/last_etag/last_modified
+    on conflict so that re-importing the source list doesn't reset polling
+    state."""
+    placeholders = ",".join("?" for _ in SOURCE_UPSERT_COLS)
+    col_list = ",".join(SOURCE_UPSERT_COLS)
+    update_clause = ", ".join(
+        f"{c} = excluded.{c}" for c in SOURCE_UPSERT_COLS if c != "slug"
+    )
+    conn.execute(
+        f"""INSERT INTO sources ({col_list}) VALUES ({placeholders})
+            ON CONFLICT(slug) DO UPDATE SET {update_clause}""",
+        [row.get(c) for c in SOURCE_UPSERT_COLS],
+    )
+    conn.commit()
+
+
+def due_sources(conn: sqlite3.Connection, now_iso: str) -> list[sqlite3.Row]:
+    """Return sources whose last_fetched + interval_minutes <= now, that are
+    not in a failed (>=5 consecutive failures) state."""
+    return list(conn.execute("""
+        SELECT * FROM sources
+        WHERE consecutive_failures < 5
+          AND (last_fetched IS NULL
+               OR datetime(last_fetched, '+' || interval_minutes || ' minutes') <= datetime(?))
+        ORDER BY (last_fetched IS NULL) DESC, last_fetched ASC
+    """, [now_iso]))
+
+
+def record_source_fetch(
+    conn: sqlite3.Connection,
+    slug: str,
+    *,
+    now: str,
+    etag: str | None,
+    last_modified: str | None,
+    ok: bool,
+    error: str | None = None,
+) -> None:
+    """Update polling state after a fetch attempt. On success, reset
+    consecutive_failures; on failure, increment it."""
+    if ok:
+        conn.execute("""
+            UPDATE sources SET
+              last_fetched = ?, last_etag = ?, last_modified = ?,
+              ok = 1, error = NULL, consecutive_failures = 0
+            WHERE slug = ?
+        """, [now, etag, last_modified, slug])
+    else:
+        conn.execute("""
+            UPDATE sources SET
+              last_fetched = ?, ok = 0, error = ?,
+              consecutive_failures = consecutive_failures + 1
+            WHERE slug = ?
+        """, [now, error, slug])
+    conn.commit()

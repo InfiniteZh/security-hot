@@ -127,3 +127,107 @@ def test_fts_search_finds_article(conn):
         "SELECT rowid FROM articles_fts WHERE articles_fts MATCH 'TYPO3'"
     ))
     assert len(rows) == 1
+
+
+def test_upsert_source_inserts(conn):
+    db.init_schema(conn)
+    db.upsert_source(conn, {
+        "slug": "freebuf",
+        "title": "FreeBuf",
+        "url": "https://freebuf.com/feed",
+        "lang": "zh",
+        "tier": "top",
+        "interval_minutes": 30,
+    })
+    row = conn.execute("SELECT slug, tier FROM sources WHERE slug='freebuf'").fetchone()
+    assert row["tier"] == "top"
+
+
+def test_upsert_source_updates_interval_on_conflict(conn):
+    """On conflict, refresh url/title/tier/interval but never reset
+    last_fetched / last_etag / last_modified."""
+    db.init_schema(conn)
+    db.upsert_source(conn, {
+        "slug": "freebuf", "title": "FreeBuf", "url": "https://freebuf.com/feed",
+        "lang": "zh", "tier": "top", "interval_minutes": 30,
+    })
+    conn.execute(
+        "UPDATE sources SET last_fetched=?, last_etag=? WHERE slug=?",
+        ["2026-05-25T10:00:00Z", "abc123", "freebuf"],
+    )
+    conn.commit()
+    db.upsert_source(conn, {
+        "slug": "freebuf", "title": "FreeBuf", "url": "https://freebuf.com/feed",
+        "lang": "zh", "tier": "top", "interval_minutes": 60,  # changed
+    })
+    row = conn.execute(
+        "SELECT interval_minutes, last_fetched, last_etag FROM sources WHERE slug='freebuf'"
+    ).fetchone()
+    assert row["interval_minutes"] == 60
+    assert row["last_fetched"] == "2026-05-25T10:00:00Z"
+    assert row["last_etag"] == "abc123"
+
+
+def test_due_sources_excludes_recently_fetched(conn):
+    db.init_schema(conn)
+    # Source A fetched 5 min ago, interval 30 → NOT due
+    # Source B fetched 60 min ago, interval 30 → DUE
+    # Source C never fetched → DUE
+    now = "2026-05-25T12:00:00Z"
+    for slug, last in [("A", "2026-05-25T11:55:00Z"), ("B", "2026-05-25T11:00:00Z"), ("C", None)]:
+        db.upsert_source(conn, {
+            "slug": slug, "title": slug, "url": f"https://{slug}.com",
+            "lang": "en", "tier": "top", "interval_minutes": 30,
+        })
+        if last:
+            conn.execute("UPDATE sources SET last_fetched=? WHERE slug=?", [last, slug])
+    conn.commit()
+    due = db.due_sources(conn, now)
+    slugs = {s["slug"] for s in due}
+    assert slugs == {"B", "C"}
+
+
+def test_due_sources_excludes_failing_sources(conn):
+    db.init_schema(conn)
+    db.upsert_source(conn, {
+        "slug": "broken", "title": "broken", "url": "https://broken.example",
+        "lang": "en", "tier": "tail", "interval_minutes": 30,
+    })
+    conn.execute("UPDATE sources SET consecutive_failures=5 WHERE slug='broken'")
+    conn.commit()
+    due = db.due_sources(conn, "2026-05-25T12:00:00Z")
+    assert all(s["slug"] != "broken" for s in due)
+
+
+def test_record_source_success_resets_failures(conn):
+    db.init_schema(conn)
+    db.upsert_source(conn, {
+        "slug": "x", "title": "x", "url": "https://x.com",
+        "lang": "en", "tier": "top", "interval_minutes": 30,
+    })
+    conn.execute("UPDATE sources SET consecutive_failures=3 WHERE slug='x'")
+    conn.commit()
+    db.record_source_fetch(conn, "x", now="2026-05-25T12:00:00Z",
+                           etag="W/abc", last_modified=None, ok=True)
+    row = conn.execute(
+        "SELECT consecutive_failures, last_etag, ok FROM sources WHERE slug='x'"
+    ).fetchone()
+    assert row["consecutive_failures"] == 0
+    assert row["last_etag"] == "W/abc"
+    assert row["ok"] == 1
+
+
+def test_record_source_failure_increments_failures(conn):
+    db.init_schema(conn)
+    db.upsert_source(conn, {
+        "slug": "x", "title": "x", "url": "https://x.com",
+        "lang": "en", "tier": "top", "interval_minutes": 30,
+    })
+    db.record_source_fetch(conn, "x", now="2026-05-25T12:00:00Z",
+                           etag=None, last_modified=None, ok=False, error="HTTP 500")
+    row = conn.execute(
+        "SELECT consecutive_failures, ok, error FROM sources WHERE slug='x'"
+    ).fetchone()
+    assert row["consecutive_failures"] == 1
+    assert row["ok"] == 0
+    assert row["error"] == "HTTP 500"
