@@ -75,6 +75,7 @@ const I18N = {
     "pipe.last": "上次同步",
     "news.mirrors": "镜像源",
     "news.refreshBrief": "刷新简报",
+    "news.hiddenLabel": "已隐藏",
   },
   en: {
     "brand.tag": "Daily security intel",
@@ -152,5 +153,6 @@ const I18N = {
     "pipe.last": "Last fetch",
     "news.mirrors": "mirrors",
     "news.refreshBrief": "Refresh brief",
+    "news.hiddenLabel": "hidden",
   },
 };
