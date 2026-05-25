@@ -59,7 +59,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link
-  href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
+  href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght,SOFT@9..144,300..900,0..100&family=JetBrains+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,300..700&display=swap"
   rel="stylesheet"
 />
 <script src="https://cdn.tailwindcss.com"></script>
@@ -68,537 +68,981 @@
     theme: {
       extend: {
         fontFamily: {
-          sans: ['"Geist"', "ui-sans-serif", "system-ui"],
-          mono: ['"Geist Mono"', "ui-monospace", "SFMono-Regular"],
+          display: ['"Fraunces"', '"Source Serif 4"', "ui-serif", "Georgia"],
+          serif: ['"Source Serif 4"', '"Iowan Old Style"', "ui-serif", "Georgia"],
+          mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular"],
         },
         colors: {
-          bg: "#FAFAF7",
-          surface: "#FFFFFF",
-          "surface-2": "#F4F4EE",
-          border: "#E8E5DD",
-          "border-2": "#D8D4C7",
-          ink: "#0A0A0A",
-          "ink-soft": "#3D3D3D",
-          muted: "#6B6B6B",
-          dim: "#9A9A9A",
-          accent: "#10A37F",
-          crit: "#C73E3E",
-          high: "#D97706",
-          med: "#B45309",
-          low: "#2563EB",
-          poc: "#059669",
-          itw: "#DC2626",
-          kev: "#7C3AED",
+          ink: "#0c0a08",                 // page background — almost-black with warmth
+          surface: "#13110d",             // card / elevated
+          "surface-2": "#1c1813",
+          hairline: "#2a2520",            // border color
+          "hairline-2": "#3a342c",
+          paper: "#f0e8d5",               // main type — warm newsprint
+          "paper-dim": "#a39d8e",
+          "paper-faint": "#6b665c",
+          "paper-veil": "#4a463f",
+          signal: "#e63946",              // critical / KEV / breaking
+          warn: "#d4a45a",                // high / supply
+          ok: "#88c0a0",                  // info / research
+          info: "#7eaecb",                // industry
+          accent: "#e63946",              // primary accent (= signal)
         },
+        letterSpacing: { tightest: "-0.04em" },
       },
     },
   };
 </script>
 <style>
-  :root { color-scheme: light; }
-  html, body {
-    background: #FAFAF7;
-    color: #0A0A0A;
-    font-family: "Geist", ui-sans-serif, system-ui;
-    -webkit-font-smoothing: antialiased;
-    text-rendering: optimizeLegibility;
-    font-feature-settings: "ss01" on, "ss03" on, "cv11" on;
+  :root {
+    color-scheme: dark;
+    /* — Editorial dark palette: ink-on-newsprint inverted into night mode — */
+    --ink: #0c0a08;
+    --ink-deep: #07060a;
+    --surface: #13110d;
+    --surface-2: #1c1813;
+    --hairline: #2a2520;
+    --hairline-2: #3a342c;
+    --paper: #f0e8d5;
+    --paper-dim: #a39d8e;
+    --paper-faint: #6b665c;
+    --paper-veil: #4a463f;
+    --signal: #e63946;
+    --warn: #d4a45a;
+    --ok: #88c0a0;
+    --info: #7eaecb;
   }
 
-  /* selection */
-  ::selection { background: #10A37F; color: white; }
+  html, body {
+    background: var(--ink);
+    color: var(--paper);
+    font-family: "Source Serif 4", "Iowan Old Style", "Georgia", ui-serif, serif;
+    font-size: 15.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "ss01", "calt", "liga", "kern";
+  }
 
-  /* hairline helpers */
-  .hairline { border-color: #E8E5DD !important; }
-  .hairline-2 { border-color: #D8D4C7 !important; }
+  /* Subtle grain so the dark canvas feels like newsprint, not plastic. */
+  body::before {
+    content: "";
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 1;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0 0.5  0 0 0 0.6 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    opacity: 0.035;
+    mix-blend-mode: overlay;
+  }
 
-  /* scrollbar (subtle) */
-  ::-webkit-scrollbar { width: 10px; height: 10px; }
-  ::-webkit-scrollbar-thumb { background: #D8D4C7; border-radius: 6px; }
-  ::-webkit-scrollbar-thumb:hover { background: #B8B4A7; }
-  ::-webkit-scrollbar-track { background: transparent; }
+  /* Above-grain content layer */
+  main, header, nav, footer, aside, section, .above-grain { position: relative; z-index: 2; }
 
-  /* card hover lift */
-  .card {
-    transition: box-shadow 200ms ease, border-color 200ms ease, transform 200ms ease;
+  ::selection { background: var(--signal); color: var(--ink); }
+
+  /* — Typography helpers — */
+  .font-display { font-family: "Fraunces", "Source Serif 4", ui-serif, Georgia; font-feature-settings: "ss01","ss02","ss03","ss04"; }
+  .font-mono    { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace; }
+  .hairline     { border-color: var(--hairline); }
+  .hairline-2   { border-color: var(--hairline-2); }
+  .ink-bg       { background: var(--ink); }
+  .surface      { background: var(--surface); }
+  .surface-2    { background: var(--surface-2); }
+  .text-paper      { color: var(--paper); }
+  .text-paper-dim  { color: var(--paper-dim); }
+  .text-paper-faint{ color: var(--paper-faint); }
+  .text-signal     { color: var(--signal); }
+  .text-warn       { color: var(--warn); }
+  .text-ok         { color: var(--ok); }
+  .text-info       { color: var(--info); }
+  .border-signal   { border-color: var(--signal); }
+  .border-warn     { border-color: var(--warn); }
+  .border-ok       { border-color: var(--ok); }
+  .border-info     { border-color: var(--info); }
+
+  a { color: inherit; text-decoration: none; }
+
+  /* — Header — */
+  .nav-pill {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--paper-dim);
+    padding: 6px 12px;
+    border: 1px solid transparent;
+    border-radius: 0;
+    transition: color 120ms, border-color 120ms;
+  }
+  .nav-pill:hover { color: var(--paper); }
+  .nav-pill[aria-selected="true"] {
+    color: var(--paper);
+    border-color: var(--paper);
+  }
+  .live-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--signal);
+    box-shadow: 0 0 0 0 rgba(230,57,70,0.7);
+    animation: live-pulse 2.4s ease-out infinite;
+  }
+  @keyframes live-pulse {
+    0% { box-shadow: 0 0 0 0 rgba(230,57,70,0.6); }
+    70% { box-shadow: 0 0 0 12px rgba(230,57,70,0); }
+    100% { box-shadow: 0 0 0 0 rgba(230,57,70,0); }
+  }
+
+  /* — Date timeline — */
+  .date-strip { display: flex; align-items: stretch; gap: 0; position: relative; }
+  .date-strip::before {
+    content: ""; position: absolute;
+    left: 0; right: 0; top: 50%;
+    height: 1px; background: var(--hairline);
+    z-index: 0;
+  }
+  .date-node {
+    position: relative; z-index: 1;
+    flex: 1; min-width: 0;
+    background: var(--ink);
+    padding: 14px 6px 4px;
+    text-align: center;
+    cursor: pointer;
+    font-family: "JetBrains Mono", monospace;
+    transition: color 120ms;
+    color: var(--paper-faint);
+  }
+  .date-node:hover { color: var(--paper); }
+  .date-node[aria-current="true"] {
+    color: var(--paper);
+  }
+  .date-node[aria-current="true"] .date-dot {
+    background: var(--signal);
+    width: 9px; height: 9px;
+    box-shadow: 0 0 0 4px var(--ink), 0 0 0 5px var(--signal);
+  }
+  .date-node .date-dot {
+    display: block; margin: 0 auto 6px;
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--hairline-2);
+    box-shadow: 0 0 0 4px var(--ink);
+    transition: all 160ms;
+  }
+  .date-node:disabled { opacity: 0.25; cursor: not-allowed; }
+  .date-node .date-dow { font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase; }
+  .date-node .date-num { font-size: 13.5px; margin-top: 2px; font-weight: 500; }
+  .date-node .date-meta { font-size: 9.5px; color: var(--paper-faint); margin-top: 2px; }
+
+  /* — Hero brief card — */
+  .hero-card {
+    background: linear-gradient(180deg, var(--surface) 0%, var(--ink) 100%);
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--signal);
+    padding: 30px 32px;
+    position: relative;
     overflow: hidden;
   }
-  .card:hover {
-    border-color: #D8D4C7 !important;
-    box-shadow: 0 1px 0 rgba(0,0,0,0.02), 0 12px 32px -16px rgba(20,20,15,0.10);
+  .hero-card::after {
+    content: "";
+    position: absolute;
+    right: -80px; top: -80px;
+    width: 320px; height: 320px;
+    background: radial-gradient(circle, rgba(230,57,70,0.10), transparent 70%);
+    pointer-events: none;
   }
+  .hero-eyebrow {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--signal);
+  }
+  .hero-title {
+    font-family: "Fraunces", serif;
+    font-weight: 400;
+    font-size: clamp(28px, 4.5vw, 44px);
+    line-height: 1.05;
+    letter-spacing: -0.025em;
+    color: var(--paper);
+    margin-top: 14px;
+    font-variation-settings: "opsz" 100, "SOFT" 20;
+  }
+  .hero-cta {
+    margin-top: 22px;
+    display: inline-flex; align-items: center; gap: 10px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 12px 20px;
+    background: var(--paper);
+    color: var(--ink);
+    border: none;
+    cursor: pointer;
+    transition: transform 160ms, background 160ms;
+  }
+  .hero-cta:hover { background: var(--signal); color: var(--paper); transform: translateX(4px); }
+  .hero-cta .arrow { transition: transform 160ms; }
+  .hero-cta:hover .arrow { transform: translateX(4px); }
 
-  /* live blink */
-  @keyframes blink { 50% { opacity: 0.35; } }
-  .blink { animation: blink 1.6s ease-in-out infinite; }
-
-  /* refresh button spinner — applied to the .refresh-icon when its
-     parent .refresh-btn is in `in-flight` state */
-  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-  .refresh-btn[data-state="in-flight"] .refresh-icon { animation: spin 1.05s linear infinite; }
-  .refresh-btn[data-state="in-flight"] { color: #10A37F; }
-  .refresh-btn[data-state="done"] .refresh-icon { color: #10A37F; }
-
-  /* tab pill */
-  .tab-pill {
+  /* — Tab nav — */
+  .tab-bar { display: flex; align-items: baseline; gap: 36px; border-bottom: 1px solid var(--hairline); padding-bottom: 16px; }
+  .tab-btn {
+    font-family: "Fraunces", serif;
+    font-weight: 400;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    color: var(--paper-faint);
+    background: transparent; border: none; padding: 0 0 6px;
+    cursor: pointer;
     position: relative;
-    transition: color 160ms ease, background 160ms ease;
+    transition: color 160ms;
   }
-  .tab-pill[aria-selected="true"] {
-    background: #0A0A0A;
-    color: #FAFAF7;
+  .tab-btn:hover { color: var(--paper-dim); }
+  .tab-btn[aria-selected="true"] { color: var(--paper); }
+  .tab-btn[aria-selected="true"]::after {
+    content: ""; position: absolute;
+    left: 0; right: 0; bottom: -17px;
+    height: 1px; background: var(--paper);
   }
-
-  /* sub-pill (vuln class) */
-  .sub-pill {
-    transition: background 140ms, border-color 140ms, color 140ms;
-  }
-  .sub-pill[data-on="true"] {
-    background: #0A0A0A;
-    color: #FAFAF7;
-    border-color: #0A0A0A;
-  }
-  /* multi-filter chip */
-  .filter-chip {
-    transition: background 140ms, border-color 140ms, color 140ms;
-    color: #6B6B6B;
-  }
-  .filter-chip[data-on="true"] {
-    background: #0A0A0A;
-    color: #FAFAF7;
-    border-color: #0A0A0A;
+  .tab-count {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--paper-faint);
+    margin-left: 8px;
+    letter-spacing: 0.05em;
   }
 
-  /* severity badges */
-  .sev {
+  /* — Filter pills — */
+  .pill {
     display: inline-flex; align-items: center; gap: 6px;
-    font-family: "Geist Mono", monospace;
-    font-size: 10.5px; letter-spacing: 0.06em;
-    text-transform: uppercase; padding: 2px 8px;
-    border-radius: 999px; border: 1px solid;
-    line-height: 1.4; font-weight: 500;
+    padding: 5px 12px;
+    border: 1px solid var(--hairline);
+    background: transparent;
+    color: var(--paper-dim);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: all 140ms;
+    border-radius: 0;
   }
-  .sev::before {
-    content: ""; width: 6px; height: 6px; border-radius: 999px;
-    background: currentColor; flex-shrink: 0;
+  .pill:hover { color: var(--paper); border-color: var(--hairline-2); }
+  .pill[data-on="true"] {
+    color: var(--ink);
+    background: var(--paper);
+    border-color: var(--paper);
   }
-  .sev-critical { color: #C73E3E; border-color: #F0D2D2; background: #FDF2F2; }
-  .sev-high     { color: #D97706; border-color: #F2D9B0; background: #FEF9EE; }
-  .sev-medium   { color: #B45309; border-color: #ECD9B5; background: #FBF6EB; }
-  .sev-low      { color: #2563EB; border-color: #D2DDF5; background: #F2F6FD; }
-  .sev-unknown  { color: #6B6B6B; border-color: #E0DDD3; background: #F4F4EE; }
+  .pill .count { color: var(--paper-faint); font-size: 10px; }
+  .pill[data-on="true"] .count { color: var(--paper-veil); }
 
+  /* — Article cards (editorial style: no boxes, hairline separators) — */
+  .article {
+    padding: 22px 0 24px;
+    border-bottom: 1px solid var(--hairline);
+    transition: padding 200ms;
+  }
+  .article:hover { padding-left: 6px; }
+  .article-eyebrow {
+    display: flex; align-items: baseline; gap: 12px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--paper-faint);
+    margin-bottom: 10px;
+  }
+  .article-cat {
+    padding: 2px 8px;
+    color: var(--paper);
+  }
+  .article-cat.cat-incident      { background: rgba(230,57,70,0.16);  color: var(--signal); }
+  .article-cat.cat-vuln          { background: rgba(212,164,90,0.16); color: var(--warn); }
+  .article-cat.cat-supply-chain  { background: rgba(212,164,90,0.20); color: var(--warn); }
+  .article-cat.cat-research      { background: rgba(136,192,160,0.16);color: var(--ok); }
+  .article-cat.cat-industry      { background: rgba(126,174,203,0.16);color: var(--info); }
+  .article-byline { color: var(--paper-dim); }
+  .article-byline .byline-by { color: var(--paper-faint); }
+  .article-title {
+    font-family: "Fraunces", serif;
+    font-weight: 400;
+    font-size: 22px;
+    line-height: 1.22;
+    letter-spacing: -0.018em;
+    color: var(--paper);
+    margin-bottom: 8px;
+    font-variation-settings: "opsz" 36, "SOFT" 30;
+  }
+  .article:hover .article-title { color: var(--signal); }
+  .article-summary {
+    font-family: "Source Serif 4", serif;
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--paper-dim);
+    max-width: 70ch;
+  }
+  /* lead article (first in list, on news tab today) gets a drop-cap treatment */
+  .article.lead .article-title { font-size: 30px; line-height: 1.1; }
+  .article.lead .article-summary::first-letter {
+    font-family: "Fraunces", serif;
+    font-size: 3.2em;
+    line-height: 0.85;
+    float: left;
+    margin: 4px 8px 0 0;
+    color: var(--signal);
+    font-weight: 500;
+    font-variation-settings: "opsz" 144;
+  }
+
+  /* — Mirror cluster strip on article — */
+  .mirror-strip {
+    margin-top: 14px;
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    color: var(--paper-faint);
+    cursor: pointer;
+    padding: 4px 10px;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    transition: all 140ms;
+  }
+  .mirror-strip:hover { color: var(--paper); border-color: var(--hairline-2); }
+  .mirror-strip .mirror-dot { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--paper-faint); }
+  .mirrors-expanded { margin-top: 10px; padding-left: 14px; border-left: 1px solid var(--hairline); }
+  .mirrors-expanded a:hover { color: var(--signal); }
+
+  /* — Heat board (vertical ticker, no progress bars — pure typography hierarchy) — */
+  .heat-board { background: transparent; }
+  .heat-section-title {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--paper-faint);
+    margin-bottom: 18px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--hairline);
+    display: flex; justify-content: space-between; align-items: baseline;
+  }
+  .heat-row {
+    display: grid;
+    grid-template-columns: 32px 1fr;
+    gap: 14px;
+    padding: 12px 0;
+    border-bottom: 1px dotted var(--hairline);
+    align-items: baseline;
+    cursor: pointer;
+    transition: padding 160ms;
+  }
+  .heat-row:hover { padding-left: 4px; }
+  .heat-row:hover .heat-label { color: var(--signal); }
+  .heat-row:last-child { border-bottom: none; }
+  .heat-rank {
+    font-family: "Fraunces", serif;
+    font-size: 24px;
+    font-weight: 300;
+    color: var(--paper-veil);
+    line-height: 1;
+    font-variation-settings: "opsz" 72;
+  }
+  .heat-row:nth-child(-n+3) .heat-rank { color: var(--signal); }
+  .heat-label {
+    font-family: "Fraunces", serif;
+    font-size: 14px;
+    line-height: 1.3;
+    color: var(--paper);
+    transition: color 140ms;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .heat-meta {
+    margin-top: 4px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--paper-faint);
+    text-transform: uppercase;
+  }
+  .heat-meta .score { color: var(--paper-dim); }
+
+  /* — Vuln-specific bits — */
   .pill-tag {
-    display: inline-flex; align-items: center;
-    font-family: "Geist Mono", monospace;
-    font-size: 10.5px; letter-spacing: 0.04em;
+    display: inline-block;
+    padding: 2px 6px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
-    padding: 2px 7px; border-radius: 4px;
-    border: 1px solid #E8E5DD;
-    color: #3D3D3D; background: #FAFAF7;
-    line-height: 1.4;
+    color: var(--paper-dim);
+    border: 1px solid var(--hairline-2);
+    margin-right: 4px;
+    margin-bottom: 2px;
   }
-  .pill-tag.kev { color: #7C3AED; border-color: #E5DAF8; background: #F7F2FE; }
-  .pill-tag.itw { color: #DC2626; border-color: #F2CFCF; background: #FEF2F2; }
-  .pill-tag.poc { color: #059669; border-color: #CCEBDF; background: #F0FAF6; }
-  .pill-tag.supply { color: #C2410C; border-color: #EFCFB8; background: #FEF5EE; }
-  .pill-tag.ransom { color: #7C3AED; border-color: #E5DAF8; background: #F7F2FE; }
-
-  /* lang lozenge */
-  .lang-badge {
-    display: inline-flex; align-items: center; gap: 4px;
-    font-family: "Geist Mono", monospace;
-    font-size: 10px; letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 1px 6px; border-radius: 3px;
-    background: #F4F4EE; color: #6B6B6B;
-  }
-
-  /* heat bar */
-  .hb-bar {
-    height: 4px; background: #EDEAE0;
-    border-radius: 999px; overflow: hidden;
-  }
-  .hb-bar > i {
-    display: block; height: 100%;
-    background: #0A0A0A;
-    border-radius: 999px;
-  }
-  .hb-bar.poc > i { background: #059669; }
-  .hb-bar.high > i { background: #D97706; }
-  .hb-bar.crit > i, .hb-bar.itw > i { background: #DC2626; }
-  .hb-bar.kev > i { background: #7C3AED; }
-
-  /* CVSS pill */
-  .cvss-num {
-    font-family: "Geist Mono", monospace;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-  }
-
-  /* skeleton shimmer */
-  @keyframes shimmer {
-    0% { background-position: -400px 0; }
-    100% { background-position: 400px 0; }
-  }
-  .skeleton {
-    background: linear-gradient(90deg, #F4F4EE 25%, #EDEAE0 50%, #F4F4EE 75%);
-    background-size: 800px 100%;
-    animation: shimmer 1.6s linear infinite;
-    border-radius: 6px;
-  }
-
-  /* link underline */
-  a.lnk { position: relative; transition: color 160ms; }
-  a.lnk:hover { color: #10A37F; }
-
-  /* hide panel */
-  .panel[hidden] { display: none !important; }
-
-  /* line clamps */
-  .clamp-2 {
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-    overflow: hidden; word-break: break-word; overflow-wrap: anywhere;
-  }
-  .clamp-3 {
-    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
-    overflow: hidden; word-break: break-word; overflow-wrap: anywhere;
-  }
-
-  /* date cell */
-  .date-cell[data-today="true"] {
-    background: #0A0A0A;
-    color: #FAFAF7;
-  }
-  .date-cell[data-today="true"] .date-num { color: #FAFAF7; }
-  .date-cell[data-today="true"] .date-meta { color: #C0BFB8; }
-
-  /* news category pills */
-  .cat-pill {
-    display: inline-flex; align-items: center; gap: 5px;
-    font-family: "Geist Mono", monospace;
-    font-size: 10.5px; letter-spacing: 0.06em;
-    text-transform: uppercase; padding: 2px 8px;
-    border-radius: 999px; border: 1px solid;
-    line-height: 1.4; font-weight: 500;
-  }
-  .cat-pill::before {
-    content: ""; width: 5px; height: 5px; border-radius: 999px;
-    background: currentColor; flex-shrink: 0;
-  }
-  .cat-incident    { color: #DC2626; border-color: #F2CFCF; background: #FEF2F2; }
-  .cat-vuln        { color: #D97706; border-color: #F2D9B0; background: #FEF9EE; }
-  .cat-supply-chain { color: #C2410C; border-color: #EFCFB8; background: #FEF5EE; }
-  .cat-research    { color: #2563EB; border-color: #D2DDF5; background: #F2F6FD; }
-  .cat-industry    { color: #6B6B6B; border-color: #E0DDD3; background: #F4F4EE; }
-
-  /* AI assessment block */
-  .ai-assess {
-    background: #F9F9F5;
-    border: 1px solid #E8E5DD;
-    border-radius: 8px;
-    padding: 10px 12px;
-    margin-top: 10px;
-  }
-  .ai-assess-label {
-    font-family: "Geist Mono", monospace;
+  .pill-tag.itw     { color: var(--signal); border-color: rgba(230,57,70,0.4); }
+  .pill-tag.kev     { color: var(--signal); border-color: rgba(230,57,70,0.4); }
+  .pill-tag.supply  { color: var(--warn);   border-color: rgba(212,164,90,0.4); }
+  .pill-tag.poc     { color: var(--ok);     border-color: rgba(136,192,160,0.4); }
+  .pill-tag.ransom  { color: var(--signal); border-color: rgba(230,57,70,0.4); }
+  .pill-tag.nuclei  { color: var(--info);   border-color: rgba(126,174,203,0.4); }
+  .sev {
+    font-family: "JetBrains Mono", monospace;
     font-size: 10px;
     letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #10A37F;
-    margin-bottom: 4px;
+    padding: 2px 8px;
   }
-  .ai-assess-text {
-    font-size: 12.5px;
-    color: #3D3D3D;
-    line-height: 1.6;
+  .sev-critical { background: rgba(230,57,70,0.22); color: var(--signal); }
+  .sev-high     { background: rgba(212,164,90,0.22); color: var(--warn); }
+  .sev-medium   { background: rgba(212,164,90,0.12); color: var(--warn); }
+  .sev-low      { background: rgba(126,174,203,0.18); color: var(--info); }
+  .sev-unknown  { background: rgba(255,255,255,0.06); color: var(--paper-dim); }
+
+  /* — Search bar — */
+  .search-wrap {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    border: 1px solid var(--hairline);
+    background: var(--surface);
+    transition: border-color 140ms;
+  }
+  .search-wrap:focus-within { border-color: var(--paper-dim); }
+  .search-wrap input {
+    background: transparent; border: none; outline: none;
+    color: var(--paper);
+    font-family: "Source Serif 4", serif;
+    font-size: 14px;
+    width: 320px;
+    max-width: 100%;
+  }
+  .search-wrap input::placeholder { color: var(--paper-faint); font-style: italic; }
+  .search-hint {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--paper-faint);
+    border: 1px solid var(--hairline);
+    padding: 1px 6px;
   }
 
-  /* trending keyword tag */
-  .trend-tag {
-    display: inline-flex; align-items: center;
-    font-family: "Geist Mono", monospace;
-    font-size: 11px; padding: 3px 10px;
-    border-radius: 999px;
-    border: 1px solid #E8E5DD;
-    color: #3D3D3D; background: #FAFAF7;
-    cursor: pointer;
-    transition: background 140ms, border-color 140ms;
+  /* — Brief modal — */
+  .modal-backdrop {
+    position: fixed; inset: 0; z-index: 80;
+    background: rgba(7, 6, 10, 0.85);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: fade-in 200ms ease-out;
   }
-  .trend-tag:hover { background: #F4F4EE; border-color: #D8D4C7; }
+  .modal-shell {
+    position: fixed; inset: 0; z-index: 81;
+    display: flex; align-items: stretch; justify-content: center;
+    padding: 32px;
+    pointer-events: none;
+  }
+  .modal-content {
+    background: var(--ink);
+    border: 1px solid var(--hairline);
+    border-top: 3px solid var(--signal);
+    max-width: 900px; width: 100%;
+    max-height: calc(100vh - 64px);
+    overflow-y: auto;
+    pointer-events: auto;
+    animation: slide-up 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+  }
+  @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes slide-up { from { opacity: 0; transform: translateY(30px); } to { opacity: 1; transform: translateY(0); } }
+  .modal-header {
+    padding: 28px 36px 18px;
+    border-bottom: 1px solid var(--hairline);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  }
+  .modal-title {
+    font-family: "Fraunces", serif;
+    font-weight: 400;
+    font-size: 30px;
+    letter-spacing: -0.022em;
+    color: var(--paper);
+    line-height: 1.1;
+    font-variation-settings: "opsz" 60, "SOFT" 20;
+  }
+  .modal-date {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--signal);
+    margin-bottom: 6px;
+  }
+  .modal-close {
+    background: transparent; border: 1px solid var(--hairline);
+    color: var(--paper-dim);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    padding: 6px 12px;
+    letter-spacing: 0.1em;
+    cursor: pointer;
+    transition: all 140ms;
+  }
+  .modal-close:hover { color: var(--paper); border-color: var(--paper); }
+  .modal-body { padding: 24px 36px 36px; }
+  .brief-section {
+    padding: 22px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .brief-section:last-child { border-bottom: none; }
+  .brief-section-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .brief-cat {
+    font-family: "Fraunces", serif;
+    font-size: 18px;
+    color: var(--paper);
+    font-variation-settings: "opsz" 36;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  .brief-cat .marker {
+    display: inline-block; width: 6px; height: 18px; vertical-align: -3px;
+  }
+  .brief-cat.cat-incident .marker     { background: var(--signal); }
+  .brief-cat.cat-vuln .marker         { background: var(--warn); }
+  .brief-cat.cat-supply-chain .marker { background: var(--warn); }
+  .brief-cat.cat-research .marker     { background: var(--ok); }
+  .brief-cat.cat-industry .marker     { background: var(--info); }
+  .brief-count {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    color: var(--paper-faint);
+    text-transform: uppercase;
+  }
+  .brief-text {
+    font-family: "Source Serif 4", serif;
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--paper-dim);
+    white-space: pre-line;
+    max-width: 68ch;
+  }
+
+  /* — Buttons / minor — */
+  .btn-ghost {
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--paper-dim);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    padding: 7px 14px;
+    cursor: pointer;
+    transition: all 140ms;
+  }
+  .btn-ghost:hover { color: var(--paper); border-color: var(--paper-dim); }
+  .btn-icon {
+    background: transparent;
+    border: 1px solid var(--hairline);
+    color: var(--paper-dim);
+    width: 32px; height: 32px;
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 140ms;
+  }
+  .btn-icon:hover { color: var(--paper); border-color: var(--paper-dim); }
+  .btn-icon[data-state="in-flight"] {
+    color: var(--signal);
+    animation: spin 1.2s linear infinite;
+  }
+  @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+  /* — Trend tags — */
+  .trend-tag {
+    display: inline-block;
+    padding: 4px 10px;
+    margin: 0 4px 4px 0;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--paper-dim);
+    border: 1px solid var(--hairline);
+    background: transparent;
+    cursor: pointer;
+    transition: all 140ms;
+  }
+  .trend-tag:hover { color: var(--paper); border-color: var(--hairline-2); background: var(--surface); }
+
+  /* — Source health rows — */
+  .source-row {
+    display: grid;
+    grid-template-columns: 8px 1fr auto;
+    gap: 10px;
+    padding: 5px 0;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    color: var(--paper-dim);
+    align-items: center;
+  }
+  .source-row .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+  .source-row.bad .dot { background: var(--signal); }
+  .source-row .count { color: var(--paper-faint); }
+
+  /* — Misc text utilities not in tailwind — */
+  .ed-rule {
+    display: block;
+    width: 40px; height: 2px;
+    background: var(--paper);
+    margin: 14px 0;
+  }
+  .clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: var(--hairline-2); }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+
+  /* — Toast (preserve refresh-token UX) — */
+  #toast-box-refresh, #toast-box {
+    z-index: 200;
+  }
+  #toast-box-refresh > div {
+    background: var(--surface) !important;
+    color: var(--paper) !important;
+    border-color: var(--hairline-2) !important;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.5);
+  }
+
+  /* — Banner inserted inline above search results — */
+  .search-banner {
+    padding: 12px 16px;
+    background: rgba(230,57,70,0.08);
+    border: 1px solid rgba(230,57,70,0.25);
+    color: var(--paper);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
+    letter-spacing: 0.06em;
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 8px;
+  }
+  .search-banner .clear-btn {
+    margin-left: auto;
+    color: var(--signal);
+    text-decoration: underline;
+    cursor: pointer;
+    background: none; border: none;
+    font-family: inherit; font-size: inherit;
+  }
+
+  /* — Hidden articles ribbon — */
+  .hidden-toggle {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--paper-faint);
+    background: transparent;
+    border: 1px solid var(--hairline);
+    padding: 5px 12px;
+    cursor: pointer;
+    transition: all 140ms;
+  }
+  .hidden-toggle:hover { color: var(--paper); border-color: var(--hairline-2); }
+
+  /* — Sentinel for infinite scroll — */
+  #news-sentinel, #vuln-sentinel {
+    height: 1px;
+    margin-top: 40px;
+  }
+  .load-spinner {
+    text-align: center;
+    padding: 40px 0;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--paper-faint);
+  }
+
+  /* — Last sync footer — */
+  .footer-meta {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    color: var(--paper-faint);
+    text-transform: uppercase;
+  }
 </style>
 </head>
-<body>
-  <!-- ─────────── TOP NAV ─────────── -->
-  <header class="border-b hairline bg-bg sticky top-0 z-30">
-    <div class="max-w-[1400px] mx-auto px-6 lg:px-10 py-3.5 flex items-center gap-6">
-      <a href="/" class="flex items-center gap-2.5">
-        <span class="inline-flex h-7 w-7 items-center justify-center rounded-md bg-ink text-bg font-mono text-sm font-semibold">S</span>
-        <div class="leading-none">
-          <div class="text-[15px] font-semibold tracking-tight">Security Hot</div>
-          <div class="text-[10.5px] text-muted font-mono tracking-wider mt-0.5" data-i18n="brand.tag">每日安全情报</div>
+<body class="ink-bg text-paper">
+
+  <!-- ─────────── HEADER ─────────── -->
+  <header class="border-b hairline sticky top-0 z-40 ink-bg above-grain">
+    <div class="max-w-[1340px] mx-auto px-6 lg:px-10 py-4 flex items-center gap-8">
+      <!-- Logo: ink mark + serif wordmark -->
+      <a href="/" class="flex items-center gap-3 shrink-0">
+        <span class="inline-flex items-center justify-center h-7 w-7 border border-signal" style="background:var(--signal); color:var(--ink); font-family: 'JetBrains Mono', monospace; font-weight:700; font-size:13px;">S</span>
+        <div class="leading-tight">
+          <div class="font-display text-[18px] tracking-tightest" style="font-variation-settings: 'opsz' 36, 'wght' 500;">security<span class="text-signal">·</span>hot</div>
+          <div class="font-mono text-[9.5px] tracking-[0.2em] uppercase text-paper-faint -mt-0.5" data-i18n="brand.tag">每日安全情报</div>
         </div>
       </a>
 
-      <div class="flex-1 max-w-xl mx-4 hidden md:block">
-        <div class="flex items-center gap-2 border hairline bg-surface rounded-lg px-3 py-2 focus-within:border-2 transition">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-muted">
+      <!-- Search bar — editorial style -->
+      <div class="flex-1 max-w-xl hidden md:block">
+        <div class="search-wrap">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" class="text-paper-faint">
             <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
           </svg>
-          <input id="search" type="text" placeholder=" " data-i18n-placeholder="nav.search" class="bg-transparent outline-none w-full text-[13.5px]" />
-          <kbd class="font-mono text-[10px] text-dim border hairline rounded px-1.5 py-px hidden md:inline">⌘K</kbd>
+          <input id="search" type="text" placeholder=" " data-i18n-placeholder="nav.search" autocomplete="off" />
+          <span class="search-hint">⌘K</span>
         </div>
       </div>
 
-      <div class="flex items-center gap-2 ml-auto">
-        <div class="hidden md:flex items-center gap-1.5 text-muted">
-          <span class="relative flex">
-            <span class="absolute h-2 w-2 rounded-full bg-poc opacity-50 blink"></span>
-            <span class="h-2 w-2 rounded-full bg-poc"></span>
-          </span>
-          <span class="font-mono text-[11px] tracking-wider" data-i18n="nav.live">实时</span>
+      <div class="flex items-center gap-3 ml-auto">
+        <div class="hidden md:flex items-center gap-2 text-paper-dim">
+          <span class="live-dot"></span>
+          <span class="font-mono text-[10.5px] tracking-[0.16em] uppercase" data-i18n="nav.live">实时</span>
         </div>
-        <div class="border hairline rounded-md flex overflow-hidden">
-          <button id="lang-zh" class="lang-btn px-2.5 py-1.5 text-[11.5px] font-mono tracking-wide" data-lang="zh">中</button>
-          <button id="lang-en" class="lang-btn px-2.5 py-1.5 text-[11.5px] font-mono tracking-wide border-l hairline" data-lang="en">EN</button>
+        <div class="flex">
+          <button id="lang-zh" class="lang-btn nav-pill" data-lang="zh">中</button>
+          <button id="lang-en" class="lang-btn nav-pill" data-lang="en">EN</button>
         </div>
-        <a href="/docs" target="_blank" class="hidden md:inline-flex items-center gap-1 text-[11.5px] text-muted hover:text-ink px-2 py-1 lnk font-mono">API ↗</a>
+        <button id="refresh-all" data-refresh-only=""
+                title="" data-i18n-title="refresh.title"
+                class="refresh-btn btn-icon"
+                aria-label="Refresh all">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+        </button>
       </div>
     </div>
   </header>
 
-  <div class="max-w-[1400px] mx-auto px-6 lg:px-10">
+  <div class="max-w-[1340px] mx-auto px-6 lg:px-10">
 
-    <!-- ─────────── HERO ─────────── -->
-    <section class="pt-10 pb-7">
-      <div class="flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <div class="font-mono text-[11px] tracking-[0.18em] uppercase text-muted" data-i18n="hero.kicker">每日聚合 · 安全资讯 · 漏洞情报 · 论文</div>
-          <h1 class="text-[34px] md:text-[40px] font-semibold tracking-tight leading-[1.05] mt-3" data-i18n="hero.title">看清今天最值得注意的安全动向</h1>
-          <p class="text-[14px] text-muted mt-2 max-w-2xl leading-relaxed" data-i18n="hero.sub">
-            从 1,690 个 RSS 源 与 CISA KEV、GHSA、OSSF、nomi-sec PoC 等接口持续抓取，去重、归一、按热度排序后呈现。
-          </p>
-        </div>
-        <div class="flex items-center gap-3 font-mono text-[11px] text-muted">
-          <span data-i18n="hero.lastsync">最近同步</span>
-          <span id="last-sync" class="text-ink">--:--</span>
-          <button id="refresh-all" data-refresh-only=""
-                  title="" data-i18n-title="refresh.title"
-                  class="refresh-btn ml-1 inline-flex items-center justify-center w-7 h-7 rounded-full border hairline hover:bg-surface-2 hover:border-2 text-ink transition disabled:opacity-50"
-                  aria-label="Refresh all">
-            <svg class="w-3.5 h-3.5 refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="23 4 23 10 17 10"></polyline>
-              <polyline points="1 20 1 14 7 14"></polyline>
-              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
-            </svg>
-          </button>
+    <!-- ─────────── DATE TIMELINE ─────────── -->
+    <nav class="pt-6 pb-2 above-grain" aria-label="date">
+      <div class="flex items-center gap-3 mb-1.5 font-mono text-[10px] tracking-[0.18em] uppercase text-paper-faint">
+        <span data-i18n="date.timeline">日期轴</span>
+        <span class="flex-1 h-px" style="background:var(--hairline);"></span>
+        <button id="date-prev" class="hover:text-paper transition">◀ <span data-i18n="date.prev">上周</span></button>
+        <button id="date-today" class="hover:text-paper transition" data-i18n="date.today">今日</button>
+        <button id="date-next" class="hover:text-paper transition"><span data-i18n="date.next">下周</span> ▶</button>
+      </div>
+      <ol id="date-strip" class="date-strip"></ol>
+    </nav>
+
+    <!-- ─────────── HERO: TODAY'S BRIEFING (CTA → modal) ─────────── -->
+    <section class="pt-8 pb-10 above-grain">
+      <div class="hero-card">
+        <div class="grid lg:grid-cols-12 gap-8 items-end">
+          <div class="lg:col-span-8">
+            <div class="hero-eyebrow flex items-center gap-3">
+              <span id="hero-date-label">TODAY</span>
+              <span style="color:var(--paper-veil);">·</span>
+              <span id="hero-stats" class="text-paper-faint">— articles · — vulns · — sources</span>
+            </div>
+            <h1 class="hero-title" id="hero-title" data-i18n="hero.title">从 1.7k 信号源里, 一眼看清今天.</h1>
+            <p class="text-paper-dim text-[14.5px] leading-relaxed mt-4 max-w-xl" data-i18n="hero.sub">
+              每日跨 700+ 安全 RSS 源 + KEV / GHSA / OSV / EPSS 抓取, AI 分类 + 摘要, 跨源镜像聚合.
+            </p>
+          </div>
+          <div class="lg:col-span-4 flex lg:justify-end">
+            <button id="open-brief" class="hero-cta" type="button">
+              <span data-i18n="brief.open">进入今日简报</span>
+              <span class="arrow">→</span>
+            </button>
+          </div>
         </div>
       </div>
-
-      <!-- stats grid (skeleton cards inserted by JS until /api/today loads) -->
-      <div class="mt-8 grid grid-cols-2 md:grid-cols-4 gap-3" id="stats-grid"></div>
     </section>
 
-    <!-- ─────────── DATE STRIP ─────────── -->
-    <nav class="flex items-stretch gap-2 mb-6 overflow-x-auto pb-1" aria-label="date">
-      <button id="date-prev" class="px-3 py-2 rounded-lg border hairline bg-surface text-muted hover:text-ink hover:bg-surface-2 shrink-0">◀</button>
-      <ol id="date-strip" class="flex gap-2 items-stretch"></ol>
-      <button id="date-next" class="px-3 py-2 rounded-lg border hairline bg-surface text-muted hover:text-ink hover:bg-surface-2 shrink-0">▶</button>
-      <button id="date-today" class="px-3 py-2 rounded-lg border hairline bg-surface text-muted hover:text-ink hover:bg-surface-2 shrink-0 font-mono text-[11.5px] uppercase tracking-widest" data-i18n="date.today">今日</button>
-    </nav>
-
-    <!-- ─────────── PRIMARY TABS ─────────── -->
-    <nav class="flex items-center justify-between mb-6 flex-wrap gap-3" role="tablist">
-      <div class="inline-flex items-center gap-1 border hairline rounded-full bg-surface p-1">
-        <button class="tab-pill rounded-full px-4 py-1.5 text-[13px] font-medium" role="tab" data-tab="news" aria-selected="false">
-          <span data-i18n="tab.news">行业资讯</span>
-          <span class="ml-1.5 text-[11px] text-dim font-mono" id="tab-news-count">—</span>
-        </button>
-        <button class="tab-pill rounded-full px-4 py-1.5 text-[13px] font-medium" role="tab" data-tab="vuln" aria-selected="true">
-          <span data-i18n="tab.vuln">漏洞情报</span>
-          <span class="ml-1.5 text-[11px] text-dim font-mono" id="tab-vuln-count">—</span>
-        </button>
-        <button class="tab-pill rounded-full px-4 py-1.5 text-[13px] font-medium" role="tab" data-tab="papers" aria-selected="false">
-          <span data-i18n="tab.papers">安全论文</span>
-          <span class="ml-1.5 text-[11px] text-dim font-mono">·</span>
-        </button>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <div class="inline-flex border hairline rounded-md overflow-hidden bg-surface">
-          <button data-sort="heat" class="sort-btn px-3 py-1.5 text-[12px] font-mono text-ink bg-surface-2">
-            <span data-i18n="sort.heat">热度</span>
-          </button>
-          <button data-sort="time" class="sort-btn px-3 py-1.5 text-[12px] font-mono text-muted border-l hairline">
-            <span data-i18n="sort.time">时间</span>
-          </button>
-        </div>
-        <div class="inline-flex border hairline rounded-md overflow-hidden bg-surface" id="news-lang-filter" hidden>
-          <button data-news-lang="all" class="newslang-btn px-2.5 py-1.5 text-[12px] font-mono bg-surface-2 text-ink"><span data-i18n="lang.all">全部</span></button>
-          <button data-news-lang="zh" class="newslang-btn px-2.5 py-1.5 text-[12px] font-mono text-muted border-l hairline">中</button>
-          <button data-news-lang="en" class="newslang-btn px-2.5 py-1.5 text-[12px] font-mono text-muted border-l hairline">EN</button>
-        </div>
-      </div>
-    </nav>
-
     <!-- ─────────── MAIN GRID ─────────── -->
-    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 pb-12">
-      <main class="lg:col-span-9 min-w-0">
-        <!-- vuln sub-filter row -->
-        <div id="vuln-subfilter" class="flex items-center gap-2 flex-wrap mb-3">
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-on="true" data-kind="all">
-            <span data-i18n="vk.all">全部</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="all">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-kind="cve">
-            <span data-i18n="vk.cve">CVE · 0day</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="cve">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-kind="supply">
-            <span data-i18n="vk.supply">供应链投毒</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="supply">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-kind="poc">
-            <span data-i18n="vk.poc">PoC 首发</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="poc">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-kind="itw">
-            <span data-i18n="vk.itw">在野利用</span> <span class="text-dim ml-1 font-mono text-[11px]" data-count="itw">—</span>
-          </button>
-        </div>
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-x-10 gap-y-6 pb-16">
+      <main class="lg:col-span-8 min-w-0 above-grain">
 
-        <!-- severity + source multi-filter chips -->
-        <div id="vuln-multifilter" class="flex items-center gap-x-3 gap-y-2 flex-wrap mb-5 text-[11.5px]">
-          <span class="font-mono text-[10px] tracking-widest uppercase text-dim mr-1" data-i18n="filter.severity">严重度</span>
-          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="severity" data-val="critical" data-on="false">CRIT</button>
-          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="severity" data-val="high" data-on="false">HIGH</button>
-          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="severity" data-val="medium" data-on="false">MED</button>
-          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="severity" data-val="low" data-on="false">LOW</button>
-          <span class="border-l hairline-2 h-4 mx-1"></span>
-          <span class="font-mono text-[10px] tracking-widest uppercase text-dim mr-1" data-i18n="filter.source">来源</span>
-          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="source" data-val="cisa-kev" data-on="false">KEV</button>
-          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="source" data-val="github-advisory" data-on="false">GHSA</button>
-          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="source" data-val="nomi-sec" data-on="false">PoC</button>
-          <button class="filter-chip border hairline rounded px-2 py-0.5 font-mono" data-dim="source" data-val="ossf-malpkgs" data-on="false">OSSF</button>
-          <span class="border-l hairline-2 h-4 mx-1"></span>
-          <button id="filter-clear" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest" data-i18n="filter.clear">清空</button>
-        </div>
+        <!-- TAB BAR — serif headlines, no pills -->
+        <nav class="tab-bar mb-6" role="tablist">
+          <button class="tab-btn" role="tab" data-tab="news" aria-selected="true">
+            <span data-i18n="tab.news">行业资讯</span>
+            <span class="tab-count" id="tab-news-count">—</span>
+          </button>
+          <button class="tab-btn" role="tab" data-tab="vuln" aria-selected="false">
+            <span data-i18n="tab.vuln">漏洞情报</span>
+            <span class="tab-count" id="tab-vuln-count">—</span>
+          </button>
+          <button class="tab-btn" role="tab" data-tab="papers" aria-selected="false">
+            <span data-i18n="tab.papers">安全论文</span>
+            <span class="tab-count">·</span>
+          </button>
+        </nav>
 
-        <!-- news category sub-filter -->
-        <div id="news-catfilter" class="flex items-center gap-2 flex-wrap mb-3" style="display:none">
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-on="true" data-cat="all">
-            <span data-i18n="cat.all">全部</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="all">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="incident">
-            <span data-i18n="cat.incident">安全事件</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="incident">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="vuln">
-            <span data-i18n="cat.vuln">漏洞情报</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="vuln">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="supply-chain">
-            <span data-i18n="cat.supply-chain">供应链投毒</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="supply-chain">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="research">
-            <span data-i18n="cat.research">安全研究</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="research">—</span>
-          </button>
-          <button class="sub-pill border hairline rounded-full px-3.5 py-1.5 text-[12px] font-medium" data-cat="industry">
-            <span data-i18n="cat.industry">行业动态</span> <span class="text-dim ml-1 font-mono text-[11px]" data-catcount="industry">—</span>
-          </button>
-          <button onclick="toggleHidden()" id="hidden-toggle"
-                  class="ml-auto text-xs text-dim hover:text-fg font-mono px-2.5 py-1 hover:bg-surface rounded"
-                  data-i18n-title="news.hiddenLabel"
-                  aria-label="已隐藏 LLM 判定为离题的文章">
-            ⊘ <span id="hidden-count">0</span> <span data-i18n="news.hiddenLabel">已隐藏</span>
-          </button>
-        </div>
-
-        <!-- panel: NEWS -->
-        <section class="panel space-y-3" data-panel="news" hidden>
-          <!-- daily brief card -->
-          <div id="daily-brief" class="border hairline bg-surface rounded-xl p-5 mb-4" style="display:none">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-[14px] font-semibold tracking-tight" data-i18n="brief.title">今日简报</h3>
-              <div class="flex items-center gap-2">
-                <button onclick="regenerateBrief()"
-                        class="text-xs text-dim hover:text-fg ml-auto font-mono px-2 py-1 hover:bg-surface rounded"
-                        data-i18n-title="news.refreshBrief"
-                        aria-label="刷新简报">⟳</button>
-                <button id="brief-toggle" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest">▼</button>
-              </div>
+        <!-- CONTEXTUAL FILTER ROW (changes per tab) -->
+        <div class="flex items-center justify-between flex-wrap gap-3 mb-5">
+          <div class="flex items-center gap-2 flex-wrap">
+            <!-- vuln-only kind sub-filter -->
+            <div id="vuln-subfilter" class="flex items-center gap-2 flex-wrap" style="display:none">
+              <button class="pill" data-on="true" data-kind="all"><span data-i18n="vk.all">全部</span> <span class="count" data-count="all">—</span></button>
+              <button class="pill" data-kind="cve"><span data-i18n="vk.cve">CVE · 0day</span> <span class="count" data-count="cve">—</span></button>
+              <button class="pill" data-kind="supply"><span data-i18n="vk.supply">供应链投毒</span> <span class="count" data-count="supply">—</span></button>
+              <button class="pill" data-kind="poc"><span data-i18n="vk.poc">PoC 首发</span> <span class="count" data-count="poc">—</span></button>
+              <button class="pill" data-kind="itw"><span data-i18n="vk.itw">在野利用</span> <span class="count" data-count="itw">—</span></button>
             </div>
-            <div id="brief-content" class="space-y-4"></div>
+            <!-- news-only category sub-filter -->
+            <div id="news-catfilter" class="flex items-center gap-2 flex-wrap">
+              <button class="pill" data-on="true" data-cat="all"><span data-i18n="cat.all">全部</span> <span class="count" data-catcount="all">—</span></button>
+              <button class="pill" data-cat="incident"><span data-i18n="cat.incident">安全事件</span> <span class="count" data-catcount="incident">—</span></button>
+              <button class="pill" data-cat="vuln"><span data-i18n="cat.vuln">漏洞情报</span> <span class="count" data-catcount="vuln">—</span></button>
+              <button class="pill" data-cat="supply-chain"><span data-i18n="cat.supply-chain">供应链投毒</span> <span class="count" data-catcount="supply-chain">—</span></button>
+              <button class="pill" data-cat="research"><span data-i18n="cat.research">安全研究</span> <span class="count" data-catcount="research">—</span></button>
+              <button class="pill" data-cat="industry"><span data-i18n="cat.industry">行业动态</span> <span class="count" data-catcount="industry">—</span></button>
+            </div>
           </div>
-          <div class="news-list grid grid-cols-1 lg:grid-cols-2 gap-3" id="news-list"></div>
+
+          <div class="flex items-center gap-2">
+            <div class="flex">
+              <button data-sort="heat" class="sort-btn pill" data-on="true"><span data-i18n="sort.heat">AI 排序</span></button>
+              <button data-sort="time" class="sort-btn pill" data-on="false"><span data-i18n="sort.time">时间倒序</span></button>
+            </div>
+            <div id="news-lang-filter" class="flex">
+              <button data-news-lang="all" class="newslang-btn pill" data-on="true"><span data-i18n="lang.all">全部</span></button>
+              <button data-news-lang="zh" class="newslang-btn pill" data-on="false">中</button>
+              <button data-news-lang="en" class="newslang-btn pill" data-on="false">EN</button>
+            </div>
+            <button onclick="toggleHidden()" id="hidden-toggle" class="hidden-toggle" aria-label="隐藏离题">
+              ⊘ <span id="hidden-count">0</span> <span data-i18n="news.hiddenLabel">已隐藏</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- vuln severity multi-filter (only when on vuln tab) -->
+        <div id="vuln-multifilter" class="flex items-center gap-x-3 gap-y-2 flex-wrap mb-5" style="display:none">
+          <span class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mr-1" data-i18n="filter.severity">严重度</span>
+          <button class="pill filter-chip" data-dim="severity" data-val="critical" data-on="false">CRIT</button>
+          <button class="pill filter-chip" data-dim="severity" data-val="high" data-on="false">HIGH</button>
+          <button class="pill filter-chip" data-dim="severity" data-val="medium" data-on="false">MED</button>
+          <button class="pill filter-chip" data-dim="severity" data-val="low" data-on="false">LOW</button>
+          <span style="border-left:1px solid var(--hairline); height:14px;"></span>
+          <span class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mr-1" data-i18n="filter.source">来源</span>
+          <button class="pill filter-chip" data-dim="source" data-val="cisa-kev" data-on="false">KEV</button>
+          <button class="pill filter-chip" data-dim="source" data-val="github-advisory" data-on="false">GHSA</button>
+          <button class="pill filter-chip" data-dim="source" data-val="nomi-sec" data-on="false">PoC</button>
+          <button class="pill filter-chip" data-dim="source" data-val="ossf-malpkgs" data-on="false">OSSF</button>
+          <button id="filter-clear" class="ml-auto font-mono text-[10.5px] text-paper-faint hover:text-paper uppercase tracking-widest" data-i18n="filter.clear">清空</button>
+        </div>
+
+        <!-- PANELS -->
+        <section class="panel" data-panel="news">
+          <div id="news-list"></div>
+          <div id="news-sentinel"></div>
+          <div id="news-loading" class="load-spinner" style="display:none">· · · LOADING · · ·</div>
         </section>
 
-        <!-- panel: VULN (default) -->
-        <section class="panel space-y-3" data-panel="vuln">
-          <div class="vuln-list" id="vuln-list"></div>
+        <section class="panel" data-panel="vuln" hidden>
+          <div id="vuln-list"></div>
+          <div id="vuln-sentinel"></div>
+          <div id="vuln-loading" class="load-spinner" style="display:none">· · · LOADING · · ·</div>
         </section>
 
-        <!-- panel: PAPERS -->
         <section class="panel" data-panel="papers" hidden>
-          <div class="border hairline bg-surface rounded-xl p-12 text-center">
-            <div class="font-mono text-[11px] tracking-[0.2em] uppercase text-muted mb-3" data-i18n="papers.kicker">// 状态 · 排期中</div>
-            <h3 class="text-[24px] font-semibold tracking-tight mb-2" data-i18n="papers.title">即将上线</h3>
-            <p class="text-[13.5px] text-muted max-w-md mx-auto leading-relaxed" data-i18n="papers.sub">
-              我们正在接入 arXiv <code class="font-mono text-ink">cs.CR</code>、USENIX、IEEE S&P、NDSS、CCS、RAID 与 Real World Crypto 的论文流水线，按主题与新颖度排序后呈现摘要。
+          <div class="py-16 px-8 text-center" style="border:1px solid var(--hairline);">
+            <div class="font-mono text-[10.5px] tracking-[0.22em] uppercase text-paper-faint mb-3" data-i18n="papers.kicker">// 状态 · 排期中</div>
+            <h3 class="font-display text-[34px] mb-4" style="font-variation-settings:'opsz' 60, 'wght' 400;" data-i18n="papers.title">即将上线</h3>
+            <p class="text-[14px] text-paper-dim max-w-md mx-auto leading-relaxed" data-i18n="papers.sub">
+              我们正在接入 arXiv cs.CR、USENIX、IEEE S&P、NDSS、CCS、RAID 与 Real World Crypto 的论文流水线.
             </p>
-            <div class="mt-8 flex items-center justify-center gap-x-6 gap-y-2 flex-wrap font-mono text-[10.5px] tracking-widest text-dim uppercase">
-              <span><span class="text-poc">●</span> arXiv · queued</span>
-              <span><span class="text-poc">●</span> USENIX · queued</span>
-              <span><span class="text-dim">○</span> IEEE S&amp;P</span>
-              <span><span class="text-dim">○</span> NDSS</span>
-              <span><span class="text-dim">○</span> CCS</span>
+            <div class="ed-rule mx-auto mt-6" style="background:var(--paper-faint); margin-left:auto; margin-right:auto;"></div>
+            <div class="mt-4 flex items-center justify-center gap-x-6 gap-y-2 flex-wrap font-mono text-[10px] tracking-widest text-paper-faint uppercase">
+              <span><span class="text-ok">●</span> arXiv · queued</span>
+              <span><span class="text-ok">●</span> USENIX · queued</span>
+              <span><span class="text-paper-faint">○</span> IEEE S&amp;P</span>
+              <span><span class="text-paper-faint">○</span> NDSS</span>
             </div>
           </div>
         </section>
       </main>
 
       <!-- ─────────── RIGHT RAIL ─────────── -->
-      <aside class="lg:col-span-3 space-y-6 lg:sticky lg:top-[80px] lg:self-start min-w-0">
-        <!-- heat -->
-        <section class="border hairline bg-surface rounded-xl p-5">
-          <div class="flex items-center justify-between mb-3.5">
-            <h3 class="text-[13px] font-semibold tracking-tight" data-i18n="rail.heat">热度榜</h3>
-            <span class="font-mono text-[10px] text-dim">0-100</span>
+      <aside class="lg:col-span-4 above-grain min-w-0 lg:sticky lg:top-[88px] lg:self-start space-y-10">
+        <!-- Heat board: pure typography hierarchy -->
+        <section class="heat-board">
+          <div class="heat-section-title">
+            <span><span id="heat-tab-label" data-i18n="rail.heat.news">资讯热榜</span></span>
+            <span class="text-paper-veil">01—10</span>
           </div>
-          <ol id="heat-list" class="space-y-3.5">
-            <li class="skeleton h-12"></li>
-            <li class="skeleton h-12"></li>
-            <li class="skeleton h-12"></li>
-          </ol>
+          <ol id="heat-list"></ol>
         </section>
 
-        <!-- trending keywords -->
-        <section class="border hairline bg-surface rounded-xl p-5">
-          <h3 class="text-[13px] font-semibold tracking-tight mb-3.5" data-i18n="rail.trends">趋势关键词</h3>
-          <div id="trends-list" class="flex flex-wrap gap-2"></div>
+        <!-- Trending keywords -->
+        <section>
+          <div class="heat-section-title">
+            <span data-i18n="rail.trends">趋势关键词</span>
+          </div>
+          <div id="trends-list"></div>
         </section>
 
-        <!-- pipeline -->
-        <section class="border hairline bg-surface rounded-xl p-5">
-          <h3 class="text-[13px] font-semibold tracking-tight mb-3.5" data-i18n="rail.pipeline">采集流水线</h3>
-          <dl id="pipeline-list" class="text-[12px] font-mono space-y-1.5"></dl>
+        <!-- Pipeline status -->
+        <section>
+          <div class="heat-section-title">
+            <span data-i18n="rail.pipeline">数据源</span>
+            <span id="last-sync-meta" class="footer-meta">SYNC --:--</span>
+          </div>
+          <dl id="pipeline-list" class="text-paper-dim"></dl>
         </section>
       </aside>
     </div>
 
-    <!-- ─────────── DETAIL DRAWER ─────────── -->
-    <div id="detail-overlay" class="fixed inset-0 bg-ink/30 backdrop-blur-sm z-40 hidden" aria-hidden="true"></div>
-    <aside id="detail-drawer" class="fixed top-0 right-0 h-full w-full md:w-[560px] bg-bg border-l hairline-2 z-50 translate-x-full transition-transform duration-200 ease-out overflow-y-auto" role="dialog" aria-modal="true" aria-hidden="true">
+    <!-- ─────────── DETAIL DRAWER (preserved) ─────────── -->
+    <div id="detail-overlay" class="fixed inset-0 z-40 hidden" style="background:rgba(7,6,10,0.7); backdrop-filter:blur(6px);" aria-hidden="true"></div>
+    <aside id="detail-drawer" class="fixed top-0 right-0 h-full w-full md:w-[560px] z-50 translate-x-full transition-transform duration-200 ease-out overflow-y-auto scrollbar-thin"
+           style="background:var(--ink); border-left:1px solid var(--hairline-2);"
+           role="dialog" aria-modal="true" aria-hidden="true">
       <div id="detail-content"></div>
     </aside>
 
+    <!-- ─────────── BRIEF MODAL ─────────── -->
+    <div id="brief-modal" hidden>
+      <div class="modal-backdrop" onclick="closeBrief()"></div>
+      <div class="modal-shell">
+        <article class="modal-content scrollbar-thin">
+          <header class="modal-header">
+            <div>
+              <div class="modal-date" id="brief-modal-date">— · —</div>
+              <h2 class="modal-title" data-i18n="brief.modalTitle">今日安全简报</h2>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="regenerateBrief()" class="btn-icon" title="" data-i18n-title="news.refreshBrief" aria-label="重新生成">⟳</button>
+              <button class="modal-close" onclick="closeBrief()" data-i18n="modal.close">关闭 ✕</button>
+            </div>
+          </header>
+          <div class="modal-body" id="brief-content"></div>
+        </article>
+      </div>
+    </div>
+
     <!-- ─────────── FOOTER ─────────── -->
-    <footer class="border-t hairline">
-      <div class="py-6 flex flex-wrap items-center justify-between gap-3 font-mono text-[10.5px] tracking-widest text-dim uppercase">
-        <div class="flex items-center gap-3">
-          <span>SECURITY HOT · v0.2</span>
-          <span class="text-border-2">·</span>
-          <span>build 2026.05.16</span>
-        </div>
+    <footer class="border-t hairline mt-8 py-8 above-grain">
+      <div class="flex flex-wrap items-center justify-between gap-3 footer-meta">
         <div class="flex items-center gap-4">
-          <a href="/api/manifest" class="lnk hover:text-ink">manifest.json</a>
-          <a href="/api/sources" class="lnk hover:text-ink">sources</a>
-          <a href="/docs" class="lnk hover:text-ink">api</a>
-          <a href="https://github.com/" target="_blank" class="lnk hover:text-ink">github</a>
+          <span>SECURITY·HOT  V0.3</span>
+          <span style="color:var(--paper-veil);">·</span>
+          <span>BUILD 2026.05.25</span>
+        </div>
+        <div class="flex items-center gap-5">
+          <a href="/api/manifest" class="hover:text-paper transition">/api/manifest</a>
+          <a href="/api/sources" class="hover:text-paper transition">/api/sources</a>
+          <a href="/docs" class="hover:text-paper transition">/docs</a>
         </div>
       </div>
     </footer>
@@ -637,8 +1081,7 @@ function applyI18n() {
   });
   // lang button state
   document.querySelectorAll(".lang-btn").forEach((b) => {
-    if (b.dataset.lang === lang) { b.classList.add("bg-ink", "text-bg"); b.classList.remove("text-muted"); }
-    else { b.classList.remove("bg-ink", "text-bg"); b.classList.add("text-muted"); }
+    b.setAttribute("aria-selected", b.dataset.lang === lang ? "true" : "false");
   });
 }
 document.querySelectorAll(".lang-btn").forEach((b) => {
@@ -665,7 +1108,7 @@ const state = {
   heat: [],
   sources: [],
   manifest: null,
-  activeTab: "vuln",
+  activeTab: "news",
   kind: "all",
   sort: "heat",
   newsLang: "all",
@@ -755,7 +1198,7 @@ async function expandMirrors(stripEl, articleId) {
     const mirrors = await r.json();
     container.innerHTML = mirrors.map(m => `
       <div class="py-1.5 text-xs">
-        <span class="font-mono text-dim mr-2">${escapeHtml(m.source_title)}</span>
+        <span class="font-mono text-paper-faint mr-2">${escapeHtml(m.source_title)}</span>
         <a href="${escapeHtml(m.link)}" target="_blank" rel="noopener" class="hover:underline">${escapeHtml(m.title)}</a>
       </div>
     `).join('');
@@ -765,73 +1208,59 @@ async function expandMirrors(stripEl, articleId) {
 }
 
 // ───────────────────── renderers ─────────────────────
-function renderStatsSkeleton() {
-  const grid = document.getElementById("stats-grid");
-  if (grid.children.length === 4 && !grid.querySelector(".skeleton")) return;
-  const card = `
-    <div class="stat-card border hairline bg-surface rounded-xl p-5">
-      <div class="skeleton h-3 w-20"></div>
-      <div class="skeleton h-9 w-24 mt-3"></div>
-      <div class="skeleton h-3 w-32 mt-3"></div>
-    </div>`;
-  grid.innerHTML = card.repeat(4);
-}
-renderStatsSkeleton();
-
 function renderStats() {
+  // Hero stats: "TODAY · MAY 25 · 62 articles · 14 vulns · 681 sources"
+  // No more 4-card grid — we lean into the editorial hero card.
   const d = state.today;
-  if (!d) {
-    // Don't keep shimmering forever if /api/today failed permanently.
-    if (fetchErrors.today) {
-      document.getElementById("stats-grid").innerHTML = `
-        <div class="stat-card border hairline bg-surface rounded-xl p-5 md:col-span-4 text-center">
-          <div class="font-mono text-[10.5px] tracking-widest uppercase text-crit">${t("load_fail")} · /api/today</div>
-          <div class="text-[12px] text-muted mt-2">${escapeHtml(fetchErrors.today)}</div>
-        </div>`;
+  const dateLabel = document.getElementById("hero-date-label");
+  const statsLine = document.getElementById("hero-stats");
+  const syncMeta = document.getElementById("last-sync-meta");
+
+  // Date label always reflects the selected date (not just today)
+  const sel = state.selectedDate || todayUtc();
+  const isToday = sel === todayUtc();
+  if (dateLabel) {
+    const dtSel = new Date(sel + "T00:00:00Z");
+    const monthZh = ["一","二","三","四","五","六","七","八","九","十","十一","十二"][dtSel.getUTCMonth()];
+    const monthEn = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][dtSel.getUTCMonth()];
+    const day = dtSel.getUTCDate();
+    if (lang === "zh") {
+      dateLabel.textContent = isToday ? `今日 · ${monthZh}月 ${day} 日` : `${monthZh}月 ${day} 日`;
     } else {
-      renderStatsSkeleton();
+      dateLabel.textContent = isToday ? `TODAY · ${monthEn} ${day}` : `${monthEn} ${day}`;
     }
+  }
+
+  if (!d) {
+    if (statsLine) statsLine.textContent = fetchErrors.today ? `${t("load_fail")} · /api/today` : (lang === "zh" ? "正在抓取…" : "loading…");
     return;
   }
-  const heat = d.top_heat;
-  const sev = d.sev_breakdown || {};
-  const newsBy = { zh: 0, en: 0 };
-  for (const a of state.news) (a.lang === "zh") ? newsBy.zh++ : newsBy.en++;
-  const cards = [
-    { label: t("stat.news").label,  big: d.news_today, sub: t("stat.news").footnote(newsBy) },
-    { label: t("stat.vuln").label,  big: d.vuln_today, sub: t("stat.vuln").footnote(sev) },
-    { label: t("stat.itw").label,   big: d.itw_today,  sub: t("stat.itw").footnote() },
-    { label: t("stat.heat").label,  big: heat ? heat.label : "—", sub: t("stat.heat").footnote(heat), small: true },
-  ];
-  document.getElementById("stats-grid").innerHTML = cards.map((c, i) => `
-    <div class="stat-card border hairline bg-surface rounded-xl p-5">
-      <div class="font-mono text-[10.5px] tracking-[0.14em] uppercase text-muted">${escapeHtml(c.label)}</div>
-      <div class="mt-2 ${c.small ? 'text-[20px] font-semibold tracking-tight font-mono leading-tight break-all' : 'text-[36px] font-semibold tracking-tight leading-none'}">${escapeHtml(String(c.big))}</div>
-      <div class="text-[12px] text-muted mt-2 font-mono">${escapeHtml(c.sub || "")}</div>
-    </div>
-  `).join("");
+  if (statsLine) {
+    statsLine.textContent = lang === "zh"
+      ? `${d.news_today} 篇资讯 · ${d.vuln_today} 个漏洞 · ${d.sources_alive}/${d.sources_total} 源`
+      : `${d.news_today} articles · ${d.vuln_today} vulns · ${d.sources_alive}/${d.sources_total} sources`;
+  }
 
-  // last sync stamp
-  if (d.last_fetch) {
+  // last sync stamp in the right-rail meta
+  if (syncMeta && d.last_fetch) {
     const dt = new Date(d.last_fetch);
     if (!isNaN(dt)) {
       const pad = (n) => String(n).padStart(2, "0");
-      document.getElementById("last-sync").textContent = `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
+      syncMeta.textContent = (lang === "zh" ? "更新 " : "SYNC ") + `${pad(dt.getHours())}:${pad(dt.getMinutes())}`;
     }
   }
 }
 
 function renderDateStrip() {
-  // Window of 7 days ending at state.windowEnd. The currently-selected day
-  // is highlighted (not necessarily the rightmost); rightmost is constrained
-  // not to exceed today.
+  // Horizontal timeline: hairline rule + 7 dots; selected gets a filled red
+  // dot with a soft ring; future dates are disabled and dimmed.
   const todayStr = todayUtc();
   if (!state.windowEnd) state.windowEnd = todayStr;
   if (!state.selectedDate) state.selectedDate = todayStr;
-  const out = [];
   const pad = (n) => String(n).padStart(2, "0");
   const dowZh = ["日","一","二","三","四","五","六"];
-  const dowEn = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const dowEn = ["SUN","MON","TUE","WED","THU","FRI","SAT"];
+  const out = [];
   for (let i = 6; i >= 0; i--) {
     const cellDate = shiftDate(state.windowEnd, -i);
     const isToday = cellDate === todayStr;
@@ -839,26 +1268,25 @@ function renderDateStrip() {
     const isFuture = cellDate > todayStr;
     const d = new Date(cellDate + "T00:00:00Z");
     const dow = (lang === "zh" ? dowZh : dowEn)[d.getUTCDay()];
-    const todayBadge = isToday ? ` · ${t("date.today")}` : "";
-    const meta = isToday && state.today ? `${state.today.news_today}·${state.today.vuln_today}` : "—";
     out.push(`
-      <li>
-        <button class="date-cell border hairline rounded-lg px-4 py-2 min-w-[88px] text-left bg-surface ${isFuture ? 'opacity-40 cursor-not-allowed' : ''}"
-                data-today="${isSelected}" data-date="${cellDate}" ${isFuture ? 'disabled' : ''}>
-          <div class="font-mono text-[10px] uppercase tracking-widest ${isSelected ? '' : 'text-dim'}">${dow}${todayBadge}</div>
-          <div class="date-num font-mono text-[15px] mt-0.5 ${isSelected ? '' : 'text-muted'}">${pad(d.getUTCMonth()+1)}.${pad(d.getUTCDate())}</div>
-          <div class="date-meta font-mono text-[10px] mt-0.5 ${isSelected ? '' : 'text-dim'}">${meta}</div>
+      <li class="contents">
+        <button class="date-node" aria-current="${isSelected ? 'true' : 'false'}"
+                data-date="${cellDate}" ${isFuture ? 'disabled' : ''}>
+          <span class="date-dot"></span>
+          <span class="date-dow">${dow}${isToday ? ' ·' : ''}</span>
+          <span class="date-num">${pad(d.getUTCMonth()+1)}.${pad(d.getUTCDate())}</span>
         </button>
       </li>
     `);
   }
   document.getElementById("date-strip").innerHTML = out.join("");
-  // disable next button if window is already at today
   const nextBtn = document.getElementById("date-next");
-  const atToday = state.windowEnd >= todayStr;
-  nextBtn.disabled = atToday;
-  nextBtn.classList.toggle("opacity-40", atToday);
-  nextBtn.classList.toggle("cursor-not-allowed", atToday);
+  if (nextBtn) {
+    const atToday = state.windowEnd >= todayStr;
+    nextBtn.disabled = atToday;
+    nextBtn.style.opacity = atToday ? "0.35" : "1";
+    nextBtn.style.cursor = atToday ? "not-allowed" : "pointer";
+  }
 }
 
 function vulnKindPill(v) {
@@ -876,71 +1304,60 @@ function renderVulnCard(v) {
   const pkg = v.package ? `${(v.ecosystem||'').toUpperCase()}/${v.package}` : "";
   const pocCount = (v.pocs || []).length;
   const tagsHtml = (v.tags || []).slice(0, 4).map(x => `<span class="pill-tag">${escapeHtml(x)}</span>`).join("");
-  const refsHtml = (v.references || []).slice(0, 3).map(r => `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="lnk font-mono text-[11px] text-muted hover:text-ink">${escapeHtml(r.label || new URL(r.url).hostname.replace(/^www\./,'').slice(0,18))} ↗</a>`).join('<span class="text-dim mx-1">·</span>');
+  const refsHtml = (v.references || []).slice(0, 3).map(r => `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="lnk font-mono text-[11px] text-paper-dim hover:text-paper">${escapeHtml(r.label || new URL(r.url).hostname.replace(/^www\./,'').slice(0,18))} ↗</a>`).join('<span class="text-paper-faint mx-1">·</span>');
   const summary = (v.summary || "").trim();
   const pubLine = v.published ? relTime(v.published) : "";
 
   const detailId = v.cve_id || v.ghsa_id || v.id;
+  // Editorial-style vuln card: hairline separators, serif headline, mono metadata
   return `
-    <article class="card border hairline bg-surface rounded-xl p-5 mb-3 relative overflow-hidden cursor-pointer" data-vuln="${escapeHtml(detailId)}" role="button" tabindex="0">
-      <div class="absolute left-0 top-0 bottom-0 w-[3px] bg-${sev === 'critical' ? 'crit' : sev === 'high' ? 'high' : sev === 'medium' ? 'med' : 'border-2'}"></div>
-      <div class="flex items-start justify-between gap-4">
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap mb-2">
-            <span class="${severityClass(sev)}">${escapeHtml(sevText)}</span>
-            ${vulnKindPill(v)}
-            ${v.is_kev ? `<span class="pill-tag kev">KEV</span>` : ""}
-            ${v.is_ransomware ? `<span class="pill-tag ransom">RANSOM</span>` : ""}
-            ${v.nuclei_template_url ? `<span class="pill-tag poc">NUCLEI</span>` : ""}
-            ${v.cve_id ? `<span class="font-mono text-[12px] text-muted">${escapeHtml(v.cve_id)}</span>` : v.ghsa_id ? `<span class="font-mono text-[12px] text-muted">${escapeHtml(v.ghsa_id)}</span>` : ""}
-            ${pubLine ? `<span class="font-mono text-[11px] text-dim">· ${escapeHtml(pubLine)}</span>` : ""}
-          </div>
-          <h3 class="text-[15.5px] font-medium tracking-tight leading-snug clamp-2 mb-1.5">${escapeHtml(v.title || v.id)}</h3>
-          ${summary ? `<p class="text-[13px] text-muted leading-relaxed clamp-3">${escapeHtml(summary)}</p>` : ""}
-          ${(v.affected_versions && v.affected_versions.length) ? `
-            <div class="mt-2.5 flex items-start gap-2 flex-wrap">
-              <span class="font-mono text-[10px] tracking-widest uppercase text-dim shrink-0 pt-1">${t("vuln.versions")}</span>
-              ${v.affected_versions.slice(0, 6).map(ver => `<code class="font-mono text-[11px] bg-surface-2 border hairline rounded px-1.5 py-0.5 text-ink-soft">${escapeHtml(ver)}</code>`).join("")}
-              ${v.affected_versions.length > 6 ? `<span class="font-mono text-[11px] text-dim self-center">+${v.affected_versions.length - 6}</span>` : ""}
-            </div>` : ""}
-          <div class="mt-3 grid grid-cols-2 md:grid-cols-5 gap-x-5 gap-y-2 text-[12px]">
-            <div>
-              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">${t("vuln.cvss")}</div>
-              <div class="cvss-num text-[14px] mt-0.5">${v.cvss != null ? v.cvss.toFixed(1) : '—'}</div>
-            </div>
-            <div>
-              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">EPSS</div>
-              <div class="font-mono text-[13px] mt-0.5">${v.epss_score != null ? (v.epss_score * 100).toFixed(0) + '<span class="text-dim text-[10px]">%</span>' : '<span class="text-dim">—</span>'}</div>
-            </div>
-            <div>
-              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">${t("vuln.pocs")}</div>
-              <div class="font-mono text-[13px] mt-0.5">${pocCount > 0 ? `<span class="text-poc font-semibold">${pocCount}</span>` : '<span class="text-dim">—</span>'}</div>
-            </div>
-            <div>
-              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">${t("vuln.heat")}</div>
-              <div class="font-mono text-[13px] mt-0.5 font-semibold">${v.heat}</div>
-            </div>
-            <div class="${pkg ? '' : 'opacity-60'}">
-              <div class="font-mono text-[10px] tracking-widest uppercase text-dim">${pkg ? t("vuln.pkg") : t("vuln.src")}</div>
-              <div class="font-mono text-[12px] mt-0.5 truncate">${pkg ? escapeHtml(pkg) : escapeHtml(v.source || "")}</div>
-            </div>
-          </div>
-          ${v.ai_summary ? `
-          <div class="ai-assess mt-3">
-            <div class="ai-assess-label">${t("vuln.ai_assess")}${v.ai_severity ? ` · ${t("sev." + v.ai_severity)}` : ''}</div>
-            <div class="ai-assess-text">${escapeHtml(v.ai_summary)}</div>
-          </div>` : ''}
-          ${tagsHtml ? `<div class="flex flex-wrap gap-1.5 mt-3">${tagsHtml}</div>` : ""}
-          ${refsHtml ? `<div class="mt-3 text-[11px]">${refsHtml}</div>` : ""}
+    <article class="article" data-vuln="${escapeHtml(detailId)}" role="button" tabindex="0" style="cursor:pointer;">
+      <div class="article-eyebrow">
+        <span class="sev sev-${sev}">${escapeHtml(sevText)}</span>
+        ${vulnKindPill(v)}
+        ${v.is_kev ? `<span class="pill-tag kev">KEV</span>` : ""}
+        ${v.is_ransomware ? `<span class="pill-tag ransom">RANSOM</span>` : ""}
+        ${v.nuclei_template_url ? `<span class="pill-tag nuclei">NUCLEI</span>` : ""}
+        ${v.cve_id ? `<span style="color:var(--paper-faint);">${escapeHtml(v.cve_id)}</span>` : v.ghsa_id ? `<span style="color:var(--paper-faint);">${escapeHtml(v.ghsa_id)}</span>` : ""}
+        ${pubLine ? `<span style="color:var(--paper-veil);">·</span><span>${escapeHtml(pubLine)}</span>` : ""}
+      </div>
+      <h3 class="article-title clamp-2">${escapeHtml(v.title || v.id)}</h3>
+      ${summary ? `<p class="article-summary clamp-3">${escapeHtml(summary)}</p>` : ""}
+      <div class="mt-3 grid grid-cols-2 md:grid-cols-5 gap-x-6 gap-y-3 font-mono">
+        <div>
+          <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${t("vuln.cvss")}</div>
+          <div class="text-[14px] mt-0.5 text-paper">${v.cvss != null ? v.cvss.toFixed(1) : '<span class="text-paper-faint">—</span>'}</div>
+        </div>
+        <div>
+          <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">EPSS</div>
+          <div class="text-[13px] mt-0.5 text-paper">${v.epss_score != null ? (v.epss_score * 100).toFixed(0) + '<span class="text-paper-faint text-[10px]">%</span>' : '<span class="text-paper-faint">—</span>'}</div>
+        </div>
+        <div>
+          <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${t("vuln.pocs")}</div>
+          <div class="text-[13px] mt-0.5">${pocCount > 0 ? `<span class="text-ok">${pocCount}</span>` : '<span class="text-paper-faint">—</span>'}</div>
+        </div>
+        <div>
+          <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${t("vuln.heat")}</div>
+          <div class="text-[13px] mt-0.5 text-paper">${v.heat}</div>
+        </div>
+        <div>
+          <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${pkg ? t("vuln.pkg") : t("vuln.src")}</div>
+          <div class="text-[12px] mt-0.5 text-paper-dim truncate">${pkg ? escapeHtml(pkg) : escapeHtml(v.source || "")}</div>
         </div>
       </div>
+      ${v.ai_summary ? `
+      <div class="mt-3 pl-3" style="border-left:1px solid var(--signal);">
+        <div class="font-mono text-[9.5px] tracking-[0.18em] uppercase text-signal mb-1">${t("vuln.ai_assess")}${v.ai_severity ? ` · ${t("sev." + v.ai_severity)}` : ''}</div>
+        <div class="text-paper-dim text-[13px] leading-relaxed">${escapeHtml(v.ai_summary)}</div>
+      </div>` : ''}
+      ${tagsHtml ? `<div class="flex flex-wrap gap-1.5 mt-3">${tagsHtml}</div>` : ""}
+      ${refsHtml ? `<div class="mt-3 text-[11px]">${refsHtml}</div>` : ""}
     </article>
   `;
 }
 
 function renderVulnList() {
   let items = state.kind === "all" ? state.vuln : state.vuln.filter(v => v.kind === state.kind);
-  // multi-dim: severity AND source (chip-style; empty set = "all")
   const sevSet = state.filters.severity;
   const srcSet = state.filters.source;
   if (sevSet.size > 0) items = items.filter(v => sevSet.has(v.severity));
@@ -950,21 +1367,18 @@ function renderVulnList() {
   const sorted = [...items].sort((a, b) =>
     state.sort === "heat" ? (b.heat - a.heat) : ((b.published||"") > (a.published||"") ? 1 : -1)
   );
+  state._vulnSorted = sorted;  // for infinite scroll sentinel
   const limited = sorted.slice(0, state.vulnLimit);
   const el = document.getElementById("vuln-list");
   if (limited.length === 0) {
-    el.innerHTML = `<div class="border hairline bg-surface rounded-xl p-10 text-center text-muted">${t("no_data")}</div>`;
+    el.innerHTML = `<div class="py-20 text-center" style="border:1px solid var(--hairline);">
+      <div class="font-display text-[26px] text-paper-dim" style="font-variation-settings:'opsz' 36;">${t("no_data")}</div>
+    </div>`;
     return;
   }
-  let html = limited.map(renderVulnCard).join("");
-  const remaining = sorted.length - state.vulnLimit;
-  if (remaining > 0) {
-    html += `<div class="text-center py-4"><button id="vuln-load-more" class="border hairline rounded-full px-5 py-2 text-[12px] font-mono uppercase tracking-widest text-muted hover:text-ink hover:border-2 transition">${t("load_more")} <span class="text-dim ml-1">+${remaining}</span></button></div>`;
-  }
-  el.innerHTML = html;
-  const lm = document.getElementById("vuln-load-more");
-  if (lm) lm.addEventListener("click", () => { state.vulnLimit += 40; renderVulnList(); });
-  document.getElementById("tab-vuln-count").textContent = state.vuln.length;
+  el.innerHTML = limited.map(renderVulnCard).join("");
+  const tabCount = document.getElementById("tab-vuln-count");
+  if (tabCount) tabCount.textContent = `· ${state.vuln.length}`;
   // sub-pill counts
   ["all","cve","supply","poc","itw"].forEach(k => {
     const c = k === "all" ? state.vuln.length : state.vuln.filter(v => v.kind === k).length;
@@ -978,51 +1392,46 @@ function newsCatPill(cat) {
   return `<span class="cat-pill cat-${cat}">${escapeHtml(label)}</span>`;
 }
 
-function renderNewsCard(a) {
-  const langLabel = a.lang === "zh" ? t("lang.zh_badge") : t("lang.en_badge");
-  const catPill = newsCatPill(a.llm_category);
+function renderNewsCard(a, opts = {}) {
+  const isLead = !!opts.lead;
+  const cat = a.llm_category;
+  const catLabel = cat ? (t("cat." + cat) || cat) : "";
   const showZhSummary = a.lang === "en" && a.llm_summary_zh;
+  const summary = showZhSummary ? a.llm_summary_zh : (a.summary || "");
+  const byline = a.source_title || a.source_slug || "";
+  const absTime = a.published || a.fetched_at || "";
   return `
-    <article class="card border hairline bg-surface rounded-xl p-5">
-      <div class="flex items-start gap-3">
-        <div class="font-mono text-[11px] text-muted shrink-0 w-16 pt-0.5" title="${escapeHtml(a.published || a.fetched_at || '')}">${escapeHtml(relTime(a.published))}</div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap mb-1.5">
-            ${catPill}
-            <span class="lang-badge">${langLabel}</span>
-            <span class="font-mono text-[10.5px] text-dim">${escapeHtml(a.source_title || a.source_slug)}</span>
-          </div>
-          <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener" class="block hover:text-ink">
-            <h3 class="text-[14.5px] font-medium tracking-tight leading-snug clamp-2">${escapeHtml(a.title)}</h3>
-          </a>
-          ${showZhSummary ? `<p class="text-[12px] text-ink-soft leading-relaxed mt-1.5 clamp-3">${escapeHtml(a.llm_summary_zh)}</p>` : ''}
-          ${(!showZhSummary && a.summary) ? `<p class="text-[12px] text-muted leading-relaxed mt-1 clamp-2">${escapeHtml(a.summary)}</p>` : ''}
-          ${(a.mirror_count || 0) > 0 ? `
-          <div class="mirror-strip mt-3 pt-3 border-t hairline flex items-center gap-2 text-xs text-dim cursor-pointer hover:text-fg" data-article-id="${a.id}" onclick="expandMirrors(this, ${JSON.stringify(a.id)})">
-            <div class="flex gap-1">
-              ${'<div class="w-1.5 h-1.5 rounded-full bg-muted inline-block"></div>'.repeat(Math.min(a.mirror_count, 3))}
-            </div>
-            <span class="font-mono">+${a.mirror_count} ${escapeHtml(t('news.mirrors'))}</span>
-            <span class="text-dim">· ${escapeHtml((a.mirror_source_titles || []).slice(0,3).join(' / '))}${(a.mirror_source_titles || []).length > 3 ? '…' : ''}</span>
-            <span class="ml-auto mirror-chevron">▾</span>
-          </div>
-          <div class="mirrors-expanded hidden mt-2 pl-4 border-l-2 border-stroke"></div>
-          ` : ''}
-        </div>
+    <article class="article ${isLead ? 'lead' : ''}">
+      <div class="article-eyebrow">
+        ${cat ? `<span class="article-cat cat-${cat}">${escapeHtml(catLabel)}</span>` : ''}
+        <span class="article-byline"><span class="byline-by">${lang === 'zh' ? '来自' : 'BY'}</span> ${escapeHtml(byline.toUpperCase())}</span>
+        <span style="color:var(--paper-veil);">·</span>
+        <span title="${escapeHtml(absTime)}">${escapeHtml(relTime(a.published))}</span>
+        ${a.llm_score != null ? `<span style="color:var(--paper-veil);">·</span><span class="text-paper-faint">AI ${a.llm_score}</span>` : ''}
       </div>
+      <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener">
+        <h3 class="article-title ${isLead ? '' : 'clamp-2'}">${escapeHtml(a.title)}</h3>
+      </a>
+      ${summary ? `<p class="article-summary ${isLead ? '' : 'clamp-2'}">${escapeHtml(summary)}</p>` : ''}
+      ${(a.mirror_count || 0) > 0 ? `
+        <div class="mirror-strip" data-article-id="${a.id}" onclick="expandMirrors(this, ${JSON.stringify(a.id)})">
+          ${'<span class="mirror-dot"></span>'.repeat(Math.min(a.mirror_count, 3))}
+          <span>+${a.mirror_count} ${escapeHtml(t('news.mirrors'))}</span>
+          <span style="color:var(--paper-veil);">·</span>
+          <span class="text-paper-faint">${escapeHtml((a.mirror_source_titles || []).slice(0,3).join(' / '))}${(a.mirror_source_titles || []).length > 3 ? '…' : ''}</span>
+          <span class="mirror-chevron ml-2">▾</span>
+        </div>
+        <div class="mirrors-expanded hidden"></div>
+      ` : ''}
     </article>
   `;
 }
 
 function renderNewsList() {
-  // When user types a search ≥2 chars, _searchResults holds global API
-  // results that span the full 30-day window; otherwise we use the
-  // date-filtered state.news slice.
   let items = state._searchResults !== null ? state._searchResults : state.news;
   if (state.newsLang !== "all") items = items.filter(a => a.lang === state.newsLang);
   if (state.newsCategory !== "all") items = items.filter(a => a.llm_category === state.newsCategory);
   const q = state.q.toLowerCase();
-  // Local filter is still applied for q < 2 chars (server-side took over for ≥2)
   if (q && state._searchResults === null) items = items.filter(a => (a.title||"").toLowerCase().includes(q) || (a.summary||"").toLowerCase().includes(q) || (a.source_title||"").toLowerCase().includes(q));
   const sorted = [...items].sort((a, b) => {
     if (state.sort === "time") return (b.published||"") > (a.published||"") ? 1 : -1;
@@ -1030,36 +1439,40 @@ function renderNewsList() {
     const sb = b.llm_score != null ? b.llm_score : -1;
     return sb - sa || ((b.published||"") > (a.published||"") ? 1 : -1);
   });
+  state._newsSorted = sorted;  // used by infinite-scroll sentinel to grow newsLimit
   const limited = sorted.slice(0, state.newsLimit);
   const el = document.getElementById("news-list");
-  // Banner when in global-search mode so user understands they're not seeing the date slice
+
   let searchBanner = "";
   if (state._searchResults !== null) {
-    const isZh = (typeof lang !== "undefined" && lang === "zh");
-    searchBanner = `<div class="lg:col-span-2 mb-2 px-3.5 py-2 bg-surface border hairline rounded-md text-[12px] font-mono text-dim flex items-center gap-2">
+    const isZh = lang === "zh";
+    searchBanner = `<div class="search-banner">
       <span>🔍</span>
-      <span>${isZh ? "全局搜索" : "Global search"}: <span class="text-ink">"${escapeHtml(state.q)}"</span> · ${state._searchResults.length} ${isZh ? "条结果（跨 30 天）" : "results (30-day window)"}</span>
-      <button class="ml-auto underline hover:text-ink" onclick="document.getElementById('search').value=''; state.q=''; state._searchResults=null; renderNewsList(); renderVulnList();">${isZh ? "清除" : "Clear"}</button>
+      <span>${isZh ? "全局搜索" : "Global search"}: <span class="text-paper">"${escapeHtml(state.q)}"</span> · ${state._searchResults.length} ${isZh ? "条结果 · 跨 30 天" : "results · 30-day window"}</span>
+      <button class="clear-btn" onclick="document.getElementById('search').value=''; state.q=''; state._searchResults=null; renderNewsList(); renderVulnList();">${isZh ? "清除" : "Clear"}</button>
     </div>`;
   }
+
   if (limited.length === 0) {
-    el.innerHTML = searchBanner + `<div class="border hairline bg-surface rounded-xl p-10 text-center text-muted lg:col-span-2">${t("no_data")}</div>`;
+    el.innerHTML = searchBanner + `<div class="py-20 text-center" style="border:1px solid var(--hairline);">
+      <div class="font-display text-[26px] text-paper-dim" style="font-variation-settings:'opsz' 36;">${t("no_data")}</div>
+    </div>`;
   } else {
-    let html = searchBanner + limited.map(renderNewsCard).join("");
-    const remaining = sorted.length - state.newsLimit;
-    if (remaining > 0) {
-      html += `<div class="text-center py-4 lg:col-span-2"><button id="news-load-more" class="border hairline rounded-full px-5 py-2 text-[12px] font-mono uppercase tracking-widest text-muted hover:text-ink hover:border-2 transition">${t("load_more")} <span class="text-dim ml-1">+${remaining}</span></button></div>`;
-    }
+    // First article = lead (only when sorting by AI rank, not by time).
+    // Lead gets drop-cap + larger headline.
+    const isLeadEligible = state.sort === "heat" && state._searchResults === null && state.newsCategory === "all";
+    let html = searchBanner;
+    html += limited.map((a, i) => renderNewsCard(a, { lead: i === 0 && isLeadEligible })).join("");
     el.innerHTML = html;
-    const lm = document.getElementById("news-load-more");
-    if (lm) lm.addEventListener("click", () => { state.newsLimit += 40; renderNewsList(); });
   }
-  document.getElementById("tab-news-count").textContent = state.news.length;
-  // category counts
-  const cats = ["all", "incident", "vuln", "supply-chain", "research", "industry"];
-  cats.forEach(c => {
+
+  // tab counts
+  const tabCount = document.getElementById("tab-news-count");
+  if (tabCount) tabCount.textContent = `· ${state.news.length}`;
+  // category counts (live with state.news; not _searchResults)
+  ["all", "incident", "vuln", "supply-chain", "research", "industry"].forEach(c => {
     const count = c === "all" ? state.news.length : state.news.filter(a => a.llm_category === c).length;
-    document.querySelectorAll(`[data-catcount="${c}"]`).forEach(n => n.textContent = count);
+    document.querySelectorAll(`[data-catcount="${c}"]`).forEach(n => n.textContent = `· ${count}`);
   });
 }
 
@@ -1092,7 +1505,7 @@ async function toggleHidden() {
         ? `${items.length} 篇被判离题的文章 · 点击"⊘"按钮回到正常视图`
         : `${items.length} hidden off-topic articles · click ⊘ to return`;
       container.innerHTML = `
-        <div class="p-3 mb-3 bg-surface border hairline rounded text-xs text-dim lg:col-span-2">
+        <div class="p-3 mb-3 bg-surface border hairline rounded text-xs text-paper-faint lg:col-span-2">
           ${bannerText}
         </div>
         ${items.map(renderNewsCard).join('')}
@@ -1115,30 +1528,32 @@ document.addEventListener('DOMContentLoaded', () => {
 function renderHeat() {
   const el = document.getElementById("heat-list");
   if (!state.heat.length) {
-    el.innerHTML = `<li class="text-[12px] text-muted">${t("no_data")}</li>`;
+    el.innerHTML = `<li class="py-6 text-paper-faint" style="font-family:'Source Serif 4',serif;">${t("no_data")}</li>`;
     return;
   }
-  const maxScore = state.heat[0]?.score || 1;
+  // Pure typography ranking — no progress bars. Top 3 ranks render in signal red.
   el.innerHTML = state.heat.map(h => {
-    const pct = Math.max(8, Math.round((h.score / maxScore) * 100));
-    const cls = h.kind_color || "muted";
-    // News heat items have h.link (open article); vuln heat items have h.cve_id (open detail).
     const hrefAttr = h.link ? `href="${escapeHtml(h.link)}" target="_blank" rel="noopener"` : `href="#"`;
     const dataAttr = h.link ? "" : `data-vuln="${escapeHtml(h.cve_id || h.label)}"`;
+    const cat = h.category ? `<span style="color:var(--paper-faint);">${escapeHtml(h.category.toUpperCase())}</span>` : '';
     return `
       <li>
-        <a ${hrefAttr} ${dataAttr} class="block group cursor-pointer">
-          <div class="flex items-baseline justify-between gap-2 mb-1">
-            <span class="font-mono text-[10px] text-dim">${String(h.rank).padStart(2,'0')}</span>
-            <span class="font-mono text-[11px] tabular-nums text-ink-soft">${h.score}</span>
-          </div>
-          <div class="font-mono text-[12.5px] truncate">${escapeHtml(h.label)}</div>
-          <div class="hb-bar ${cls} mt-1.5"><i style="width:${pct}%"></i></div>
-          ${h.category ? `<div class="text-[10.5px] text-muted mt-1 uppercase tracking-wider font-mono">${escapeHtml(h.category)}</div>` : ""}
+        <a ${hrefAttr} ${dataAttr} class="heat-row">
+          <span class="heat-rank">${String(h.rank).padStart(2,'0')}</span>
+          <span>
+            <span class="heat-label">${escapeHtml(h.label)}</span>
+            <span class="heat-meta">
+              ${cat}${cat ? '<span style="color:var(--paper-veil); margin:0 6px;">·</span>' : ''}
+              <span class="score">${h.score}</span>
+            </span>
+          </span>
         </a>
       </li>
     `;
   }).join("");
+  // Update rail header label to reflect which board we're showing
+  const railLabel = document.getElementById("heat-tab-label");
+  if (railLabel) railLabel.textContent = t(state.activeTab === "news" ? "rail.heat.news" : "rail.heat.vuln");
 }
 
 function renderTrends() {
@@ -1160,11 +1575,11 @@ function renderTrends() {
   }
   const sorted = Object.entries(freq).filter(([,c]) => c >= 2).sort((a, b) => b[1] - a[1]).slice(0, 12);
   if (sorted.length === 0) {
-    el.innerHTML = `<span class="text-[12px] text-muted">${t("no_data")}</span>`;
+    el.innerHTML = `<span class="text-[12px] text-paper-dim">${t("no_data")}</span>`;
     return;
   }
   el.innerHTML = sorted.map(([word, count]) =>
-    `<button class="trend-tag" data-trend="${escapeHtml(word)}">${escapeHtml(word)} <span class="text-dim ml-1">${count}</span></button>`
+    `<button class="trend-tag" data-trend="${escapeHtml(word)}">${escapeHtml(word)} <span class="text-paper-faint ml-1">${count}</span></button>`
   ).join("");
 }
 
@@ -1176,16 +1591,16 @@ function renderPipeline() {
   if (m.fetched_at) {
     const d = new Date(m.fetched_at);
     const pad = (n) => String(n).padStart(2,'0');
-    lines.push(`<div class="flex items-center justify-between gap-2"><dt class="text-muted">${t("pipe.last")}</dt><dd>${!isNaN(d) ? `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : '—'}</dd></div>`);
+    lines.push(`<div class="flex items-center justify-between gap-2"><dt class="text-paper-dim">${t("pipe.last")}</dt><dd>${!isNaN(d) ? `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}` : '—'}</dd></div>`);
   }
   for (const r of (m.results || [])) {
     // Per-fetcher refresh button: ⟳ on the right edge of each row.
     // Hidden by default; appears on row hover so the rail stays calm.
     lines.push(`<div class="group flex items-center justify-between gap-2">
-      <dt class="text-muted shrink-0">${escapeHtml(r.name)}</dt>
+      <dt class="text-paper-dim shrink-0">${escapeHtml(r.name)}</dt>
       <div class="flex items-center gap-1.5 min-w-0">
-        <dd class="${r.ok ? '' : 'text-crit'} truncate">${r.ok ? r.count + ' · ' + r.elapsed_s + 's' : (r.error || 'err').slice(0,16)}</dd>
-        <button class="refresh-btn shrink-0 opacity-0 group-hover:opacity-100 inline-flex items-center justify-center w-5 h-5 rounded text-muted hover:text-ink transition"
+        <dd class="${r.ok ? '' : 'text-signal'} truncate">${r.ok ? r.count + ' · ' + r.elapsed_s + 's' : (r.error || 'err').slice(0,16)}</dd>
+        <button class="refresh-btn shrink-0 opacity-0 group-hover:opacity-100 inline-flex items-center justify-center w-5 h-5 rounded text-paper-dim hover:text-paper transition"
                 data-refresh-only="${escapeHtml(r.name)}"
                 title="${t('refresh.title')} · ${escapeHtml(r.name)}"
                 aria-label="Refresh ${escapeHtml(r.name)}">
@@ -1218,11 +1633,11 @@ function ensureToastBoxRefresh() {
 }
 function showRefreshToast(msg, type = "ok", durationMs = 4000) {
   const box = ensureToastBoxRefresh();
-  const colorClass = type === "ok" ? "border-poc/40 text-ink"
-                    : type === "warn" ? "border-high/40 text-ink"
-                    : "border-crit/40 text-ink";
+  const colorClass = type === "ok" ? "border-poc/40 text-paper"
+                    : type === "warn" ? "border-high/40 text-paper"
+                    : "border-crit/40 text-paper";
   const div = document.createElement("div");
-  div.className = `border-2 hairline-2 bg-surface rounded-lg px-3.5 py-2 shadow text-[12px] font-mono ${colorClass}`;
+  div.className = `hairline-2 bg-surface rounded-lg px-3.5 py-2 shadow text-[12px] font-mono ${colorClass}`;
   div.textContent = msg;
   box.appendChild(div);
   setTimeout(() => { div.style.opacity = "0"; div.style.transition = "opacity .3s"; }, durationMs - 300);
@@ -1386,42 +1801,72 @@ async function fetchBrief() {
 }
 
 function renderBrief() {
-  const container = document.getElementById("daily-brief");
+  // Modal-target render. Updates the modal date label + body content.
+  // The modal itself only shows when openBrief() is called; this function
+  // is safe to call at any time (e.g. after fetchBrief).
   const content = document.getElementById("brief-content");
-  const btn = document.getElementById("brief-toggle");
+  const dateLabel = document.getElementById("brief-modal-date");
+  if (!content) return;
+
+  const sel = state.briefDate || state.selectedDate || todayUtc();
+  if (dateLabel) {
+    const dt = new Date(sel + "T00:00:00Z");
+    const monthEn = ["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"][dt.getUTCMonth()];
+    const day = dt.getUTCDate();
+    const yr = dt.getUTCFullYear();
+    dateLabel.textContent = lang === "zh" ? `${yr}年${dt.getUTCMonth()+1}月${day}日` : `${monthEn} ${day}, ${yr}`;
+  }
+
   const briefs = state.brief || {};
   const cats = Object.keys(briefs);
-  // Always show the container so the ⟳ refresh button stays reachable on
-  // historical dates (which may have no brief generated yet).
-  container.style.display = "";
-  content.style.display = state.briefCollapsed ? "none" : "";
-  btn.textContent = state.briefCollapsed ? "▶" : "▼";
   if (cats.length === 0) {
     const dateStr = state.briefDate || state.selectedDate || "";
-    const msg = (typeof lang !== "undefined" && lang === "zh")
-      ? `${dateStr} 暂无简报，点 ⟳ 按钮生成（需要 refresh token）`
-      : `No brief for ${dateStr} yet — click ⟳ to generate (refresh token required)`;
-    content.innerHTML = `<div class="text-[12.5px] text-dim italic py-2">${escapeHtml(msg)}</div>`;
+    const msg = lang === "zh"
+      ? `${dateStr} 暂无简报。点击右上 ⟳ 重新生成（需要 .env 里的 SECURITY_HOT_REFRESH_TOKEN）`
+      : `No brief for ${dateStr} yet. Click the ⟳ button above to generate (requires SECURITY_HOT_REFRESH_TOKEN in .env)`;
+    content.innerHTML = `<div class="py-12 text-center">
+      <div class="font-display text-[24px] text-paper-dim mb-2" style="font-variation-settings:'opsz' 60;">${lang === 'zh' ? '今天还没有人写' : 'Nothing here yet'}</div>
+      <p class="font-mono text-[11.5px] tracking-[0.08em] text-paper-faint max-w-md mx-auto">${escapeHtml(msg)}</p>
+    </div>`;
     return;
   }
-  content.innerHTML = cats.map(cat => {
+  // Display categories in canonical order
+  const order = ["incident", "vuln", "supply-chain", "research", "industry"];
+  const sortedCats = order.filter(c => cats.includes(c)).concat(cats.filter(c => !order.includes(c)));
+  content.innerHTML = sortedCats.map(cat => {
     const b = briefs[cat];
     const label = (CAT_LABELS[cat] || (() => cat))();
-    const borderCls = BRIEF_BORDER[cat] || "border-dim";
     return `
-      <div class="border-l-2 ${borderCls} pl-4">
-        <div class="flex items-center gap-2 mb-1.5">
-          <span class="cat-pill cat-${cat}">${escapeHtml(label)}</span>
-          <span class="font-mono text-[10.5px] text-dim">${b.article_count || 0} articles</span>
+      <section class="brief-section">
+        <div class="brief-section-head">
+          <div class="brief-cat cat-${cat}"><span class="marker"></span>${escapeHtml(label)}</div>
+          <div class="brief-count">${b.article_count || 0} ${lang === 'zh' ? '篇' : 'articles'}</div>
         </div>
-        <div class="text-[13px] text-ink-soft leading-relaxed whitespace-pre-line">${escapeHtml(b.text || "")}</div>
-      </div>`;
+        <div class="brief-text">${escapeHtml(b.text || "")}</div>
+      </section>`;
   }).join("");
 }
 
-document.getElementById("brief-toggle").addEventListener("click", () => {
-  state.briefCollapsed = !state.briefCollapsed;
-  renderBrief();
+// — Brief modal open/close —
+function openBrief() {
+  const m = document.getElementById("brief-modal");
+  if (!m) return;
+  // Ensure brief data for the currently-selected date is loaded
+  fetchBrief().then(() => renderBrief());
+  m.hidden = false;
+  document.body.style.overflow = "hidden";
+}
+function closeBrief() {
+  const m = document.getElementById("brief-modal");
+  if (!m) return;
+  m.hidden = true;
+  document.body.style.overflow = "";
+}
+// Open trigger
+document.getElementById("open-brief")?.addEventListener("click", openBrief);
+// ESC to close
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeBrief();
 });
 
 async function regenerateBrief() {
@@ -1532,34 +1977,36 @@ function renderAll() {
 }
 
 // ───────────────────── interactivity ─────────────────────
-// tabs
-document.querySelectorAll(".tab-pill").forEach(b => {
-  b.addEventListener("click", () => {
-    document.querySelectorAll(".tab-pill").forEach(x => x.setAttribute("aria-selected", "false"));
-    b.setAttribute("aria-selected", "true");
-    state.activeTab = b.dataset.tab;
-    document.querySelectorAll(".panel").forEach(p => {
-      if (p.dataset.panel === state.activeTab) p.removeAttribute("hidden"); else p.setAttribute("hidden", "");
-    });
-    document.getElementById("vuln-subfilter").style.display = state.activeTab === "vuln" ? "" : "none";
-    document.getElementById("vuln-multifilter").style.display = state.activeTab === "vuln" ? "" : "none";
-    document.getElementById("news-catfilter").style.display = state.activeTab === "news" ? "" : "none";
-    if (state.activeTab === "news") {
-      state.newsCategory = "all";
-      document.querySelectorAll("#news-catfilter .sub-pill").forEach(x => x.setAttribute("data-on", x.dataset.cat === "all" ? "true" : "false"));
-    }
-    const nlf = document.getElementById("news-lang-filter");
-    if (state.activeTab === "news") nlf.removeAttribute("hidden"); else nlf.setAttribute("hidden", "");
-    // Heat board data source switches per-tab: news → AI-ranked articles, vuln → CVE heat
-    if (typeof fetchOne === "function") fetchOne("heat");
+// tabs (new editorial tab buttons: .tab-btn, aria-selected)
+function setActiveTab(tab) {
+  state.activeTab = tab;
+  document.querySelectorAll(".tab-btn").forEach(x => {
+    x.setAttribute("aria-selected", x.dataset.tab === tab ? "true" : "false");
   });
+  document.querySelectorAll(".panel").forEach(p => {
+    if (p.dataset.panel === tab) p.removeAttribute("hidden");
+    else p.setAttribute("hidden", "");
+  });
+  // Contextual filter rows: only news shows category pills; vuln shows kind + severity
+  document.getElementById("vuln-subfilter").style.display    = tab === "vuln" ? "flex" : "none";
+  document.getElementById("vuln-multifilter").style.display  = tab === "vuln" ? "flex" : "none";
+  document.getElementById("news-catfilter").style.display    = tab === "news" ? "flex" : "none";
+  document.getElementById("news-lang-filter").style.display  = tab === "news" ? "flex" : "none";
+  document.getElementById("hidden-toggle").style.display     = tab === "news" ? "inline-flex" : "none";
+  // Heat board switches data source per-tab
+  if (typeof fetchOne === "function") fetchOne("heat");
+}
+document.querySelectorAll(".tab-btn").forEach(b => {
+  b.addEventListener("click", () => setActiveTab(b.dataset.tab));
 });
+// Initial state: news (default), align filter row visibility
+setActiveTab(state.activeTab);
 
-// sub-pill (vuln class) — scoped to #vuln-subfilter to avoid
-// cross-contamination with news category pills that share .sub-pill.
-document.querySelectorAll("#vuln-subfilter .sub-pill").forEach(b => {
+// kind filter (vuln tab) — scoped to #vuln-subfilter to avoid cross-firing
+// with the news category pills which share the .pill class.
+document.querySelectorAll("#vuln-subfilter .pill").forEach(b => {
   b.addEventListener("click", () => {
-    document.querySelectorAll("#vuln-subfilter .sub-pill").forEach(x => x.setAttribute("data-on", "false"));
+    document.querySelectorAll("#vuln-subfilter .pill").forEach(x => x.setAttribute("data-on", "false"));
     b.setAttribute("data-on", "true");
     state.kind = b.dataset.kind;
     renderVulnList();
@@ -1589,13 +2036,12 @@ document.getElementById("filter-clear").addEventListener("click", () => {
   renderVulnList();
 });
 
-// sort
+// sort — switch via data-on (CSS handles selected styling)
 document.querySelectorAll(".sort-btn").forEach(b => {
   b.addEventListener("click", () => {
     state.sort = b.dataset.sort;
     document.querySelectorAll(".sort-btn").forEach(x => {
-      if (x.dataset.sort === state.sort) { x.classList.add("bg-surface-2", "text-ink"); x.classList.remove("text-muted"); }
-      else { x.classList.remove("bg-surface-2", "text-ink"); x.classList.add("text-muted"); }
+      x.setAttribute("data-on", x.dataset.sort === state.sort ? "true" : "false");
     });
     renderVulnList(); renderNewsList();
   });
@@ -1606,20 +2052,20 @@ document.querySelectorAll(".newslang-btn").forEach(b => {
   b.addEventListener("click", () => {
     state.newsLang = b.dataset.newsLang;
     document.querySelectorAll(".newslang-btn").forEach(x => {
-      if (x.dataset.newsLang === state.newsLang) { x.classList.add("bg-surface-2", "text-ink"); x.classList.remove("text-muted"); }
-      else { x.classList.remove("bg-surface-2", "text-ink"); x.classList.add("text-muted"); }
+      x.setAttribute("data-on", x.dataset.newsLang === state.newsLang ? "true" : "false");
     });
     renderNewsList();
   });
 });
 
-// news category sub-filter
+// news category — scoped to #news-catfilter; targets .pill
 document.getElementById("news-catfilter").addEventListener("click", (e) => {
   const btn = e.target.closest("[data-cat]");
   if (!btn) return;
-  document.querySelectorAll("#news-catfilter .sub-pill").forEach(x => x.setAttribute("data-on", "false"));
+  document.querySelectorAll("#news-catfilter .pill").forEach(x => x.setAttribute("data-on", "false"));
   btn.setAttribute("data-on", "true");
   state.newsCategory = btn.dataset.cat;
+  state.newsLimit = 40;  // reset pagination on filter change
   renderNewsList();
 });
 
@@ -1738,10 +2184,10 @@ function renderToasts() {
   box.innerHTML = keys.map(k => `
     <div class="border hairline-2 bg-surface rounded-lg px-4 py-3 shadow text-[12px]">
       <div class="flex items-center justify-between mb-1">
-        <span class="font-mono text-[10px] tracking-widest uppercase text-crit">${t("load_fail")} · ${escapeHtml(k)}</span>
-        <button class="toast-retry font-mono text-[10px] tracking-widest uppercase text-ink border hairline rounded px-2 py-px hover:bg-surface-2" data-key="${escapeHtml(k)}">${t("retry")}</button>
+        <span class="font-mono text-[10px] tracking-widest uppercase text-signal">${t("load_fail")} · ${escapeHtml(k)}</span>
+        <button class="toast-retry font-mono text-[10px] tracking-widest uppercase text-paper border hairline rounded px-2 py-px hover:surface-2" data-key="${escapeHtml(k)}">${t("retry")}</button>
       </div>
-      <div class="text-muted text-[11.5px] break-all">${escapeHtml(fetchErrors[k])}</div>
+      <div class="text-paper-dim text-[11.5px] break-all">${escapeHtml(fetchErrors[k])}</div>
     </div>
   `).join("");
   box.querySelectorAll(".toast-retry").forEach(btn => {
@@ -1829,22 +2275,22 @@ function renderDetail(v) {
   const epssP = v.epss_percentile != null ? `(p${(v.epss_percentile * 100).toFixed(1)})` : "";
   const refs = (v.references || []).map(r => `
     <li><a class="lnk text-[12.5px] block py-1 truncate" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.label || r.url)} ↗</a></li>
-  `).join("") || `<li class="text-[12.5px] text-muted">—</li>`;
+  `).join("") || `<li class="text-[12.5px] text-paper-dim">—</li>`;
   const pocs = (v.pocs || []).map(p => `
     <li class="py-1 flex items-baseline justify-between gap-3">
       <a class="lnk text-[12.5px] font-mono truncate" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.title || p.url)} ↗</a>
-      <span class="font-mono text-[11px] text-muted shrink-0">★ ${p.stars}</span>
+      <span class="font-mono text-[11px] text-paper-dim shrink-0">★ ${p.stars}</span>
     </li>
-  `).join("") || `<li class="text-[12.5px] text-muted">—</li>`;
+  `).join("") || `<li class="text-[12.5px] text-paper-dim">—</li>`;
   const nuclei = v.nuclei_template_url
     ? `<a class="lnk text-[12.5px] font-mono break-all" href="${escapeHtml(v.nuclei_template_url)}" target="_blank" rel="noopener">${escapeHtml(v.nuclei_template_url)} ↗</a>`
-    : `<span class="text-[12.5px] text-muted">—</span>`;
+    : `<span class="text-[12.5px] text-paper-dim">—</span>`;
 
   return `
     <div class="p-6 lg:p-8">
       <div class="flex items-center justify-between mb-4">
-        <button onclick="closeDetailDrawer()" class="font-mono text-[11px] uppercase tracking-widest text-muted hover:text-ink">← ${t("detail.close")}</button>
-        <span class="font-mono text-[10.5px] text-dim">${escapeHtml(v.source)}</span>
+        <button onclick="closeDetailDrawer()" class="font-mono text-[11px] uppercase tracking-widest text-paper-dim hover:text-paper">← ${t("detail.close")}</button>
+        <span class="font-mono text-[10.5px] text-paper-faint">${escapeHtml(v.source)}</span>
       </div>
       <div class="flex items-center gap-2 flex-wrap mb-3">
         <span class="${severityClass(sev)}">${t("sev." + sev)}</span>
@@ -1854,8 +2300,8 @@ function renderDetail(v) {
         ${v.is_supply_chain ? `<span class="pill-tag supply">SUPPLY</span>` : ""}
       </div>
       <h2 class="text-[22px] font-semibold tracking-tight leading-tight mb-1">${escapeHtml(v.title || v.id)}</h2>
-      <div class="font-mono text-[12px] text-muted mb-4">${escapeHtml(v.cve_id || v.ghsa_id || v.id)}${v.published ? ` · ${escapeHtml(relTime(v.published))}` : ""}</div>
-      ${v.summary ? `<p class="text-[13.5px] text-ink-soft leading-relaxed mb-4 whitespace-pre-line">${escapeHtml(v.summary)}</p>` : ""}
+      <div class="font-mono text-[12px] text-paper-dim mb-4">${escapeHtml(v.cve_id || v.ghsa_id || v.id)}${v.published ? ` · ${escapeHtml(relTime(v.published))}` : ""}</div>
+      ${v.summary ? `<p class="text-[13.5px] text-paper-dim leading-relaxed mb-4 whitespace-pre-line">${escapeHtml(v.summary)}</p>` : ""}
 
       ${v.ai_summary ? `
       <div class="ai-assess mb-6">
@@ -1865,40 +2311,40 @@ function renderDetail(v) {
 
       <div class="grid grid-cols-2 gap-4 mb-6">
         <div>
-          <div class="font-mono text-[10px] tracking-widest uppercase text-dim mb-1">CVSS</div>
+          <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">CVSS</div>
           <div class="font-mono text-[18px]">${v.cvss != null ? v.cvss.toFixed(1) : "—"}</div>
         </div>
         <div>
-          <div class="font-mono text-[10px] tracking-widest uppercase text-dim mb-1">EPSS</div>
-          <div class="font-mono text-[18px]">${epss} <span class="text-[11px] text-muted">${epssP}</span></div>
+          <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">EPSS</div>
+          <div class="font-mono text-[18px]">${epss} <span class="text-[11px] text-paper-dim">${epssP}</span></div>
         </div>
         <div>
-          <div class="font-mono text-[10px] tracking-widest uppercase text-dim mb-1">${t("vuln.heat")}</div>
+          <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">${t("vuln.heat")}</div>
           <div class="font-mono text-[18px]">${v.heat}</div>
         </div>
         <div>
-          <div class="font-mono text-[10px] tracking-widest uppercase text-dim mb-1">${t("detail.signals")}</div>
+          <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">${t("detail.signals")}</div>
           <div class="font-mono text-[12px]">HN ${v.hn_mentions || 0} · Masto ${v.masto_mentions || 0}</div>
         </div>
       </div>
 
       ${(v.affected_versions && v.affected_versions.length) ? `
       <section class="mb-6">
-        <h3 class="font-mono text-[11px] tracking-widest uppercase text-muted mb-2">${t("vuln.affected")} <span class="text-dim">(${v.affected_versions.length})</span></h3>
+        <h3 class="font-mono text-[11px] tracking-widest uppercase text-paper-dim mb-2">${t("vuln.affected")} <span class="text-paper-faint">(${v.affected_versions.length})</span></h3>
         <div class="flex flex-wrap gap-1.5">
-          ${v.affected_versions.map(ver => `<code class="font-mono text-[12px] bg-surface-2 border hairline rounded px-2 py-0.5 text-ink-soft">${(v.package ? escapeHtml(v.package) + '@' : '')}${escapeHtml(ver)}</code>`).join("")}
+          ${v.affected_versions.map(ver => `<code class="font-mono text-[12px] bg-surface-2 border hairline rounded px-2 py-0.5 text-paper-dim">${(v.package ? escapeHtml(v.package) + '@' : '')}${escapeHtml(ver)}</code>`).join("")}
         </div>
       </section>` : ""}
       <section class="mb-6">
-        <h3 class="font-mono text-[11px] tracking-widest uppercase text-muted mb-2">${t("detail.nuclei")}</h3>
+        <h3 class="font-mono text-[11px] tracking-widest uppercase text-paper-dim mb-2">${t("detail.nuclei")}</h3>
         ${nuclei}
       </section>
       <section class="mb-6">
-        <h3 class="font-mono text-[11px] tracking-widest uppercase text-muted mb-2">${t("detail.pocs")} <span class="text-dim">(${(v.pocs||[]).length})</span></h3>
+        <h3 class="font-mono text-[11px] tracking-widest uppercase text-paper-dim mb-2">${t("detail.pocs")} <span class="text-paper-faint">(${(v.pocs||[]).length})</span></h3>
         <ul class="divide-y hairline">${pocs}</ul>
       </section>
       <section class="mb-6">
-        <h3 class="font-mono text-[11px] tracking-widest uppercase text-muted mb-2">${t("detail.refs")}</h3>
+        <h3 class="font-mono text-[11px] tracking-widest uppercase text-paper-dim mb-2">${t("detail.refs")}</h3>
         <ul class="divide-y hairline">${refs}</ul>
       </section>
     </div>
@@ -1908,12 +2354,12 @@ function renderDetail(v) {
 async function showDetail(vulnId) {
   state.openDetailId = vulnId;
   syncUrl();
-  openDetailDrawer(`<div class="p-8 text-center text-muted font-mono text-[11px] uppercase tracking-widest">${t("detail.loading")}…</div>`);
+  openDetailDrawer(`<div class="p-8 text-center text-paper-dim font-mono text-[11px] uppercase tracking-widest">${t("detail.loading")}…</div>`);
   try {
     const v = await api(`/api/vuln/${encodeURIComponent(vulnId)}`);
     openDetailDrawer(renderDetail(v));
   } catch (e) {
-    openDetailDrawer(`<div class="p-8 text-center text-crit font-mono text-[11.5px]">${t("detail.err")}: ${escapeHtml(e.message || String(e))}</div>`);
+    openDetailDrawer(`<div class="p-8 text-center text-signal font-mono text-[11.5px]">${t("detail.err")}: ${escapeHtml(e.message || String(e))}</div>`);
   }
 }
 
@@ -1948,7 +2394,39 @@ async function boot() {
   if (urlDetail && /^[A-Z0-9-]+$/i.test(urlDetail)) {
     showDetail(urlDetail);
   }
+  // Wire infinite-scroll observers once the lists exist
+  installInfiniteScroll();
 }
+
+// ─── Infinite scroll ──────────────────────────────────────────────────────
+// Replaces the old "load more" button. Each panel has a sentinel <div> at
+// the bottom; when it enters the viewport we grow the limit and re-render.
+function installInfiniteScroll() {
+  const newsSentinel = document.getElementById("news-sentinel");
+  const vulnSentinel = document.getElementById("vuln-sentinel");
+  const obs = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      if (e.target.id === "news-sentinel") {
+        // Stop bumping if we've already shown everything in the sorted list
+        const total = state._newsSorted ? state._newsSorted.length : state.news.length;
+        if (state.newsLimit < total) {
+          state.newsLimit += 40;
+          renderNewsList();
+        }
+      } else if (e.target.id === "vuln-sentinel") {
+        const total = state._vulnSorted ? state._vulnSorted.length : state.vuln.length;
+        if (state.vulnLimit < total) {
+          state.vulnLimit += 40;
+          renderVulnList();
+        }
+      }
+    }
+  }, { rootMargin: "400px 0px" });
+  if (newsSentinel) obs.observe(newsSentinel);
+  if (vulnSentinel) obs.observe(vulnSentinel);
+}
+
 boot();
 </script>
 </body>
