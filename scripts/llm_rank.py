@@ -136,7 +136,8 @@ def _extract_json(content: str) -> dict:
         raise
 
 
-async def _llm_call(client, system_prompt, user_msg, base_url, api_key, model, timeout):
+async def _llm_call(client, system_prompt, user_msg, base_url, api_key, model, timeout,
+                    max_retries: int = 3):
     body = {
         "model": model,
         "messages": [
@@ -148,10 +149,18 @@ async def _llm_call(client, system_prompt, user_msg, base_url, api_key, model, t
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     url = f"{base_url.rstrip('/')}/chat/completions"
-    r = await client.post(url, json=body, headers=headers, timeout=timeout)
-    r.raise_for_status()
-    content = r.json()["choices"][0]["message"]["content"]
-    return _extract_json(content)
+    last_exc: Exception | None = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            r = await client.post(url, json=body, headers=headers, timeout=timeout)
+            r.raise_for_status()
+            content = r.json()["choices"][0]["message"]["content"]
+            return _extract_json(content)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)
+    raise last_exc
 
 
 def _get_config():
