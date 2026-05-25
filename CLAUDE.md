@@ -9,20 +9,26 @@
 .
 ├── backend/
 │   ├── app/
-│   │   ├── main.py            # FastAPI app + 静态挂载
-│   │   ├── data.py            # 缓存读取 + 归一化
-│   │   └── models.py          # Pydantic schema
-│   └── cache/                 # fetcher 落地的 JSON 快照
-│       ├── kev.json           # CISA KEV
-│       ├── ghsa.json          # GitHub Security Advisories
-│       ├── pocs.json          # nomi-sec PoC mirror
-│       ├── itw.json           # inthewild.io (目前空)
-│       ├── malpkgs.json       # ossf/malicious-packages commits
-│       ├── heat.json          # cvecrowd (目前空)
-│       ├── news.json          # 22 个精选 RSS 源
-│       ├── vuln_ai.json       # 漏洞 AI 评估结果
-│       ├── daily_brief.json   # 每日分类日报
-│       └── manifest.json      # 各 fetcher 状态
+│   │   ├── main.py            # FastAPI app + 静态挂载 + 3 new endpoints
+│   │   ├── data.py            # SQLite news loader + legacy JSON for vuln
+│   │   └── models.py          # Pydantic schema (Article 扩 is_relevant/mirror_count)
+│   ├── cache/
+│   │   ├── news.db            # ← SQLite 主存 (WAL + FTS5) - 行业资讯权威数据
+│   │   ├── kev.json           # CISA KEV
+│   │   ├── ghsa.json          # GitHub Security Advisories
+│   │   ├── pocs.json          # nomi-sec PoC mirror
+│   │   ├── itw.json           # inthewild.io (目前空)
+│   │   ├── heat.json          # cvecrowd (目前空)
+│   │   ├── epss.json          # FIRST.org EPSS 每日 CSV
+│   │   ├── osv-npm.json       # OSV.dev npm advisories
+│   │   ├── osv-pypi.json      # OSV.dev PyPI advisories
+│   │   ├── nuclei.json        # nuclei-templates CVE 覆盖
+│   │   ├── hn.json            # Hacker News 安全 stories
+│   │   ├── masto.json         # Mastodon 标签时间线
+│   │   ├── vuln_ai.json       # 漏洞 AI 评估结果 (vuln_assess 写入)
+│   │   └── manifest.json      # 各 fetcher 状态
+│   └── archive/
+│       └── news/              # 每日 NDJSON 派生归档 (YYYY-MM-DD.jsonl)
 ├── rss/
 │   ├── awesome-security-feed/    # submodule
 │   ├── CyberSecurityRSS/         # submodule
@@ -30,13 +36,20 @@
 │   ├── wechat2rss/sec.opml       # 远端缓存
 │   └── merged.opml               # merge_rss.py 产出
 ├── scripts/
-│   ├── fetch_data.py          # 漏洞/PoC/资讯 → backend/cache（支持 --incremental）
-│   ├── llm_rank.py            # 两阶段 LLM 管道 + 漏洞评估 + 日报生成
+│   ├── fetch_data.py          # 11 个 fetcher，news 写 SQLite，其他写 JSON
+│   ├── llm_rank.py            # SQLite-backed classify/summarize/brief + vuln_assess
+│   ├── cluster_articles.py    # Jaccard 3-shingle 镜像聚类
+│   ├── db.py                  # SQLite 连接 + schema + CRUD helpers
+│   ├── migrate_to_sqlite.py   # 一次性 news.json → news.db 迁移
 │   ├── merge_rss.py           # OPML 合并 + 去重 + 探活
 │   ├── requirements.txt       # 仅 merge_rss.py 用
 │   └── output/                # health.csv / health.md
+├── tests/                     # pytest (42+ 测试)
 ├── web/
 │   └── index.html             # 单文件前端，OpenAI 风格，i18n
+├── docs/
+│   ├── cron-template.txt      # cron 部署模板
+│   └── superpowers/{specs,plans}/  # 设计文档与实施计划
 ├── pyproject.toml             # uv 管理的项目依赖
 └── CLAUDE.md
 ```
@@ -130,7 +143,7 @@ uv run python scripts/llm_rank.py --min-score 7                 # 仅 >=7 分的
 - **30 天限制**：默认只处理 30 天内文章，`--days 0` 解除限制
 - 新闻分类为 5 类：`incident / vuln / supply-chain / research / industry`
 - 漏洞 AI 评估产出 `ai_severity`（独立于 CVSS 判断）和中文概述
-- 日报按分类生成当日摘要，存入 `daily_brief.json`
+- 日报按分类生成当日摘要，存入 SQLite `daily_briefs` 表（`GET /api/brief` 读取）
 
 ## 行业资讯链路（SQLite 重构后）
 
@@ -145,10 +158,10 @@ uv run python scripts/migrate_to_sqlite.py            # 一次性迁移 news.jso
 ```bash
 uv run python scripts/fetch_data.py --only news --incremental    # 智能挑源（按 last_fetched + interval_minutes）
 uv run python scripts/cluster_articles.py                         # 镜像聚类（Jaccard 3-shingle）
-uv run python scripts/llm_rank.py --task classify                 # 仅给未打分的 articles 打分
-uv run python scripts/llm_rank.py --task summarize                # 高分英文文章 → 中文摘要
-uv run python scripts/llm_rank.py --task brief                    # 5 类日报，写入 daily_briefs 表
-uv run python scripts/llm_rank.py --task brief --date 2026-05-25  # 指定日期重跑
+uv run python scripts/llm_rank.py --task news_classify            # 仅给未打分的 articles 打分
+uv run python scripts/llm_rank.py --task news_summarize           # 高分英文文章 → 中文摘要
+uv run python scripts/llm_rank.py --task daily_brief              # 5 类日报，写入 daily_briefs 表
+uv run python scripts/llm_rank.py --task daily_brief --date 2026-05-25  # 指定日期重跑
 ```
 
 **fetch_data 与 LLM 完全解耦**：fetch 写 articles (LLM 字段 NULL)；llm_rank 独立扫 `WHERE llm_score IS NULL` 并填上。

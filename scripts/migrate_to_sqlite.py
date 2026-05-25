@@ -176,6 +176,17 @@ def run(
     print(f"[migrate] articles={n_articles} briefs={n_briefs} sources={n_sources} → {db_path}",
           file=sys.stderr)
 
+    # Mark source files as archived. Spec §8 steps 7-8: prevents accidental
+    # re-use of stale JSON, while preserving the data for emergency rollback.
+    for fname in ("news.json", "daily_brief.json"):
+        src = cache_dir / fname
+        if src.exists():
+            bak = cache_dir / (fname + ".bak")
+            if bak.exists():
+                bak.unlink()  # overwrite previous .bak
+            src.rename(bak)
+            print(f"[migrate] {fname} → {fname}.bak", file=sys.stderr)
+
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Migrate news.json + daily_brief.json into SQLite.")

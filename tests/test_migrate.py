@@ -61,6 +61,17 @@ def test_migrate_force_overwrites_existing_db(tmp_db: Path, cache_dir: Path):
     c.close()
 
 
+def test_migrate_renames_source_files_to_bak(tmp_db: Path, cache_dir: Path):
+    _write_news_json(cache_dir, [
+        {"title": "T1", "link": "https://a.com/1", "summary": "",
+         "source_slug": "s", "source_title": "S", "lang": "en", "published": None},
+    ])
+    migrate.run(db_path=tmp_db, cache_dir=cache_dir, force=False)
+    # Source file should be renamed
+    assert not (cache_dir / "news.json").exists()
+    assert (cache_dir / "news.json.bak").exists()
+
+
 def test_migrate_seeds_sources_from_curated_and_opml(tmp_db: Path, cache_dir: Path):
     _write_news_json(cache_dir, [])
     # Simulate the curated NEWS_SOURCES list + a 1-line OPML

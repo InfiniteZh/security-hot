@@ -604,7 +604,7 @@ async def _fetch_one_source_to_sqlite(
             "source_slug": src["slug"],
             "source_title": src.get("title"),
             "lang": src.get("lang"),
-            "rss_category": None,
+            "rss_category": src.get("category"),
             "published": _entry_published_iso(art["_raw"]),
             "fetched_at": now_iso,
             "first_seen_date": first_seen_date,
@@ -612,8 +612,8 @@ async def _fetch_one_source_to_sqlite(
         if rowid:
             n += 1
     _db.record_source_fetch(conn, src["slug"], now=now_iso,
-                            etag=r.headers.get("ETag"),
-                            last_modified=r.headers.get("Last-Modified"),
+                            etag=(r.headers.get("ETag") or "")[:512] or None,
+                            last_modified=(r.headers.get("Last-Modified") or "")[:512] or None,
                             ok=True)
     return (n, r.status_code)
 

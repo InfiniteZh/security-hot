@@ -44,9 +44,7 @@ import httpx
 import db as _db
 
 ROOT = Path(__file__).resolve().parent.parent
-NEWS_JSON = ROOT / "backend" / "cache" / "news.json"
 VULN_AI_JSON = ROOT / "backend" / "cache" / "vuln_ai.json"
-BRIEF_JSON = ROOT / "backend" / "cache" / "daily_brief.json"
 
 # ── Prompts ──
 
@@ -234,74 +232,76 @@ async def classify_news(
     batch_size = int(os.environ.get("LLM_BATCH_SIZE", "80"))
 
     conn = _db.connect()
-    where = "WHERE 1=1"
-    params: list = []
-    if days > 0:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
-        where += " AND COALESCE(published, fetched_at) >= ?"
-        params.append(cutoff)
-    if not rescore:
-        where += " AND llm_score IS NULL"
-    if limit:
-        tail = f" LIMIT {limit}"
-    else:
-        tail = ""
+    try:
+        where = "WHERE 1=1"
+        params: list = []
+        if days > 0:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+            where += " AND COALESCE(published, fetched_at) >= ?"
+            params.append(cutoff)
+        if not rescore:
+            where += " AND llm_score IS NULL"
+        if limit:
+            tail = f" LIMIT {limit}"
+        else:
+            tail = ""
 
-    rows = list(conn.execute(
-        f"SELECT id, title, summary, source_title, lang FROM articles {where}{tail}",
-        params,
-    ))
-    if verbose:
-        print(f"[phase1] {len(rows)} articles to classify, batch={batch_size}", file=sys.stderr)
+        rows = list(conn.execute(
+            f"SELECT id, title, summary, source_title, lang FROM articles {where}{tail}",
+            params,
+        ))
+        if verbose:
+            print(f"[phase1] {len(rows)} articles to classify, batch={batch_size}", file=sys.stderr)
 
-    # Build batches
-    batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
-    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        # Build batches
+        batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
+        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    system_prompt = _CLASSIFY_SYSTEM_PROMPT
-    sem = asyncio.Semaphore(cfg["concurrency"])
+        system_prompt = _CLASSIFY_SYSTEM_PROMPT
+        sem = asyncio.Semaphore(cfg["concurrency"])
 
-    async def process(batch, batch_num, client):
-        user_msg = _build_classify_user_msg(batch)
-        async with sem:
-            try:
-                result = await _llm_call(
-                    client, system_prompt, user_msg,
-                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
-                )
-            except Exception as exc:
+        async def process(batch, batch_num, client):
+            user_msg = _build_classify_user_msg(batch)
+            async with sem:
+                try:
+                    result = await _llm_call(
+                        client, system_prompt, user_msg,
+                        cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                    )
+                except Exception as exc:
+                    if verbose:
+                        print(f"[phase1] batch {batch_num} failed: {exc}", file=sys.stderr)
+                    return
+                items = result.get("items", [])
+                for item in items:
+                    rowid = item.get("id")
+                    if not rowid:
+                        continue
+                    cat = item.get("category")
+                    if cat not in {"incident", "vuln", "supply-chain", "research", "industry"}:
+                        cat = None
+                    conn.execute("""
+                        UPDATE articles SET
+                          llm_score = ?, llm_category = ?, llm_reason = ?,
+                          is_relevant = ?, llm_scored_at = ?
+                        WHERE id = ?
+                    """, [
+                        int(item.get("score") or 0),
+                        cat,
+                        (item.get("reason") or "")[:300],
+                        1 if item.get("is_relevant") else 0,
+                        now_iso, rowid,
+                    ])
+                conn.commit()
                 if verbose:
-                    print(f"[phase1] batch {batch_num} failed: {exc}", file=sys.stderr)
-                return
-            items = result.get("items", [])
-            for item in items:
-                rowid = item.get("id")
-                if not rowid:
-                    continue
-                cat = item.get("category")
-                if cat not in {"incident", "vuln", "supply-chain", "research", "industry"}:
-                    cat = None
-                conn.execute("""
-                    UPDATE articles SET
-                      llm_score = ?, llm_category = ?, llm_reason = ?,
-                      is_relevant = ?, llm_scored_at = ?
-                    WHERE id = ?
-                """, [
-                    int(item.get("score") or 0),
-                    cat,
-                    (item.get("reason") or "")[:300],
-                    1 if item.get("is_relevant") else 0,
-                    now_iso, rowid,
-                ])
-            conn.commit()
-            if verbose:
-                print(f"[phase1] batch {batch_num}/{len(batches)}: +{len(items)}", file=sys.stderr)
+                    print(f"[phase1] batch {batch_num}/{len(batches)}: +{len(items)}", file=sys.stderr)
 
-    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
+        async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+            await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
 
-    conn.close()
-    return {"classified": len(rows), "batches": len(batches)}
+        return {"classified": len(rows), "batches": len(batches)}
+    finally:
+        conn.close()
 
 
 # ── Phase 2: Targeted summarization for high-score English articles ──
@@ -324,63 +324,65 @@ async def summarize_news(
     batch_size = int(os.environ.get("LLM_BATCH_SIZE", "30"))
 
     conn = _db.connect()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
-    limit_clause = f"LIMIT {limit}" if limit else ""
-    rows = list(conn.execute(f"""
-        SELECT id, title, summary
-        FROM articles
-        WHERE lang = 'en'
-          AND llm_score >= ?
-          AND is_relevant = 1
-          AND llm_summary_zh IS NULL
-          AND COALESCE(published, fetched_at) >= ?
-        ORDER BY llm_score DESC
-        {limit_clause}
-    """, [min_score, cutoff]))
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        limit_clause = f"LIMIT {limit}" if limit else ""
+        rows = list(conn.execute(f"""
+            SELECT id, title, summary
+            FROM articles
+            WHERE lang = 'en'
+              AND llm_score >= ?
+              AND is_relevant = 1
+              AND llm_summary_zh IS NULL
+              AND COALESCE(published, fetched_at) >= ?
+            ORDER BY llm_score DESC
+            {limit_clause}
+        """, [min_score, cutoff]))
 
-    if verbose:
-        print(f"[phase2] {len(rows)} articles to summarize, batch={batch_size}", file=sys.stderr)
+        if verbose:
+            print(f"[phase2] {len(rows)} articles to summarize, batch={batch_size}", file=sys.stderr)
 
-    batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
-    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
+        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    system_prompt = """你是安全资讯翻译/摘要助手。
+        system_prompt = """你是安全资讯翻译/摘要助手。
 为每篇英文安全文章生成 1-2 句中文摘要（<=120 字）, 重点保留 CVE 编号 / 厂商 / 漏洞类型 / 影响范围。
 输出 JSON: {"items": [{"id": <int>, "summary": "中文摘要..."}]}
 不要 markdown, 不要前缀。"""
 
-    sem = asyncio.Semaphore(cfg["concurrency"])
+        sem = asyncio.Semaphore(cfg["concurrency"])
 
-    async def process(batch, batch_num, client):
-        user_msg = "\n---\n".join(
-            f"id={r['id']}\ntitle: {r['title']}\nsummary: {(r['summary'] or '')[:500]}"
-            for r in batch
-        )
-        async with sem:
-            try:
-                result = await _llm_call(
-                    client, system_prompt, user_msg,
-                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
-                )
-            except Exception as exc:
+        async def process(batch, batch_num, client):
+            user_msg = "\n---\n".join(
+                f"id={r['id']}\ntitle: {r['title']}\nsummary: {(r['summary'] or '')[:500]}"
+                for r in batch
+            )
+            async with sem:
+                try:
+                    result = await _llm_call(
+                        client, system_prompt, user_msg,
+                        cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                    )
+                except Exception as exc:
+                    if verbose:
+                        print(f"[phase2] batch {batch_num} failed: {exc}", file=sys.stderr)
+                    return
+                for item in result.get("items", []):
+                    conn.execute(
+                        "UPDATE articles SET llm_summary_zh = ?, llm_summarized_at = ? WHERE id = ?",
+                        [(item.get("summary") or "")[:500], now_iso, item.get("id")],
+                    )
+                conn.commit()
                 if verbose:
-                    print(f"[phase2] batch {batch_num} failed: {exc}", file=sys.stderr)
-                return
-            for item in result.get("items", []):
-                conn.execute(
-                    "UPDATE articles SET llm_summary_zh = ?, llm_summarized_at = ? WHERE id = ?",
-                    [(item.get("summary") or "")[:500], now_iso, item.get("id")],
-                )
-            conn.commit()
-            if verbose:
-                print(f"[phase2] batch {batch_num}/{len(batches)}: +{len(result.get('items', []))}",
-                      file=sys.stderr)
+                    print(f"[phase2] batch {batch_num}/{len(batches)}: +{len(result.get('items', []))}",
+                          file=sys.stderr)
 
-    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
+        async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+            await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
 
-    conn.close()
-    return {"summarized": len(rows), "batches": len(batches)}
+        return {"summarized": len(rows), "batches": len(batches)}
+    finally:
+        conn.close()
 
 
 # ── Vulnerability AI assessment ──
@@ -535,57 +537,59 @@ async def generate_daily_brief(
         target_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     conn = _db.connect()
-    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    summaries: dict[str, dict] = {}
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        summaries: dict[str, dict] = {}
 
-    system_prompt = """你是安全资讯日报编辑。
+        system_prompt = """你是安全资讯日报编辑。
 基于给定的当日 N 篇文章, 撰写一段 300-500 字的中文摘要,
 开头点明今日该领域的核心动态, 中间用 3-5 条点列重要事件, 结尾给一句总结。
 输出 JSON: {"text": "..."}
 不要 markdown 之外的修饰。"""
 
-    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        for category in ALL_CATEGORIES:
-            rows = list(conn.execute("""
-                SELECT title, summary, source_title, llm_summary_zh
-                FROM articles
-                WHERE first_seen_date = ?
-                  AND llm_category = ?
-                  AND is_relevant = 1
-                  AND (cluster_id IS NULL OR is_cluster_primary = 1)
-                ORDER BY llm_score DESC
-                LIMIT 12
-            """, [target_date, category]))
-            if not rows:
-                if verbose:
-                    print(f"[brief] {category}: 0 articles, skipped", file=sys.stderr)
-                continue
-            user_msg = f"分类: {category}\n" + "\n---\n".join(
-                f"[{r['source_title']}] {r['title']}\n摘要: {r['llm_summary_zh'] or r['summary'] or ''}"
-                for r in rows
-            )
-            try:
-                result = await _llm_call(
-                    client, system_prompt, user_msg,
-                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+        async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+            for category in ALL_CATEGORIES:
+                rows = list(conn.execute("""
+                    SELECT title, summary, source_title, llm_summary_zh
+                    FROM articles
+                    WHERE first_seen_date = ?
+                      AND llm_category = ?
+                      AND is_relevant = 1
+                      AND (cluster_id IS NULL OR is_cluster_primary = 1)
+                    ORDER BY llm_score DESC
+                    LIMIT 12
+                """, [target_date, category]))
+                if not rows:
+                    if verbose:
+                        print(f"[brief] {category}: 0 articles, skipped", file=sys.stderr)
+                    continue
+                user_msg = f"分类: {category}\n" + "\n---\n".join(
+                    f"[{r['source_title']}] {r['title']}\n摘要: {r['llm_summary_zh'] or r['summary'] or ''}"
+                    for r in rows
                 )
-                text = result.get("text") or ""
-                _db.upsert_brief(
-                    conn, date=target_date, category=category,
-                    text=text, article_count=len(rows), generated_at=now_iso,
-                )
-                summaries[category] = {"chars": len(text), "articles": len(rows)}
-                if verbose:
-                    print(f"[brief] {category}: {len(text)} chars from {len(rows)} articles",
-                          file=sys.stderr)
-            except Exception as exc:
-                if verbose:
-                    print(f"[brief] {category} failed: {exc}", file=sys.stderr)
+                try:
+                    result = await _llm_call(
+                        client, system_prompt, user_msg,
+                        cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                    )
+                    text = result.get("text") or ""
+                    _db.upsert_brief(
+                        conn, date=target_date, category=category,
+                        text=text, article_count=len(rows), generated_at=now_iso,
+                    )
+                    summaries[category] = {"chars": len(text), "articles": len(rows)}
+                    if verbose:
+                        print(f"[brief] {category}: {len(text)} chars from {len(rows)} articles",
+                              file=sys.stderr)
+                except Exception as exc:
+                    if verbose:
+                        print(f"[brief] {category} failed: {exc}", file=sys.stderr)
 
-    conn.close()
-    if verbose:
-        print(f"[brief] done: {len(summaries)} categories for {target_date}", file=sys.stderr)
-    return {"date": target_date, "categories": summaries}
+        if verbose:
+            print(f"[brief] done: {len(summaries)} categories for {target_date}", file=sys.stderr)
+        return {"date": target_date, "categories": summaries}
+    finally:
+        conn.close()
 
 
 # ── CLI ──

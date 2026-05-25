@@ -243,6 +243,7 @@ def _today_utc_str() -> str:
 
 def _run_llm_brief_subprocess(target_date: str) -> None:
     """Background-task wrapper. Invoked off the HTTP request path."""
+    global _brief_regen_in_flight
     try:
         subprocess.run(
             ["uv", "run", "python", "scripts/llm_rank.py", "--task", "daily_brief", "--date", target_date],
@@ -250,6 +251,9 @@ def _run_llm_brief_subprocess(target_date: str) -> None:
         )
     except Exception as exc:
         log.error(f"brief regenerate failed: {exc}")
+    finally:
+        with _brief_regen_lock:
+            _brief_regen_in_flight = False
 
 
 @app.post("/api/brief/regenerate", tags=["news"])
@@ -260,12 +264,18 @@ async def regenerate_brief(
 ):
     """Trigger a background regeneration of today's (or specified) daily brief.
 
-    Requires SECURITY_HOT_REFRESH_TOKEN header match.
+    Requires SECURITY_HOT_REFRESH_TOKEN header match. Only one regen runs at a time;
+    concurrent calls return 409.
     """
     expected = os.environ.get("SECURITY_HOT_REFRESH_TOKEN")
     if not expected or not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
         raise HTTPException(status_code=401, detail="invalid refresh token")
     target = _validate_date(date) or _today_utc_str()
+    global _brief_regen_in_flight
+    with _brief_regen_lock:
+        if _brief_regen_in_flight:
+            raise HTTPException(status_code=409, detail="brief regeneration already in progress")
+        _brief_regen_in_flight = True
     background.add_task(_run_llm_brief_subprocess, target)
     return JSONResponse(status_code=202, content={"status": "accepted", "date": target})
 
@@ -345,6 +355,9 @@ def healthz() -> JSONResponse:
 REFRESH_TOKEN_ENV = "SECURITY_HOT_REFRESH_TOKEN"
 _refresh_lock = threading.Lock()
 _refresh_in_flight = False
+
+_brief_regen_lock = threading.Lock()
+_brief_regen_in_flight: bool = False
 
 
 def _run_fetcher(only: list[str] | None) -> None:

@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS articles (
     llm_summary_zh     TEXT,
     llm_summarized_at  TEXT,
     cluster_id          INTEGER,
-    is_cluster_primary  BOOLEAN DEFAULT 0
+    is_cluster_primary  BOOLEAN DEFAULT 0,
+    FOREIGN KEY (cluster_id) REFERENCES clusters(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_published     ON articles(published DESC);
@@ -62,7 +63,8 @@ CREATE TABLE IF NOT EXISTS clusters (
     id                  INTEGER PRIMARY KEY,
     primary_article_id  INTEGER NOT NULL,
     member_count        INTEGER NOT NULL,
-    created_at          TEXT NOT NULL
+    created_at          TEXT NOT NULL,
+    FOREIGN KEY (primary_article_id) REFERENCES articles(id)
 );
 
 CREATE TABLE IF NOT EXISTS daily_briefs (
@@ -173,7 +175,8 @@ def due_sources(conn: sqlite3.Connection, now_iso: str) -> list[sqlite3.Row]:
     not in a failed (>=5 consecutive failures) state."""
     return list(conn.execute("""
         SELECT * FROM sources
-        WHERE consecutive_failures < 5
+        WHERE ok = 1
+          AND consecutive_failures < 5
           AND (last_fetched IS NULL
                OR datetime(last_fetched, '+' || interval_minutes || ' minutes') <= datetime(?))
         ORDER BY (last_fetched IS NULL) DESC, last_fetched ASC

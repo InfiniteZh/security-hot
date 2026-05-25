@@ -93,49 +93,50 @@ def cluster_articles_in_db(
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat().replace("+00:00", "Z")
     conn = db.connect(db_path)
-    rows = list(conn.execute("""
-        SELECT id, title, lang, fetched_at FROM articles
-        WHERE fetched_at >= ? AND cluster_id IS NULL
-    """, [cutoff]))
-    if len(rows) < 2:
+    try:
+        rows = list(conn.execute("""
+            SELECT id, title, lang, fetched_at FROM articles
+            WHERE fetched_at >= ? AND cluster_id IS NULL
+        """, [cutoff]))
+        if len(rows) < 2:
+            return 0
+
+        # Pre-compute shingles for each title and bucket by head char
+        sigs = {r["id"]: shingles(r["title"]) for r in rows}
+        buckets: dict[str, list[dict]] = defaultdict(list)
+        for r in rows:
+            title_norm = re.sub(r"\W", "", (r["title"] or "").lower())
+            head = title_norm[0] if title_norm else "_"
+            buckets[head].append(dict(r))
+
+        uf = UnionFind([r["id"] for r in rows])
+
+        for head, group in buckets.items():
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    a, b = group[i]["id"], group[j]["id"]
+                    if jaccard(sigs[a], sigs[b]) >= JACCARD_THRESHOLD:
+                        uf.union(a, b)
+
+        # Collect clusters of size >= 2
+        members_by_root: dict[int, list[dict]] = defaultdict(list)
+        for r in rows:
+            members_by_root[uf.find(r["id"])].append(dict(r))
+
+        n_clusters = 0
+        for root_id, group in members_by_root.items():
+            if len(group) < 2:
+                continue
+            primary_id = _pick_primary(group)
+            mirror_ids = [g["id"] for g in group if g["id"] != primary_id]
+            db.create_cluster(
+                conn, primary_id=primary_id, mirror_ids=mirror_ids,
+                created_at=now_iso,
+            )
+            n_clusters += 1
+        return n_clusters
+    finally:
         conn.close()
-        return 0
-
-    # Pre-compute shingles for each title and bucket by head char
-    sigs = {r["id"]: shingles(r["title"]) for r in rows}
-    buckets: dict[str, list[dict]] = defaultdict(list)
-    for r in rows:
-        title_norm = re.sub(r"\W", "", (r["title"] or "").lower())
-        head = title_norm[0] if title_norm else "_"
-        buckets[head].append(dict(r))
-
-    uf = UnionFind([r["id"] for r in rows])
-
-    for head, group in buckets.items():
-        for i in range(len(group)):
-            for j in range(i + 1, len(group)):
-                a, b = group[i]["id"], group[j]["id"]
-                if jaccard(sigs[a], sigs[b]) >= JACCARD_THRESHOLD:
-                    uf.union(a, b)
-
-    # Collect clusters of size >= 2
-    members_by_root: dict[int, list[dict]] = defaultdict(list)
-    for r in rows:
-        members_by_root[uf.find(r["id"])].append(dict(r))
-
-    n_clusters = 0
-    for root_id, group in members_by_root.items():
-        if len(group) < 2:
-            continue
-        primary_id = _pick_primary(group)
-        mirror_ids = [g["id"] for g in group if g["id"] != primary_id]
-        db.create_cluster(
-            conn, primary_id=primary_id, mirror_ids=mirror_ids,
-            created_at=now_iso,
-        )
-        n_clusters += 1
-    conn.close()
-    return n_clusters
 
 
 def main() -> int:

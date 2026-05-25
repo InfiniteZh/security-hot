@@ -199,6 +199,18 @@ def test_due_sources_excludes_failing_sources(conn):
     assert all(s["slug"] != "broken" for s in due)
 
 
+def test_due_sources_excludes_ok_zero_sources(conn):
+    db.init_schema(conn)
+    db.upsert_source(conn, {
+        "slug": "marked_down", "title": "x", "url": "https://x",
+        "lang": "en", "tier": "tail", "interval_minutes": 30,
+    })
+    conn.execute("UPDATE sources SET ok = 0 WHERE slug = 'marked_down'")
+    conn.commit()
+    due = db.due_sources(conn, "2026-05-25T12:00:00Z")
+    assert all(s["slug"] != "marked_down" for s in due)
+
+
 def test_record_source_success_resets_failures(conn):
     db.init_schema(conn)
     db.upsert_source(conn, {

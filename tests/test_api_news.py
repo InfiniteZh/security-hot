@@ -104,3 +104,16 @@ def test_mirrors_endpoint_404_for_unclustered(client, tmp_db):
     c.close()
     r = client.get(f"/api/news/{rid}/mirrors")
     assert r.status_code == 404
+
+
+def test_regenerate_brief_returns_409_when_in_flight(client, monkeypatch):
+    """Second concurrent regen call must return 409."""
+    import backend.app.main as main_mod
+    # Simulate one already in flight
+    main_mod._brief_regen_in_flight = True
+    try:
+        r = client.post("/api/brief/regenerate",
+                        headers={"X-Refresh-Token": "test-token"})
+        assert r.status_code == 409
+    finally:
+        main_mod._brief_regen_in_flight = False  # cleanup for other tests
