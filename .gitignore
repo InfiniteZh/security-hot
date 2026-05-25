@@ -30,3 +30,6 @@ scripts/output/
 # Build / dist
 dist/
 build/
+
+# Brainstorming session mockups
+.superpowers/

@@ -153,7 +153,7 @@ def api_vuln(
     kind: Literal["all", "cve", "supply", "poc", "itw"] = "all",
     q: str = "",
     severity: Literal["any", "critical", "high", "medium", "low"] = "any",
-    date: str | None = Query(default=None, description="filter by first_seen date (YYYY-MM-DD); falls back to published"),
+    date: str | None = Query(default=None, description="filter by published date (YYYY-MM-DD); matches CISA dateAdded for KEV, published_at for GHSA/OSV"),
     limit: int = Query(default=60, ge=1, le=500),
     sort: Literal["heat", "time"] = "heat",
 ) -> list[Vuln]:
@@ -166,7 +166,11 @@ def api_vuln(
     if q:
         items = [v for v in items if _contains(q, v.title, v.summary, v.cve_id, v.ghsa_id, v.package, v.vendor, v.product)]
     if target_date:
-        items = [v for v in items if _matches_date(v.first_seen, target_date) or _matches_date(v.published, target_date)]
+        # Filter strictly by the source-of-truth publish date. `first_seen` is
+        # intentionally excluded — it tracks when *our* cache first observed
+        # the row, so on cold-start days it stamps the entire backlog with
+        # today and would return everything.
+        items = [v for v in items if _matches_date(v.published, target_date)]
     if sort == "heat":
         items.sort(key=lambda x: -x.heat)
     else:

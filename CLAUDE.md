@@ -93,17 +93,23 @@ uv run python scripts/fetch_data.py --only kev,news  # 子集
 uv run python scripts/fetch_data.py --concurrency 12 # 提升 news RSS 并发
 ```
 
-各 fetcher：
+各 fetcher（在 `scripts/fetch_data.py` 的 `FETCHERS` 字典注册，共 11 个）：
 
 | 名称 | 源 | 说明 |
 | --- | --- | --- |
 | kev | `cisa.gov/.../known_exploited_vulnerabilities.json` | 全量 KEV，按 dateAdded 倒序取 200 |
-| ghsa | `api.github.com/advisories` | 最新 100 条公开 advisory（匿名，60/h 限速） |
+| ghsa | `api.github.com/advisories` | 最新 100 条公开 advisory（匿名 60/h，带 GITHUB_TOKEN 提到 5000/h） |
 | pocs | `poc-in-github.motikan2010.net/api/v1` | 最近 100 个 PoC 仓库 |
 | itw | `inthewild.io/feed` | RSS（feed 当前可能为空） |
-| malpkgs | `api.github.com/repos/ossf/malicious-packages/commits` | 最近 80 个 commit 当作恶意包通报 |
 | heat | `cvecrowd.com/api/cves` | 端点格式可能变了，目前 fallback 到 0 |
-| news | 22 个精选 RSS（中 10 + 英 12） | 每个源取最新 8 条 |
+| news | 713 个聚合源（merged.opml + curated） | 每源取近期文章；总条目数可达 4-5k |
+| epss | `epss.empiricalsecurity.com/.../v202X.csv.gz` | FIRST.org EPSS 每日全量 CSV，>30 万条 CVE→exploit 概率 |
+| osv | `osv-vulnerabilities.storage.googleapis.com` | OSV.dev 全量 ecosystem dump（npm + PyPI），>20 万条 |
+| nuclei | `api.github.com/repos/projectdiscovery/nuclei-templates/git/trees` | 列出所有 CVE 模板（用于 vuln 详情外链） |
+| hn | `hn.algolia.com/api/v1/search_by_date` | Hacker News 安全相关近期 stories（多查询并发） |
+| masto | 多个 Mastodon 实例 public timeline | 标签订阅 + CVE 抽取（联邦去重） |
+
+后四个（epss / hn / masto / nuclei）不直接出现在前端列表里，而是在 `data.py:_cve_signals()` 里按 CVE-ID 旁路注入到 vuln 卡片上（EPSS 分数、HN/Masto mentions、Nuclei 模板链接）。
 
 跑完 stderr 会有 `[ok] kev count=200 elapsed=1.8s` 这类日志，`manifest.json` 落详细状态。
 
