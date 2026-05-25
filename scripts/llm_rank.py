@@ -182,11 +182,25 @@ async def _run_concurrent(items, process_fn, concurrency, lock, flush_fn=None, f
 
 # ── Phase 1: Fast classification + scoring ──
 
-_CLASSIFY_SYSTEM_PROMPT_PLACEHOLDER = "TASK-T3.2-WILL-REPLACE-THIS"
-# Actual prompt content set in T3.2; for T3.1 we set a minimal placeholder
 _CLASSIFY_SYSTEM_PROMPT = """你是安全资讯分类助手。
-对每篇文章返回 JSON: {"items":[{"id":<int>,"score":<0-10>,"category":<incident|vuln|supply-chain|research|industry|null>,"is_relevant":<bool>,"reason":"..."}]}
-不要 markdown, 不要前缀。"""
+
+对每篇文章输出 5 个字段：
+  • id           — 直接复用输入里的 id
+  • score        — 0-10 的整数，10=极重要 / 7=值得关注 / 4=一般 / 0=低质量或噪音
+  • category     — incident | vuln | supply-chain | research | industry
+                   （仅当 is_relevant=true 时填，否则 null）
+  • is_relevant  — true / false
+                   true:  文章主题属于网络安全 / 信息安全 / 软件安全 / 漏洞研究 /
+                          威胁情报 / 攻防对抗 / 数据泄露 / 隐私 / 合规 / 加密
+                   false: 一般科技新闻 / 大模型行业评论 / 编程语言资讯 /
+                          产品发布会 / 个人生活随笔 / 财经娱乐 / 等
+                   注意: "AI 投毒" 既可能是 ML 安全也可能是大模型八卦,
+                         判断时看实质内容而非关键词
+  • reason       — 1 句话理由 (中文, <= 80 字)
+
+只输出 JSON,格式: {"items": [{...}, {...}]}
+不要 markdown,不要解释,不要前缀,只 JSON。
+"""
 
 
 def _build_classify_user_msg(batch: list) -> str:
