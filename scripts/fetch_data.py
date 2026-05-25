@@ -750,7 +750,7 @@ async def fetch_news_to_sqlite(
     Picks 'due' sources via db.due_sources(), respects ETag/If-Modified-Since,
     upserts new articles into the articles table.
     """
-    ts = now_iso if now_iso is not None else now_iso()
+    ts = now_iso if now_iso is not None else datetime.now(timezone.utc).isoformat()
     conn = _db.connect(db_path)
     _db.init_schema(conn)  # idempotent — safe to call every run
     due = _db.due_sources(conn, ts)
@@ -1144,7 +1144,7 @@ FETCHERS = {
     "pocs": fetch_pocs,
     "itw": fetch_itw,
     "heat": fetch_heat,
-    "news": fetch_news,
+    "news": fetch_news_to_sqlite,   # ← changed from fetch_news (legacy will be removed in T2.4)
     "epss": fetch_epss,
     "osv": fetch_osv,
     "nuclei": fetch_nuclei,
@@ -1321,7 +1321,11 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
             try:
                 fn = FETCHERS[name]
                 if name == "news":
-                    r = await fn(client, concurrency, incremental=incremental)
+                    # New SQLite news fetcher manages its own httpx client (needs per-source
+                    # Conditional GET headers). `incremental` is now a no-op — Conditional
+                    # GET is always on, so re-running with the same content is naturally
+                    # cheap (304 responses skip article writes entirely).
+                    r = await fn(concurrency=concurrency)
                 else:
                     r = await fn(client)
                 elapsed = round(time.monotonic() - t0, 2)
@@ -1355,7 +1359,8 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
         # fetchers not tracked in SNAPSHOT_KEYS (epss/heat) map to empty.
         FETCHER_TO_CACHES = {
             "kev": ["kev"], "ghsa": ["ghsa"], "pocs": ["pocs"], "itw": ["itw"],
-            "news": ["news"], "osv": ["osv-npm", "osv-pypi"],
+            "news": [],  # SQLite fetcher (T2.x): no longer writes news.json
+            "osv": ["osv-npm", "osv-pypi"],
             "nuclei": ["nuclei"], "hn": ["hn"], "masto": ["masto"],
             # Enrichment-style caches (no per-item first_seen tracking needed)
             "heat": [], "epss": [],
