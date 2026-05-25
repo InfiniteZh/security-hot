@@ -508,7 +508,13 @@
           <div id="daily-brief" class="border hairline bg-surface rounded-xl p-5 mb-4" style="display:none">
             <div class="flex items-center justify-between mb-3">
               <h3 class="text-[14px] font-semibold tracking-tight" data-i18n="brief.title">今日简报</h3>
-              <button id="brief-toggle" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest">▼</button>
+              <div class="flex items-center gap-2">
+                <button onclick="regenerateBrief()"
+                        class="text-xs text-dim hover:text-fg ml-auto font-mono px-2 py-1 hover:bg-surface rounded"
+                        data-i18n-title="news.refreshBrief"
+                        aria-label="刷新简报">⟳</button>
+                <button id="brief-toggle" class="font-mono text-[10.5px] text-muted hover:text-ink uppercase tracking-widest">▼</button>
+              </div>
             </div>
             <div id="brief-content" class="space-y-4"></div>
           </div>
@@ -1339,6 +1345,38 @@ document.getElementById("brief-toggle").addEventListener("click", () => {
   state.briefCollapsed = !state.briefCollapsed;
   renderBrief();
 });
+
+async function regenerateBrief() {
+  let token = localStorage.getItem('refreshToken');
+  if (!token) {
+    const isZh = (typeof lang !== 'undefined' && lang === 'zh');
+    token = prompt(isZh
+      ? 'Refresh token（在 .env 里的 SECURITY_HOT_REFRESH_TOKEN）：'
+      : 'Refresh token (from .env SECURITY_HOT_REFRESH_TOKEN):');
+    if (!token) return;
+    localStorage.setItem('refreshToken', token);
+  }
+  try {
+    const r = await fetch('/api/brief/regenerate', {
+      method: 'POST',
+      headers: {'X-Refresh-Token': token},
+    });
+    if (r.status === 401) {
+      localStorage.removeItem('refreshToken');
+      alert((typeof lang !== 'undefined' && lang === 'zh') ? 'Token 无效，已清除，请重试' : 'Token invalid, cleared, retry');
+      return;
+    }
+    if (r.status === 202) {
+      console.log('brief regen accepted, refetching in 10s');
+      setTimeout(() => {
+        state.briefDate = null; // force re-fetch
+        fetchBrief().then(renderBrief);
+      }, 10000);
+    }
+  } catch (e) {
+    console.error('regen failed', e);
+  }
+}
 
 function renderAll() {
   applyI18n();
