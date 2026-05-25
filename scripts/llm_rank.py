@@ -41,6 +41,8 @@ from pathlib import Path
 
 import httpx
 
+import db as _db
+
 ROOT = Path(__file__).resolve().parent.parent
 NEWS_JSON = ROOT / "backend" / "cache" / "news.json"
 VULN_AI_JSON = ROOT / "backend" / "cache" / "vuln_ai.json"
@@ -180,107 +182,112 @@ async def _run_concurrent(items, process_fn, concurrency, lock, flush_fn=None, f
 
 # ── Phase 1: Fast classification + scoring ──
 
-async def classify_news(days: int = 30, rescore: bool = False, limit: int | None = None, verbose: bool = True) -> dict:
+_CLASSIFY_SYSTEM_PROMPT_PLACEHOLDER = "TASK-T3.2-WILL-REPLACE-THIS"
+# Actual prompt content set in T3.2; for T3.1 we set a minimal placeholder
+_CLASSIFY_SYSTEM_PROMPT = """你是安全资讯分类助手。
+对每篇文章返回 JSON: {"items":[{"id":<int>,"score":<0-10>,"category":<incident|vuln|supply-chain|research|industry|null>,"is_relevant":<bool>,"reason":"..."}]}
+不要 markdown, 不要前缀。"""
+
+
+def _build_classify_user_msg(batch: list) -> str:
+    """Pack a batch of articles into a single user message for the LLM."""
+    lines = []
+    for row in batch:
+        lines.append(
+            f"id={row['id']} | source={row['source_title']} | lang={row['lang']}\n"
+            f"title: {row['title']}\n"
+            f"summary: {(row['summary'] or '')[:300]}\n"
+        )
+    return "\n---\n".join(lines)
+
+
+async def classify_news(
+    days: int = 30,
+    rescore: bool = False,
+    limit: int | None = None,
+    verbose: bool = True,
+) -> dict:
+    """Phase 1: classify + score un-scored articles.
+
+    Reads articles WHERE llm_score IS NULL AND published >= now - days
+    (unless --rescore, in which case all articles in window are re-scored).
+    Calls LLM in batches of LLM_BATCH_SIZE (default 80).
+    Writes back llm_score / llm_category / llm_reason / is_relevant / llm_scored_at.
+    """
     cfg = _get_config()
     if not cfg["api_key"]:
-        if verbose:
-            print("[phase1] LLM_API_KEY not set, skipping", file=sys.stderr)
-        return {"skipped": True}
+        return {"error": "LLM_API_KEY not set"}
+    batch_size = int(os.environ.get("LLM_BATCH_SIZE", "80"))
 
-    if not NEWS_JSON.exists():
-        return {"error": "news.json missing"}
-    data = json.loads(NEWS_JSON.read_text(encoding="utf-8"))
-    articles = data.get("articles") or []
-
-    def needs_work(a):
-        has_score = isinstance(a.get("llm_score"), (int, float))
-        has_cat = a.get("llm_category") in VALID_CATS
-        if rescore:
-            return not has_cat
-        return not (has_score and has_cat)
-
-    needs = [(i, a) for i, a in enumerate(articles)
-             if needs_work(a) and _is_within_days(a.get("published"), days)]
+    conn = _db.connect()
+    where = "WHERE 1=1"
+    params: list = []
+    if days > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        where += " AND COALESCE(published, fetched_at) >= ?"
+        params.append(cutoff)
+    if not rescore:
+        where += " AND llm_score IS NULL"
     if limit:
-        needs = needs[:limit]
-    if not needs:
-        if verbose:
-            print(f"[phase1] nothing to classify (total={len(articles)})", file=sys.stderr)
-        return {"classified": 0, "reason": "all-cached"}
+        tail = f" LIMIT {limit}"
+    else:
+        tail = ""
 
-    batch_size = 80
+    rows = list(conn.execute(
+        f"SELECT id, title, summary, source_title, lang FROM articles {where}{tail}",
+        params,
+    ))
     if verbose:
-        print(f"[phase1] classifying {len(needs)} articles, batch={batch_size}, concurrency={cfg['concurrency']}", file=sys.stderr)
+        print(f"[phase1] {len(rows)} articles to classify, batch={batch_size}", file=sys.stderr)
 
-    scored = 0
-    errors = 0
-    lock = asyncio.Lock()
-    t0 = time.monotonic()
+    # Build batches
+    batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    all_chunks = [needs[i:i + batch_size] for i in range(0, min(len(needs), cfg["max_batches"] * batch_size), batch_size)]
+    system_prompt = _CLASSIFY_SYSTEM_PROMPT
+    sem = asyncio.Semaphore(cfg["concurrency"])
 
-    async def process(chunk, batch_num, client):
-        nonlocal scored, errors
-        msg_parts = []
-        for lid, (_, a) in enumerate(chunk):
-            title = (a.get("title") or "").strip().replace("\n", " ")[:240]
-            summary = (a.get("summary") or "").strip().replace("\n", " ")[:200]
-            source = a.get("source_title") or ""
-            msg_parts.append(f"[{lid}] ({source}) {title} — {summary}")
-        user_msg = "请为下面这批文章打分并分类：\n\n" + "\n\n".join(msg_parts)
-
-        parsed = None
-        for attempt in range(3):
+    async def process(batch, batch_num, client):
+        user_msg = _build_classify_user_msg(batch)
+        async with sem:
             try:
-                parsed = await _llm_call(client, CLASSIFY_PROMPT, user_msg, cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"])
-                break
+                result = await _llm_call(
+                    client, system_prompt, user_msg,
+                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                )
             except Exception as exc:
                 if verbose:
-                    print(f"[phase1] batch {batch_num} attempt {attempt+1} failed: {exc}", file=sys.stderr)
-                if attempt < 2:
-                    await asyncio.sleep(2 ** attempt * 3)
-
-        if parsed is None:
-            async with lock:
-                errors += 1
-            return
-
-        batch_n = 0
-        async with lock:
-            for item in parsed.get("results") or []:
-                if not isinstance(item, dict):
+                    print(f"[phase1] batch {batch_num} failed: {exc}", file=sys.stderr)
+                return
+            items = result.get("items", [])
+            for item in items:
+                rowid = item.get("id")
+                if not rowid:
                     continue
-                try:
-                    lid = int(item["id"])
-                    if lid < 0 or lid >= len(chunk):
-                        continue
-                    idx = chunk[lid][0]
-                    score = max(1, min(10, int(item["score"])))
-                    cat = item.get("cat", "")
-                    reason = str(item.get("reason") or "").strip()[:60]
-                except (KeyError, TypeError, ValueError):
-                    continue
-                articles[idx]["llm_score"] = score
-                articles[idx]["llm_reason"] = reason
-                if cat in VALID_CATS:
-                    articles[idx]["llm_category"] = cat
-                scored += 1
-                batch_n += 1
-        if verbose:
-            print(f"[phase1] batch {batch_num}/{len(all_chunks)}: +{batch_n}, total {scored}", file=sys.stderr)
+                cat = item.get("category")
+                if cat not in {"incident", "vuln", "supply-chain", "research", "industry"}:
+                    cat = None
+                conn.execute("""
+                    UPDATE articles SET
+                      llm_score = ?, llm_category = ?, llm_reason = ?,
+                      is_relevant = ?, llm_scored_at = ?
+                    WHERE id = ?
+                """, [
+                    int(item.get("score") or 0),
+                    cat,
+                    (item.get("reason") or "")[:300],
+                    1 if item.get("is_relevant") else 0,
+                    now_iso, rowid,
+                ])
+            conn.commit()
+            if verbose:
+                print(f"[phase1] batch {batch_num}/{len(batches)}: +{len(items)}", file=sys.stderr)
 
-    def flush():
-        NEWS_JSON.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+        await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
 
-    await _run_concurrent(
-        {"chunks": all_chunks, "timeout": cfg["timeout"]},
-        process, cfg["concurrency"], lock, flush
-    )
-    flush()
-    elapsed = round(time.monotonic() - t0, 1)
-    if verbose:
-        print(f"[phase1] done: {scored} classified in {elapsed}s ({errors} errors)", file=sys.stderr)
-    return {"classified": scored, "errors": errors, "elapsed_s": elapsed}
+    conn.close()
+    return {"classified": len(rows), "batches": len(batches)}
 
 
 # ── Phase 2: Targeted summarization for high-score English articles ──
