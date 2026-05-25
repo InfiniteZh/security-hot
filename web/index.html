@@ -2562,81 +2562,120 @@ document.getElementById("detail-drawer").setAttribute("tabindex", "-1");
 function renderDetail(v) {
   const sev = v.severity || "unknown";
   const epss = v.epss_score != null ? `${(v.epss_score * 100).toFixed(1)}%` : "—";
-  const epssP = v.epss_percentile != null ? `(p${(v.epss_percentile * 100).toFixed(1)})` : "";
-  const refs = (v.references || []).map(r => `
-    <li><a class="lnk text-[12.5px] block py-1 truncate" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.label || r.url)} ↗</a></li>
-  `).join("") || `<li class="text-[12.5px] text-paper-dim">—</li>`;
+  const epssP = v.epss_percentile != null ? `p${(v.epss_percentile * 100).toFixed(0)}` : "";
+  const hasPocs = (v.pocs || []).length > 0;
+  const hasRefs = (v.references || []).length > 0;
+  const hasVersions = (v.affected_versions || []).length > 0;
+
+  const refs = (v.references || []).map(r => {
+    const domain = (() => { try { return new URL(r.url).hostname.replace('www.',''); } catch { return ''; } })();
+    return `
+    <li class="py-2 flex items-baseline gap-2 min-w-0">
+      <span class="font-mono text-[10px] text-paper-veil shrink-0 w-[120px] truncate" title="${escapeHtml(domain)}">${escapeHtml(domain)}</span>
+      <a class="lnk text-[12.5px] truncate min-w-0" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.label || r.url)} ↗</a>
+    </li>`;
+  }).join("");
+
   const pocs = (v.pocs || []).map(p => `
-    <li class="py-1 flex items-baseline justify-between gap-3">
-      <a class="lnk text-[12.5px] font-mono truncate" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.title || p.url)} ↗</a>
-      <span class="font-mono text-[11px] text-paper-dim shrink-0">★ ${p.stars}</span>
+    <li class="py-2 flex items-baseline justify-between gap-3">
+      <a class="lnk text-[12.5px] font-mono truncate min-w-0" href="${escapeHtml(p.url)}" target="_blank" rel="noopener">${escapeHtml(p.title || p.url)} ↗</a>
+      ${p.stars ? `<span class="font-mono text-[10.5px] shrink-0" style="color:var(--warn);">★ ${p.stars}</span>` : ''}
     </li>
-  `).join("") || `<li class="text-[12.5px] text-paper-dim">—</li>`;
-  const nuclei = v.nuclei_template_url
-    ? `<a class="lnk text-[12.5px] font-mono break-all" href="${escapeHtml(v.nuclei_template_url)}" target="_blank" rel="noopener">${escapeHtml(v.nuclei_template_url)} ↗</a>`
-    : `<span class="text-[12.5px] text-paper-dim">—</span>`;
+  `).join("");
+
+  const sevColors = { critical:'var(--signal)', high:'var(--warn)', medium:'#B45309', low:'var(--info)', unknown:'var(--paper-veil)' };
+  const sevColor = sevColors[sev] || sevColors.unknown;
 
   return `
     <div class="p-6 lg:p-8">
-      <div class="flex items-center justify-between mb-4">
-        <button onclick="closeDetailDrawer()" class="font-mono text-[11px] uppercase tracking-widest text-paper-dim hover:text-paper">← ${t("detail.close")}</button>
+      <div class="flex items-center justify-between mb-5">
+        <button onclick="closeDetailDrawer()" class="font-mono text-[11px] uppercase tracking-widest text-paper-dim hover:text-paper transition-colors">← ${t("detail.close")}</button>
         <span class="font-mono text-[10.5px] text-paper-faint">${escapeHtml(v.source)}</span>
       </div>
+
       <div class="flex items-center gap-2 flex-wrap mb-3">
         <span class="${severityClass(sev)}">${t("sev." + sev)}</span>
         ${vulnKindPill(v)}
         ${v.is_kev ? `<span class="pill-tag kev">KEV</span>` : ""}
         ${v.is_ransomware ? `<span class="pill-tag ransom">RANSOMWARE</span>` : ""}
         ${v.is_supply_chain ? `<span class="pill-tag supply">SUPPLY</span>` : ""}
+        ${v.nuclei_template_url ? `<span class="pill-tag nuclei">NUCLEI</span>` : ""}
       </div>
-      <h2 class="text-[22px] font-semibold tracking-tight leading-tight mb-1">${escapeHtml(v.title || v.id)}</h2>
-      <div class="font-mono text-[12px] text-paper-dim mb-4">${escapeHtml(v.cve_id || v.ghsa_id || v.id)}${v.published ? ` · ${escapeHtml(relTime(v.published))}` : ""}</div>
-      ${v.summary ? `<p class="text-[13.5px] text-paper-dim leading-relaxed mb-4 whitespace-pre-line">${escapeHtml(v.summary)}</p>` : ""}
+
+      <h2 class="text-[22px] font-semibold tracking-tight leading-tight mb-1" style="letter-spacing:-0.018em;">${escapeHtml(v.title || v.id)}</h2>
+      <div class="font-mono text-[12px] text-paper-dim mb-5">${escapeHtml(v.cve_id || v.ghsa_id || v.id)}${v.published ? ` · ${escapeHtml(relTime(v.published))}` : ""}</div>
+
+      ${v.summary ? `<p class="text-[13.5px] text-paper-dim leading-relaxed mb-5 whitespace-pre-line" style="max-width:56ch;">${escapeHtml(v.summary)}</p>` : ""}
 
       ${v.ai_summary ? `
-      <div class="ai-assess mb-6">
-        <div class="ai-assess-label">${t("vuln.ai_assess")}${v.ai_severity ? ` · ${t("sev." + v.ai_severity)}` : ''}</div>
-        <div class="ai-assess-text">${escapeHtml(v.ai_summary)}</div>
-      </div>` : ''}
-
-      <div class="grid grid-cols-2 gap-4 mb-6">
-        <div>
-          <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">CVSS</div>
-          <div class="font-mono text-[18px]">${v.cvss != null ? v.cvss.toFixed(1) : "—"}</div>
-        </div>
-        <div>
-          <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">EPSS</div>
-          <div class="font-mono text-[18px]">${epss} <span class="text-[11px] text-paper-dim">${epssP}</span></div>
-        </div>
-        <div>
-          <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">${t("vuln.heat")}</div>
-          <div class="font-mono text-[18px]">${v.heat}</div>
-        </div>
-        <div>
-          <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">${t("detail.signals")}</div>
-          <div class="font-mono text-[12px]">HN ${v.hn_mentions || 0} · Masto ${v.masto_mentions || 0}</div>
-        </div>
-      </div>
-
-      ${(v.affected_versions && v.affected_versions.length) ? `
       <section class="mb-6">
-        <h3 class="font-mono text-[11px] tracking-widest uppercase text-paper-dim mb-2">${t("vuln.affected")} <span class="text-paper-faint">(${v.affected_versions.length})</span></h3>
+        <div class="ai-summary" style="max-width:none;">
+          <span class="ai-summary-tag">${t("vuln.ai_assess")}${v.ai_severity ? ` · ${t("sev." + v.ai_severity)}` : ''}</span>
+          <p class="ai-summary-text" style="font-size:14px;line-height:1.7;">${escapeHtml(v.ai_summary)}</p>
+        </div>
+      </section>` : ''}
+
+      <section class="mb-6" style="padding:16px;background:var(--surface-2);border-radius:10px;">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;text-align:center;">
+          <div>
+            <div class="font-mono text-[9.5px] tracking-widest uppercase text-paper-faint mb-1">CVSS</div>
+            <div class="font-mono text-[20px] font-medium" style="color:${v.cvss != null && v.cvss >= 9 ? 'var(--signal)' : v.cvss != null && v.cvss >= 7 ? 'var(--warn)' : 'var(--paper)'};">${v.cvss != null ? v.cvss.toFixed(1) : "—"}</div>
+          </div>
+          <div>
+            <div class="font-mono text-[9.5px] tracking-widest uppercase text-paper-faint mb-1">EPSS</div>
+            <div class="font-mono text-[20px] font-medium">${epss}</div>
+            ${epssP ? `<div class="font-mono text-[10px] text-paper-veil">${epssP}</div>` : ''}
+          </div>
+          <div>
+            <div class="font-mono text-[9.5px] tracking-widest uppercase text-paper-faint mb-1">${t("vuln.heat")}</div>
+            <div class="font-mono text-[20px] font-medium">${v.heat}</div>
+          </div>
+          <div>
+            <div class="font-mono text-[9.5px] tracking-widest uppercase text-paper-faint mb-1">SOCIAL</div>
+            <div class="font-mono text-[12px] text-paper-dim" style="margin-top:6px;">HN ${v.hn_mentions || 0}</div>
+            <div class="font-mono text-[12px] text-paper-dim">Masto ${v.masto_mentions || 0}</div>
+          </div>
+        </div>
+      </section>
+
+      ${hasVersions ? `
+      <section class="mb-6">
+        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-2">${t("vuln.affected")} <span class="text-paper-veil">(${v.affected_versions.length})</span></h3>
         <div class="flex flex-wrap gap-1.5">
           ${v.affected_versions.map(ver => `<code class="font-mono text-[12px] bg-surface-2 border hairline rounded px-2 py-0.5 text-paper-dim">${(v.package ? escapeHtml(v.package) + '@' : '')}${escapeHtml(ver)}</code>`).join("")}
         </div>
       </section>` : ""}
+
+      ${v.nuclei_template_url ? `
       <section class="mb-6">
-        <h3 class="font-mono text-[11px] tracking-widest uppercase text-paper-dim mb-2">${t("detail.nuclei")}</h3>
-        ${nuclei}
-      </section>
+        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-2">${t("detail.nuclei")}</h3>
+        <a class="lnk text-[12.5px] font-mono break-all" href="${escapeHtml(v.nuclei_template_url)}" target="_blank" rel="noopener">${escapeHtml(v.nuclei_template_url)} ↗</a>
+      </section>` : ""}
+
+      ${hasPocs ? `
       <section class="mb-6">
-        <h3 class="font-mono text-[11px] tracking-widest uppercase text-paper-dim mb-2">${t("detail.pocs")} <span class="text-paper-faint">(${(v.pocs||[]).length})</span></h3>
-        <ul class="divide-y hairline">${pocs}</ul>
-      </section>
+        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-2">${t("detail.pocs")} <span class="text-paper-veil">(${v.pocs.length})</span></h3>
+        <ul class="divide-y" style="border-color:var(--hairline);">${pocs}</ul>
+      </section>` : ""}
+
+      ${hasRefs ? `
       <section class="mb-6">
-        <h3 class="font-mono text-[11px] tracking-widest uppercase text-paper-dim mb-2">${t("detail.refs")}</h3>
-        <ul class="divide-y hairline">${refs}</ul>
-      </section>
+        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-2">${t("detail.refs")} <span class="text-paper-veil">(${v.references.length})</span></h3>
+        <ul class="divide-y" style="border-color:var(--hairline);">${refs}</ul>
+      </section>` : ""}
+
+      <div class="pt-3" style="border-top:1px solid var(--hairline);">
+        <a href="https://nvd.nist.gov/vuln/detail/${encodeURIComponent(v.cve_id || v.id)}" target="_blank" rel="noopener"
+           class="inline-flex items-center gap-1.5 font-mono text-[12.5px] font-medium hover:opacity-70 transition-opacity"
+           style="color:var(--ok);text-decoration:none;">
+          NVD ↗
+        </a>
+        ${v.ghsa_id ? `<span style="color:var(--paper-veil);margin:0 8px;">·</span><a href="https://github.com/advisories/${encodeURIComponent(v.ghsa_id)}" target="_blank" rel="noopener"
+           class="inline-flex items-center gap-1.5 font-mono text-[12.5px] font-medium hover:opacity-70 transition-opacity"
+           style="color:var(--ok);text-decoration:none;">
+          GitHub Advisory ↗
+        </a>` : ''}
+      </div>
     </div>
   `;
 }
