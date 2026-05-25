@@ -386,6 +386,48 @@ def api_refresh(
     return JSONResponse({"queued": True, "only": chosen}, status_code=202)
 
 
+@app.get("/api/news/hidden", response_model=list[Article], tags=["news"])
+def api_news_hidden(
+    date: str | None = Query(default=None, description="YYYY-MM-DD; default=today UTC"),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[Article]:
+    """Articles judged is_relevant=0 — for human audit of LLM filter."""
+    from .data import _news_conn, _NEWS_DB, _row_to_article
+    if not _NEWS_DB.exists():
+        return []
+    target = _validate_date(date) or _today_utc_str()
+    conn = _news_conn()
+    rows = list(conn.execute("""
+        SELECT * FROM articles
+        WHERE is_relevant = 0 AND first_seen_date = ?
+        ORDER BY fetched_at DESC LIMIT ?
+    """, [target, limit]))
+    conn.close()
+    return [_row_to_article(r, {}) for r in rows]
+
+
+@app.get("/api/news/{article_id}/mirrors", response_model=list[Article], tags=["news"])
+def api_article_mirrors(article_id: int) -> list[Article]:
+    """Return all mirror articles in the same cluster (excludes primary)."""
+    from .data import _news_conn, _NEWS_DB, _row_to_article
+    if not _NEWS_DB.exists():
+        raise HTTPException(status_code=404, detail="news.db not found")
+    conn = _news_conn()
+    primary = conn.execute(
+        "SELECT cluster_id FROM articles WHERE id = ?", [article_id]
+    ).fetchone()
+    if not primary or not primary["cluster_id"]:
+        conn.close()
+        raise HTTPException(status_code=404, detail="no cluster for this article")
+    rows = list(conn.execute("""
+        SELECT * FROM articles
+        WHERE cluster_id = ? AND id != ?
+        ORDER BY fetched_at ASC
+    """, [primary["cluster_id"], article_id]))
+    conn.close()
+    return [_row_to_article(r, {}) for r in rows]
+
+
 # mount frontend static files
 if WEB.exists():
     app.mount("/", StaticFiles(directory=str(WEB), html=True), name="web")
