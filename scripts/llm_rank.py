@@ -361,9 +361,9 @@ async def summarize_news(
     limit: int | None = None,
     verbose: bool = True,
 ) -> dict:
-    """Phase 2: generate Chinese summaries for high-score English articles.
+    """Phase 2: generate Chinese summaries for all scored articles.
 
-    Filter: lang='en' AND llm_score >= min_score AND is_relevant=1
+    Filter: llm_score >= min_score AND is_relevant=1
             AND llm_summary_zh IS NULL.
     """
     from datetime import datetime, timezone, timedelta
@@ -376,14 +376,10 @@ async def summarize_news(
     try:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
         limit_clause = f"LIMIT {limit}" if limit else ""
-        # Anything that isn't explicitly Chinese gets a zh summary. OPML
-        # sources don't always tag lang, so 'lang=en' alone misses a lot of
-        # legitimate English articles (saw ~110 missing on the live DB).
         rows = list(conn.execute(f"""
-            SELECT id, title, summary
+            SELECT id, title, summary, lang
             FROM articles
-            WHERE (lang != 'zh' OR lang IS NULL OR lang = '')
-              AND llm_score >= ?
+            WHERE llm_score >= ?
               AND is_relevant = 1
               AND llm_summary_zh IS NULL
               AND COALESCE(published, fetched_at) >= ?
@@ -397,8 +393,13 @@ async def summarize_news(
         batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-        system_prompt = """你是安全资讯翻译/摘要助手。
-为每篇英文安全文章生成 1-2 句中文摘要（<=120 字）, 重点保留 CVE 编号 / 厂商 / 漏洞类型 / 影响范围。
+        system_prompt = """你是安全资讯摘要助手。
+为每篇安全文章生成 3-5 句中文摘要（200-300 字），内容应覆盖：
+- 核心事件：发生了什么（CVE 编号 / 厂商 / 漏洞类型 / 攻击手法）
+- 影响范围：涉及哪些产品、版本、用户群体
+- 技术要点：利用条件、攻击向量、严重程度
+- 应对建议：补丁、缓解措施或关注重点（如文章提及）
+英文文章翻译为中文摘要；中文文章提炼精简摘要。
 输出 JSON: {"items": [{"id": <int>, "summary": "中文摘要..."}]}
 不要 markdown, 不要前缀。"""
 
@@ -422,7 +423,7 @@ async def summarize_news(
                 for item in result.get("items", []):
                     conn.execute(
                         "UPDATE articles SET llm_summary_zh = ?, llm_summarized_at = ? WHERE id = ?",
-                        [(item.get("summary") or "")[:500], now_iso, item.get("id")],
+                        [(item.get("summary") or "")[:800], now_iso, item.get("id")],
                     )
                 conn.commit()
                 if verbose:
