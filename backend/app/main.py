@@ -276,7 +276,11 @@ async def regenerate_brief(
     concurrent calls return 409.
     """
     expected = os.environ.get("SECURITY_HOT_REFRESH_TOKEN")
-    if not expected or not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
+    # Distinguish "feature disabled (server-side missing config)" from
+    # "wrong token (user-side)" so the UI can show a useful message.
+    if not expected:
+        raise HTTPException(status_code=503, detail="brief regenerate disabled — set SECURITY_HOT_REFRESH_TOKEN in .env")
+    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
         raise HTTPException(status_code=401, detail="invalid refresh token")
     target = _validate_date(date) or _today_utc_str()
     global _brief_regen_in_flight

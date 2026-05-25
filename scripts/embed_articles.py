@@ -51,6 +51,7 @@ def embed_unembedded_articles(
     """
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat().replace("+00:00", "Z")
     conn = db.connect(db_path)
+    db.init_schema(conn)  # idempotent — brings older DBs up to date with article_embeddings table
     try:
         rows = list(conn.execute("""
             SELECT a.id, a.title FROM articles a

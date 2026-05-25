@@ -1411,39 +1411,61 @@ document.getElementById("brief-toggle").addEventListener("click", () => {
 });
 
 async function regenerateBrief() {
+  const isZh = (typeof lang !== "undefined" && lang === "zh");
   // Share the same localStorage key as triggerRefresh() so users only enter
   // their token once across the app (see REFRESH_TOKEN_KEY at top).
   let token = getRefreshToken();
   if (!token) {
-    const isZh = (typeof lang !== 'undefined' && lang === 'zh');
-    token = prompt(isZh
-      ? 'Refresh token（在 .env 里的 SECURITY_HOT_REFRESH_TOKEN）：'
-      : 'Refresh token (from .env SECURITY_HOT_REFRESH_TOKEN):');
+    token = window.prompt(t("refresh.prompt"));
     if (!token) return;
-    setRefreshToken(token.trim());
+    token = token.trim();
+    if (!token) return;
+    setRefreshToken(token);
   }
+  const targetDate = state.briefDate || state.selectedDate || todayUtc();
+  showRefreshToast(isZh ? `正在生成 ${targetDate} 的简报…` : `Generating brief for ${targetDate}…`, "ok", 3000);
+
+  let r;
   try {
-    // Use the currently-viewed brief date so historical regen works.
-    const targetDate = state.briefDate || todayUtc();
-    const r = await fetch(`/api/brief/regenerate?date=${encodeURIComponent(targetDate)}`, {
-      method: 'POST',
-      headers: {'X-Refresh-Token': token},
+    r = await fetch(`/api/brief/regenerate?date=${encodeURIComponent(targetDate)}`, {
+      method: "POST",
+      headers: {"X-Refresh-Token": token},
     });
-    if (r.status === 401) {
-      clearRefreshToken();
-      alert((typeof lang !== 'undefined' && lang === 'zh') ? 'Token 无效，已清除，请重试' : 'Token invalid, cleared, retry');
-      return;
-    }
-    if (r.status === 202) {
-      console.log('brief regen accepted, refetching in 10s');
-      setTimeout(() => {
-        state.briefDate = null; // force re-fetch
-        fetchBrief().then(renderBrief);
-      }, 10000);
-    }
   } catch (e) {
-    console.error('regen failed', e);
+    showRefreshToast(`${t("refresh.failed")}: ${e.message}`, "error", 6000);
+    return;
   }
+
+  if (r.status === 503) {
+    // Server didn't configure SECURITY_HOT_REFRESH_TOKEN — distinct from wrong token.
+    let detail = "";
+    try { detail = (await r.json()).detail || ""; } catch (_) {}
+    showRefreshToast(
+      isZh ? `❌ 服务未配置：${detail || "请在 .env 里设置 SECURITY_HOT_REFRESH_TOKEN 并重启服务"}`
+           : `❌ Server not configured: ${detail || "set SECURITY_HOT_REFRESH_TOKEN in .env"}`,
+      "error", 8000);
+    return;
+  }
+  if (r.status === 401) {
+    clearRefreshToken();
+    showRefreshToast(isZh ? "❌ Token 无效，已清除，请重试" : "❌ Invalid token, cleared", "error", 6000);
+    return;
+  }
+  if (r.status === 409) {
+    showRefreshToast(isZh ? "⏳ 简报已在生成中，请等待" : "⏳ Brief regeneration already running", "warn", 4000);
+    return;
+  }
+  if (r.status === 202) {
+    showRefreshToast(isZh ? "✅ 简报生成中,15s 后自动刷新" : "✅ Generating… auto-refresh in 15s", "ok", 4000);
+    setTimeout(() => {
+      state.briefDate = null; // force re-fetch
+      fetchBrief().then(renderBrief).then(() => {
+        showRefreshToast(isZh ? "✅ 简报已更新" : "✅ Brief updated", "ok", 3000);
+      });
+    }, 15000);
+    return;
+  }
+  showRefreshToast(`${t("refresh.failed")}: HTTP ${r.status}`, "error", 5000);
 }
 
 function renderAll() {

@@ -78,6 +78,7 @@ def cluster_articles_in_db(
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat().replace("+00:00", "Z")
     conn = db.connect(db_path)
+    db.init_schema(conn)  # idempotent — keeps schema in sync if DB pre-dates a table
     try:
         # Pull articles with embeddings (skip unembedded — must run embed_articles first)
         rows = list(conn.execute("""
