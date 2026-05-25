@@ -15,9 +15,9 @@ CRON_TZ=UTC
 
 */15 * * * *   cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only news --incremental >> /tmp/security-hot-fetch.log 2>&1
 0    */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/cluster_articles.py >> /tmp/security-hot-cluster.log 2>&1
-30   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task classify >> /tmp/security-hot-classify.log 2>&1
-45   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task summarize >> /tmp/security-hot-summarize.log 2>&1
-0    23  * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task brief >> /tmp/security-hot-brief.log 2>&1
+30   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task news_classify >> /tmp/security-hot-classify.log 2>&1
+45   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task news_summarize >> /tmp/security-hot-summarize.log 2>&1
+0    23  * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task daily_brief >> /tmp/security-hot-brief.log 2>&1
 
 # Optional: refresh other (non-news) fetchers every 4h
 30   */4 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto >> /tmp/security-hot-other.log 2>&1
