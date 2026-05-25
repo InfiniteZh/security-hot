@@ -237,7 +237,7 @@ def _run_llm_brief_subprocess(target_date: str) -> None:
     """Background-task wrapper. Invoked off the HTTP request path."""
     try:
         subprocess.run(
-            ["uv", "run", "python", "scripts/llm_rank.py", "--task", "brief", "--date", target_date],
+            ["uv", "run", "python", "scripts/llm_rank.py", "--task", "daily_brief", "--date", target_date],
             cwd=str(ROOT), check=False, timeout=300,
         )
     except Exception as exc:
