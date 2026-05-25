@@ -115,3 +115,34 @@ def init_schema(conn: sqlite3.Connection) -> None:
     """Create all tables, indexes, FTS table, and triggers. Idempotent."""
     conn.executescript(SCHEMA_SQL)
     conn.commit()
+
+
+ARTICLE_INSERT_COLS = [
+    "canonical_url", "title", "summary", "source_slug", "source_title",
+    "lang", "rss_category", "published", "fetched_at", "first_seen_date",
+]
+
+
+def upsert_article(conn: sqlite3.Connection, row: dict) -> int:
+    """INSERT-or-IGNORE on canonical_url. Returns the article id.
+
+    LLM and cluster fields are NEVER touched by upsert — they are the
+    sole responsibility of llm_rank.py and cluster_articles.py.
+    """
+    cols = ARTICLE_INSERT_COLS
+    placeholders = ",".join("?" for _ in cols)
+    col_list = ",".join(cols)
+    values = [row.get(c) for c in cols]
+    cur = conn.execute(
+        f"INSERT OR IGNORE INTO articles ({col_list}) VALUES ({placeholders})",
+        values,
+    )
+    if cur.lastrowid and cur.rowcount > 0:
+        conn.commit()
+        return cur.lastrowid
+    # Row already existed — look up its id
+    existing = conn.execute(
+        "SELECT id FROM articles WHERE canonical_url = ?",
+        [row["canonical_url"]],
+    ).fetchone()
+    return existing["id"] if existing else 0
