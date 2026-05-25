@@ -877,7 +877,7 @@ def all_sources() -> list[SourceStatus]:
 def heat_board(limit: int = 10, date: str | None = None) -> list[HeatEntry]:
     vulns = all_vulns()
     if date:
-        vulns = [v for v in vulns if (v.published or "")[:10] == date or (v.first_seen or "")[:10] == date]
+        vulns = [v for v in vulns if (v.published or "")[:10] == date]
     out: list[HeatEntry] = []
     for i, v in enumerate(vulns[:limit], start=1):
         kind_color = {
