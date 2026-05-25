@@ -271,6 +271,25 @@ def test_create_cluster_links_articles(conn):
     assert cluster_row["member_count"] == 3
 
 
+def test_upsert_embedding_writes_and_replaces(conn):
+    db.init_schema(conn)
+    rid = db.upsert_article(conn, {
+        "canonical_url": "https://x/1", "title": "T", "summary": "",
+        "source_slug": "x", "source_title": "X", "lang": "en",
+        "published": None, "fetched_at": "2026-05-25T11:00:00Z",
+        "first_seen_date": "2026-05-25",
+    })
+    db.upsert_embedding(conn, rid, b"\x00" * 1536, "test-model", "2026-05-25T12:00:00Z")
+    row = conn.execute("SELECT embedding, model FROM article_embeddings WHERE article_id=?", [rid]).fetchone()
+    assert len(row["embedding"]) == 1536
+    assert row["model"] == "test-model"
+    # Replace
+    db.upsert_embedding(conn, rid, b"\xff" * 1536, "new-model", "2026-05-25T13:00:00Z")
+    row = conn.execute("SELECT embedding, model FROM article_embeddings WHERE article_id=?", [rid]).fetchone()
+    assert row["model"] == "new-model"
+    assert row["embedding"][0] == 0xff
+
+
 def test_upsert_brief_replaces_on_conflict(conn):
     db.init_schema(conn)
     db.upsert_brief(conn, date="2026-05-25", category="vuln",

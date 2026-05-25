@@ -38,7 +38,8 @@
 ├── scripts/
 │   ├── fetch_data.py          # 11 个 fetcher，news 写 SQLite，其他写 JSON
 │   ├── llm_rank.py            # SQLite-backed classify/summarize/brief + vuln_assess
-│   ├── cluster_articles.py    # Jaccard 3-shingle 镜像聚类
+│   ├── embed_articles.py      # 计算 multilingual-e5-small 嵌入向量（384-dim）
+│   ├── cluster_articles.py    # 余弦相似度镜像聚类（替代原 Jaccard 3-shingle）
 │   ├── db.py                  # SQLite 连接 + schema + CRUD helpers
 │   ├── migrate_to_sqlite.py   # 一次性 news.json → news.db 迁移
 │   ├── merge_rss.py           # OPML 合并 + 去重 + 探活
@@ -157,12 +158,21 @@ uv run python scripts/migrate_to_sqlite.py            # 一次性迁移 news.jso
 **日常操作**：
 ```bash
 uv run python scripts/fetch_data.py --only news --incremental    # 智能挑源（按 last_fetched + interval_minutes）
-uv run python scripts/cluster_articles.py                         # 镜像聚类（Jaccard 3-shingle）
+uv run python scripts/embed_articles.py                           # 计算嵌入（multilingual-e5-small，首次下载 ~470MB）
+uv run python scripts/embed_articles.py --window 168              # 扩大窗口（如补跑过去 7 天）
+uv run python scripts/cluster_articles.py                         # 镜像聚类（余弦相似度 ≥0.85，支持跨语言）
 uv run python scripts/llm_rank.py --task news_classify            # 仅给未打分的 articles 打分
 uv run python scripts/llm_rank.py --task news_summarize           # 高分英文文章 → 中文摘要
 uv run python scripts/llm_rank.py --task daily_brief              # 5 类日报，写入 daily_briefs 表
 uv run python scripts/llm_rank.py --task daily_brief --date 2026-05-25  # 指定日期重跑
 ```
+
+**嵌入管道说明**：
+- `embed_articles.py` 使用 `intfloat/multilingual-e5-small`（118M 参数，MIT 协议，Apple Silicon MPS 加速）
+- 将标题编码为 384 维 L2-归一化向量，存入 `article_embeddings` 表（独立于 `articles`）
+- `cluster_articles.py` 读取已有嵌入，构建 n×n 余弦相似度矩阵，用 Union-Find 合并 ≥0.85 的对
+- 跨语言镜像（"微软修补 Outlook RCE" ↔ "Microsoft patches Outlook RCE"）可被正确检出
+- 依赖：`sentence-transformers>=3.0`（含 torch，约 700MB，`uv sync` 一次性下载）
 
 **fetch_data 与 LLM 完全解耦**：fetch 写 articles (LLM 字段 NULL)；llm_rank 独立扫 `WHERE llm_score IS NULL` 并填上。
 两个进程通过 SQLite WAL 模式并发，0 import 关系。

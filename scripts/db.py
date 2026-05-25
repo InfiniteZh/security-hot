@@ -76,6 +76,16 @@ CREATE TABLE IF NOT EXISTS daily_briefs (
     PRIMARY KEY (date, category)
 );
 
+CREATE TABLE IF NOT EXISTS article_embeddings (
+    article_id  INTEGER PRIMARY KEY,
+    embedding   BLOB NOT NULL,
+    model       TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    FOREIGN KEY (article_id) REFERENCES articles(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_emb_model ON article_embeddings(model);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
     title, summary, llm_summary_zh,
     content='articles', content_rowid='id',
@@ -242,6 +252,25 @@ def create_cluster(
         )
     conn.commit()
     return cluster_id
+
+
+def upsert_embedding(
+    conn: sqlite3.Connection,
+    article_id: int,
+    vector: bytes,
+    model: str,
+    created_at: str,
+) -> None:
+    """INSERT OR UPDATE embedding for an article. Overwrites on conflict."""
+    conn.execute("""
+        INSERT INTO article_embeddings (article_id, embedding, model, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(article_id) DO UPDATE SET
+          embedding = excluded.embedding,
+          model = excluded.model,
+          created_at = excluded.created_at
+    """, [article_id, vector, model, created_at])
+    conn.commit()
 
 
 def upsert_brief(

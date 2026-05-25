@@ -7,14 +7,17 @@
 # Cadence summary:
 #   - fetcher runs every 15min; smart picking honors per-source interval_minutes
 #     (top=30min, tail=4h) so this is cheap.
-#   - clustering runs every 2h after fetch settles
+#   - embed runs every 2h (after fetch settles); downloads intfloat/multilingual-e5-small
+#     (~470MB) on first run to ~/.cache/huggingface; subsequent runs are fast (MPS/CUDA).
+#   - clustering runs every 2h, 15min after embed (reads pre-computed embeddings)
 #   - LLM classify every 2h, summarize 15min later (avoid SQLite write contention)
 #   - daily brief once at 23:00 UTC (~7am Beijing for next-day reading)
 
 CRON_TZ=UTC
 
 */15 * * * *   cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only news --incremental >> /tmp/security-hot-fetch.log 2>&1
-0    */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/cluster_articles.py >> /tmp/security-hot-cluster.log 2>&1
+0    */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/embed_articles.py >> /tmp/security-hot-embed.log 2>&1
+15   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/cluster_articles.py >> /tmp/security-hot-cluster.log 2>&1
 30   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task news_classify >> /tmp/security-hot-classify.log 2>&1
 45   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task news_summarize >> /tmp/security-hot-summarize.log 2>&1
 0    23  * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task daily_brief >> /tmp/security-hot-brief.log 2>&1

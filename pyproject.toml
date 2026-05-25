@@ -9,6 +9,7 @@ dependencies = [
   "httpx>=0.27",
   "feedparser>=6.0",
   "pydantic>=2.6",
+  "sentence-transformers>=3.0",
 ]
 
 [tool.uv]
@@ -25,3 +26,4 @@ dev = [
 asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
+markers = ["slow: tests that download large models or hit network (skip with -m 'not slow')"]
