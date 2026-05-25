@@ -64,8 +64,12 @@ def embed_unembedded_articles(
 
         if verbose: print(f"[embed] {len(rows)} articles to embed", file=sys.stderr)
         model = _load_model()
-        # e5 prefers "query: " or "passage: " prefix; for clustering use "passage:"
-        texts = [f"passage: {(r['title'] or '').strip()}" for r in rows]
+        # e5 docs: use "query: " for symmetric tasks (clustering = both sides
+        # are documents of same kind). "passage: " is for asymmetric RAG where
+        # one side is a query and the other a corpus passage; using it for
+        # clustering produces a flatter similarity surface that clumps unrelated
+        # security titles together. "query: " gives sharper distinctions.
+        texts = [f"query: {(r['title'] or '').strip()}" for r in rows]
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
         n_written = 0

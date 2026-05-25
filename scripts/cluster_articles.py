@@ -18,7 +18,12 @@ import numpy as np
 
 import db
 
-COSINE_THRESHOLD = 0.85
+# Empirically tuned: 0.85 produces a massive supercluster via transitive
+# closure (A~B~C~D…) on the e5-small + "query:" prefix output for short
+# security titles, because everything has high baseline cosine within the
+# same domain. 0.92 keeps mirrors/paraphrases together while breaking the
+# transitive chains.
+COSINE_THRESHOLD = 0.92
 
 
 class UnionFind:
@@ -57,76 +62,83 @@ def _pick_primary(group: list[dict]) -> int:
     return sorted(group, key=sort_key)[0]["id"]
 
 
+def _cluster_one_day_partition(rows: list, conn, now_iso: str) -> int:
+    """Pure clustering pass on articles already filtered to one day.
+    Returns number of new clusters created in this partition."""
+    if len(rows) < 2:
+        return 0
+    ids = [r["id"] for r in rows]
+    n = len(ids)
+    M = np.zeros((n, 384), dtype=np.float32)
+    for i, r in enumerate(rows):
+        M[i] = np.frombuffer(r["embedding"], dtype=np.float32)
+    sim = M @ M.T
+
+    uf = UnionFind(ids)
+    for i in range(n):
+        row_sim = sim[i, i+1:]
+        hits = np.where(row_sim >= COSINE_THRESHOLD)[0]
+        for offset in hits:
+            j = i + 1 + int(offset)
+            uf.union(ids[i], ids[j])
+
+    members_by_root: dict = {}
+    for r in rows:
+        members_by_root.setdefault(uf.find(r["id"]), []).append(dict(r))
+
+    n_clusters = 0
+    for _root_id, group in members_by_root.items():
+        if len(group) < 2:
+            continue
+        primary_id = _pick_primary(group)
+        mirror_ids = [g["id"] for g in group if g["id"] != primary_id]
+        db.create_cluster(conn, primary_id=primary_id, mirror_ids=mirror_ids, created_at=now_iso)
+        n_clusters += 1
+    return n_clusters
+
+
 def cluster_articles_in_db(
     *,
     db_path=None,
     window_hours: int = 72,
     now_iso: str | None = None,
 ) -> int:
-    """Find mirror clusters within the last `window_hours` using cosine similarity
-    on pre-computed embeddings and write them to the DB.
+    """Cluster mirror articles using cosine similarity on pre-computed embeddings.
 
-    Idempotent: articles already in a cluster (cluster_id IS NOT NULL) are
-    skipped; the function only considers fresh articles.
+    Partitions by **publish day** (COALESCE(published, fetched_at) → YYYY-MM-DD).
+    Each day is clustered independently — a mirror campaign across days
+    won't form a transitive supercluster, and the per-partition N
+    (typically 500-1500/day) keeps the pairwise matrix small.
 
-    Requires embed_articles.py to have been run first — articles without
-    embeddings are silently skipped (they won't cluster).
-
-    Returns the number of new clusters created.
+    Idempotent: only considers articles where cluster_id IS NULL.
+    Requires embed_articles.py to have run first; articles without
+    embeddings are silently skipped.
     """
     if now_iso is None:
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat().replace("+00:00", "Z")
     conn = db.connect(db_path)
-    db.init_schema(conn)  # idempotent — keeps schema in sync if DB pre-dates a table
+    db.init_schema(conn)
     try:
-        # Pull articles with embeddings (skip unembedded — must run embed_articles first)
-        rows = list(conn.execute("""
-            SELECT a.id, a.title, a.lang, a.fetched_at, e.embedding
+        # Bucket by publish day; SQLite date() handles both ISO 'T' and ' ' formats.
+        rows_by_day: dict[str, list] = {}
+        for r in conn.execute("""
+            SELECT a.id, a.title, a.lang, a.fetched_at, e.embedding,
+                   substr(COALESCE(a.published, a.fetched_at), 1, 10) AS pub_day
             FROM articles a
             JOIN article_embeddings e ON e.article_id = a.id
             WHERE a.fetched_at >= ? AND a.cluster_id IS NULL
-        """, [cutoff]))
-        if len(rows) < 2:
-            return 0
+        """, [cutoff]):
+            rows_by_day.setdefault(r["pub_day"], []).append(dict(r))
 
-        # Build matrix
-        ids = [r["id"] for r in rows]
-        n = len(ids)
-        # Embeddings are already L2-normalized (encode(normalize_embeddings=True))
-        # so dot product == cosine similarity.
-        M = np.zeros((n, 384), dtype=np.float32)
-        for i, r in enumerate(rows):
-            M[i] = np.frombuffer(r["embedding"], dtype=np.float32)
-
-        # Full pairwise: n x n. At n=15000 this is 900MB float32 — okay on a
-        # workstation; if memory tightens use chunked computation.
-        sim = M @ M.T  # cosine similarity matrix
-
-        uf = UnionFind(ids)
-        # Iterate upper triangle, union pairs above threshold
-        for i in range(n):
-            # Mask self + already-paired to keep loop tight
-            row_sim = sim[i, i+1:]
-            hits = np.where(row_sim >= COSINE_THRESHOLD)[0]
-            for offset in hits:
-                j = i + 1 + int(offset)
-                uf.union(ids[i], ids[j])
-
-        # Group + write
-        members_by_root: dict = {}
-        for r in rows:
-            members_by_root.setdefault(uf.find(r["id"]), []).append(dict(r))
-
-        n_clusters = 0
-        for root_id, group in members_by_root.items():
-            if len(group) < 2:
-                continue
-            primary_id = _pick_primary(group)
-            mirror_ids = [g["id"] for g in group if g["id"] != primary_id]
-            db.create_cluster(conn, primary_id=primary_id, mirror_ids=mirror_ids, created_at=now_iso)
-            n_clusters += 1
-        return n_clusters
+        total_new = 0
+        for day in sorted(rows_by_day.keys()):
+            day_rows = rows_by_day[day]
+            n_new = _cluster_one_day_partition(day_rows, conn, now_iso)
+            if n_new > 0 or len(day_rows) > 5:
+                print(f"[cluster] {day}: {len(day_rows)} articles → {n_new} clusters", file=sys.stderr)
+            total_new += n_new
+        return total_new
     finally:
         conn.close()
 

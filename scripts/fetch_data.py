@@ -33,7 +33,7 @@ import re
 import sys
 import time
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlparse
 from xml.etree import ElementTree as ET
@@ -583,12 +583,31 @@ async def _fetch_one_source_to_sqlite(
     parsed = feedparser.parse(r.content)
     first_seen_date = now_iso[:10]
 
+    # Filter by publish time window, not per-source count cap.
+    # Window comes from NEWS_DAYS_BACK env (default 30).
+    # Articles with malformed publish dates (year < 2020 or > now+7d) are
+    # dropped as RSS metadata garbage.
+    days_back = int(os.environ.get("NEWS_DAYS_BACK", "30"))
+    cutoff_dt = datetime.now(timezone.utc) - timedelta(days=days_back)
+    future_dt = datetime.now(timezone.utc) + timedelta(days=7)
+
+    def _in_window(entry) -> bool:
+        pub_iso = _entry_published_iso(entry)
+        if not pub_iso:
+            # No publish date — accept (assume recent since we just fetched it).
+            return True
+        try:
+            dt = datetime.fromisoformat(pub_iso.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return False  # unparseable → garbage
+        return cutoff_dt <= dt <= future_dt
+
     entries_raw = [{
         "title": (e.get("title") or "(untitled)")[:500],
         "summary": (e.get("summary") or "")[:2000],
         "link": _make_canonical(e.get("link", "")),
         "_raw": e,
-    } for e in parsed.entries[:80] if e.get("link")]
+    } for e in parsed.entries if e.get("link") and _in_window(e)]
 
     # Layer 2: keyword block (Layer 1 dedupe is handled by SQLite UNIQUE)
     kept, _dropped = _articles_keyword_filter(entries_raw)
