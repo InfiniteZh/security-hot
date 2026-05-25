@@ -8,8 +8,28 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from xml.etree import ElementTree as ET
+from urllib.parse import urlparse
 
 import db
+
+# ─── Tier whitelist: known high-signal Chinese + English security media ───
+TOP_SOURCE_SLUGS = {
+    # Chinese
+    "freebuf", "anquanke", "4hou", "kanxue", "secrss", "qianxin", "tencentyun-security",
+    "alibaba-security", "baidu-security", "huawei-security",
+    # English
+    "krebsonsecurity", "bleepingcomputer", "securityweek", "thehackernews",
+    "darkreading", "schneier", "sans-isc", "talos-intelligence",
+    "google-projectzero", "microsoft-msrc", "naked-security", "threatpost",
+}
+
+INTERVAL_BY_TIER = {"top": 30, "tail": 240}
+
+
+def _slug_from_url(url: str) -> str:
+    host = urlparse(url).hostname or ""
+    return host.lower().replace("www.", "").split(".")[0] or url
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CACHE = ROOT / "backend" / "cache"
@@ -87,7 +107,52 @@ def _migrate_briefs(conn, brief_json: Path, now_iso: str) -> int:
     return n
 
 
-def run(*, db_path: Path, cache_dir: Path, force: bool) -> None:
+def _migrate_sources(conn, curated: list[dict] | None, opml_path: Path | None) -> int:
+    n = 0
+    seen: set[str] = set()
+    for src in (curated or []):
+        slug = src["slug"]
+        tier = "top" if slug in TOP_SOURCE_SLUGS else "tail"
+        db.upsert_source(conn, {
+            "slug": slug, "title": src.get("title") or slug,
+            "url": src["url"], "lang": src.get("lang"),
+            "tier": tier, "interval_minutes": INTERVAL_BY_TIER[tier],
+        })
+        seen.add(slug)
+        n += 1
+    if opml_path and opml_path.exists():
+        try:
+            tree = ET.fromstring(opml_path.read_text(encoding="utf-8"))
+        except ET.ParseError as exc:
+            print(f"[migrate] OPML parse error: {exc}", file=sys.stderr)
+            return n
+        for outline in tree.iter("outline"):
+            url = outline.attrib.get("xmlUrl")
+            if not url:
+                continue
+            slug = _slug_from_url(url)
+            if slug in seen:
+                continue
+            tier = "top" if slug in TOP_SOURCE_SLUGS else "tail"
+            db.upsert_source(conn, {
+                "slug": slug,
+                "title": outline.attrib.get("text") or slug,
+                "url": url, "lang": None,
+                "tier": tier, "interval_minutes": INTERVAL_BY_TIER[tier],
+            })
+            seen.add(slug)
+            n += 1
+    return n
+
+
+def run(
+    *,
+    db_path: Path,
+    cache_dir: Path,
+    force: bool,
+    curated_sources: list[dict] | None = None,
+    opml_path: Path | None = None,
+) -> None:
     if db_path.exists() and not force:
         print(f"[migrate] {db_path} already exists. Pass --force to overwrite.", file=sys.stderr)
         sys.exit(2)
@@ -105,18 +170,27 @@ def run(*, db_path: Path, cache_dir: Path, force: bool) -> None:
     db.init_schema(conn)
     n_articles = _migrate_articles(conn, cache_dir / "news.json", now_iso)
     n_briefs = _migrate_briefs(conn, cache_dir / "daily_brief.json", now_iso)
+    n_sources = _migrate_sources(conn, curated_sources, opml_path)
     conn.close()
 
-    print(f"[migrate] articles={n_articles} briefs={n_briefs} → {db_path}", file=sys.stderr)
+    print(f"[migrate] articles={n_articles} briefs={n_briefs} sources={n_sources} → {db_path}",
+          file=sys.stderr)
 
 
 def main() -> int:
     p = argparse.ArgumentParser(description="Migrate news.json + daily_brief.json into SQLite.")
-    p.add_argument("--db", default=str(db.DEFAULT_DB_PATH), help="Target SQLite path")
-    p.add_argument("--cache", default=str(DEFAULT_CACHE), help="Source cache directory")
-    p.add_argument("--force", action="store_true", help="Overwrite existing news.db")
+    p.add_argument("--db", default=str(db.DEFAULT_DB_PATH))
+    p.add_argument("--cache", default=str(DEFAULT_CACHE))
+    p.add_argument("--opml", default=str(ROOT / "rss" / "merged.opml"))
+    p.add_argument("--force", action="store_true")
     args = p.parse_args()
-    run(db_path=Path(args.db), cache_dir=Path(args.cache), force=args.force)
+
+    # Pull curated NEWS_SOURCES list from fetch_data.py
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from fetch_data import NEWS_SOURCES  # noqa: E402
+
+    run(db_path=Path(args.db), cache_dir=Path(args.cache), force=args.force,
+        curated_sources=NEWS_SOURCES, opml_path=Path(args.opml))
     return 0
 
 

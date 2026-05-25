@@ -59,3 +59,29 @@ def test_migrate_force_overwrites_existing_db(tmp_db: Path, cache_dir: Path):
     n = c.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
     assert n == 1
     c.close()
+
+
+def test_migrate_seeds_sources_from_curated_and_opml(tmp_db: Path, cache_dir: Path):
+    _write_news_json(cache_dir, [])
+    # Simulate the curated NEWS_SOURCES list + a 1-line OPML
+    opml = cache_dir.parent / "rss" / "merged.opml"
+    opml.parent.mkdir(parents=True, exist_ok=True)
+    opml.write_text("""<?xml version="1.0"?>
+<opml version="2.0"><body>
+  <outline type="rss" text="DemoBlog" xmlUrl="https://demoblog.example/feed" />
+</body></opml>""")
+    curated = [
+        {"slug": "freebuf", "title": "FreeBuf", "url": "https://freebuf.com/feed", "lang": "zh"},
+    ]
+    migrate.run(db_path=tmp_db, cache_dir=cache_dir, force=False,
+                curated_sources=curated, opml_path=opml)
+    c = db.connect(tmp_db)
+    rows = list(c.execute("SELECT slug, tier FROM sources ORDER BY slug"))
+    slugs = [r["slug"] for r in rows]
+    assert "freebuf" in slugs
+    # OPML-sourced slug is the host
+    assert any("demoblog" in s for s in slugs)
+    # freebuf is in TOP_SOURCE_SLUGS whitelist → tier='top'
+    freebuf = next(r for r in rows if r["slug"] == "freebuf")
+    assert freebuf["tier"] == "top"
+    c.close()
