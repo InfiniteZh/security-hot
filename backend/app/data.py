@@ -456,10 +456,71 @@ def _cve_signals() -> dict[str, dict]:
     return signals
 
 
+_VULN_RSS_SOURCES = frozenset({
+    "vulners_com", "vuldb_com", "sploitus_com",
+    "blog_nsfocus_net", "securityonline_info",
+})
+
+
+def _news_cve_to_vulns(*, db_path: Path | None = None) -> list[Vuln]:
+    """Bridge: extract CVE-IDs from vuln-focused news RSS and synthesize Vuln objects."""
+    db = db_path or _NEWS_DB
+    if not db.exists():
+        return []
+    import sqlite3 as _sq
+    conn = _sq.connect(str(db))
+    conn.row_factory = _sq.Row
+    placeholders = ",".join("?" for _ in _VULN_RSS_SOURCES)
+    rows = list(conn.execute(f"""
+        SELECT title, summary, canonical_url, source_slug, source_title, published
+        FROM articles
+        WHERE source_slug IN ({placeholders})
+          AND title LIKE '%CVE-%'
+          AND published >= date('now', '-7 days')
+        ORDER BY published DESC
+    """, list(_VULN_RSS_SOURCES)))
+    conn.close()
+
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        title = row["title"] or ""
+        for m in CVE_RE.findall(title):
+            cve = m.upper()
+            grouped.setdefault(cve, []).append(dict(row))
+
+    out: list[Vuln] = []
+    for cve, articles in grouped.items():
+        best = max(articles, key=lambda a: len(a.get("title") or ""))
+        title_raw = best.get("title") or cve
+        summary_raw = best.get("summary") or ""
+        sources_seen = list(dict.fromkeys(a.get("source_slug", "") for a in articles))
+        refs = [
+            Reference(url=a["canonical_url"], label=a.get("source_title") or a.get("source_slug") or "")
+            for a in articles if a.get("canonical_url")
+        ][:6]
+        tags = ["NEWS-CVE"]
+        if len(sources_seen) > 1:
+            tags.append(f"{len(sources_seen)} sources")
+        out.append(Vuln(
+            id=cve,
+            kind="cve",
+            cve_id=cve,
+            title=title_raw.strip()[:200],
+            summary=summary_raw.strip()[:500],
+            severity="unknown",
+            references=refs,
+            tags=tags,
+            source="news-bridge",
+            published=best.get("published"),
+        ))
+    out.sort(key=lambda v: v.published or "", reverse=True)
+    return out
+
+
 # ─────────── public loaders ───────────
 
 def all_vulns() -> list[Vuln]:
-    vulns = _kev_to_vulns() + _ghsa_to_vulns() + _pocs_to_vulns() + _osv_malware_to_vulns()
+    vulns = _kev_to_vulns() + _ghsa_to_vulns() + _pocs_to_vulns() + _osv_malware_to_vulns() + _news_cve_to_vulns()
     # cross-link: if a CVE appears in multiple sources, merge KEV/ITW flags & PoCs
     by_cve: dict[str, Vuln] = {}
     extra: list[Vuln] = []
