@@ -2417,8 +2417,7 @@ const ENDPOINTS = [
   { key: "vuln",     url: () => `/api/vuln?limit=120&sort=heat${dateQuery()}`,             dateAware: true },
   { key: "heat",     url: () => {
       const kind = state.activeTab === "news" ? "news" : "vuln";
-      // News heat is date-aware (today's stories); vuln heat is timeless (KEV/EPSS).
-      const datePart = (kind === "news" && state.selectedDate) ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
+      const datePart = state.selectedDate ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
       return `/api/heat?limit=10&kind=${kind}${datePart}`;
     }, dateAware: true },
   { key: "sources",  url: () => "/api/sources",                                            dateAware: false },

@@ -216,13 +216,13 @@ def api_vuln_detail(vuln_id: str) -> Vuln:
 def api_heat(
     limit: int = Query(default=10, ge=1, le=50),
     kind: Literal["vuln", "news"] = Query(default="vuln", description="vuln=CVE heat (default, back-compat); news=top AI-scored articles"),
-    date: str | None = Query(default=None, description="YYYY-MM-DD; only news heat honors this (vuln heat is timeless)"),
+    date: str | None = Query(default=None, description="YYYY-MM-DD; filters both vuln and news heat boards"),
 ) -> list[HeatEntry]:
+    target = _validate_date(date)
     if kind == "news":
         from .data import news_heat_board
-        target = _validate_date(date)
         return news_heat_board(limit, date=target)
-    return heat_board(limit)
+    return heat_board(limit, date=target)
 
 
 @app.get("/api/sources", response_model=list[SourceStatus], tags=["sources"])
