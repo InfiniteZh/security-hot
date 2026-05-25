@@ -120,3 +120,47 @@ async def test_summarize_only_processes_relevant_en_high_score(tmp_db, monkeypat
     assert rows[2]["llm_summary_zh"] is None
     assert rows[3]["llm_summary_zh"] is None
     c.close()
+
+
+@pytest.mark.asyncio
+async def test_generate_daily_brief_covers_all_5_categories(tmp_db, monkeypatch):
+    db.init_schema(db.connect(tmp_db))
+    c = db.connect(tmp_db)
+    # Seed 1 article per category on 2026-05-25
+    for i, cat in enumerate(["incident", "vuln", "supply-chain", "research", "industry"]):
+        rid = db.upsert_article(c, {
+            "canonical_url": f"https://x.com/{i}", "title": f"{cat} story",
+            "summary": "...", "source_slug": "x", "source_title": "X",
+            "lang": "zh", "published": "2026-05-25T10:00:00Z",
+            "fetched_at": "2026-05-25T11:00:00Z", "first_seen_date": "2026-05-25",
+        })
+        c.execute(
+            "UPDATE articles SET llm_score=7, llm_category=?, is_relevant=1 WHERE id=?",
+            [cat, rid],
+        )
+    c.commit()
+    c.close()
+
+    import llm_rank
+    async def fake_llm(client, system, user, *args, **kwargs):
+        # Echo the category back
+        cat = "unknown"
+        for c2 in ["incident", "vuln", "supply-chain", "research", "industry"]:
+            if c2 in user:
+                cat = c2
+                break
+        return {"text": f"今日{cat}摘要 ..."}
+    monkeypatch.setattr(llm_rank, "_llm_call", fake_llm)
+    monkeypatch.setattr(db, "DEFAULT_DB_PATH", tmp_db)
+    monkeypatch.setenv("LLM_API_KEY", "fake")
+
+    result = await llm_rank.generate_daily_brief(target_date="2026-05-25", verbose=False)
+
+    c = db.connect(tmp_db)
+    rows = list(c.execute(
+        "SELECT category, article_count FROM daily_briefs WHERE date = ? ORDER BY category",
+        ["2026-05-25"],
+    ))
+    cats = {r["category"] for r in rows}
+    assert cats == {"incident", "vuln", "supply-chain", "research", "industry"}
+    c.close()

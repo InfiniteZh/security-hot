@@ -515,76 +515,77 @@ CAT_NAMES = {
     "industry": "行业动态",
 }
 
+ALL_CATEGORIES = ["incident", "vuln", "supply-chain", "research", "industry"]
 
-async def generate_daily_brief(target_date: str | None = None, verbose: bool = True) -> dict:
+
+async def generate_daily_brief(
+    target_date: str | None = None,
+    verbose: bool = True,
+) -> dict:
+    """Generate a daily brief for each of the 5 categories.
+
+    For each category, pull top N high-score relevant articles published on
+    target_date, summarize via LLM, INSERT OR REPLACE into daily_briefs.
+    """
     cfg = _get_config()
     if not cfg["api_key"]:
-        return {"skipped": True}
+        return {"error": "LLM_API_KEY not set"}
 
-    if not NEWS_JSON.exists():
-        return {"error": "news.json missing"}
-    data = json.loads(NEWS_JSON.read_text(encoding="utf-8"))
-    articles = data.get("articles") or []
-
-    if not target_date:
+    if target_date is None:
         target_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    by_cat: dict[str, list[dict]] = {c: [] for c in VALID_CATS}
-    for a in articles:
-        pub = (a.get("published") or "")[:10]
-        cat = a.get("llm_category")
-        if pub == target_date and cat in VALID_CATS:
-            by_cat[cat].append(a)
+    conn = _db.connect()
+    now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    summaries: dict[str, dict] = {}
 
-    existing = {}
-    if BRIEF_JSON.exists():
-        try:
-            existing = json.loads(BRIEF_JSON.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    briefs = existing.get(target_date, {})
-    generated = 0
+    system_prompt = """你是安全资讯日报编辑。
+基于给定的当日 N 篇文章, 撰写一段 300-500 字的中文摘要,
+开头点明今日该领域的核心动态, 中间用 3-5 条点列重要事件, 结尾给一句总结。
+输出 JSON: {"text": "..."}
+不要 markdown 之外的修饰。"""
 
     async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        for cat, cat_articles in by_cat.items():
-            if len(cat_articles) < 2:
+        for category in ALL_CATEGORIES:
+            rows = list(conn.execute("""
+                SELECT title, summary, source_title, llm_summary_zh
+                FROM articles
+                WHERE first_seen_date = ?
+                  AND llm_category = ?
+                  AND is_relevant = 1
+                  AND (cluster_id IS NULL OR is_cluster_primary = 1)
+                ORDER BY llm_score DESC
+                LIMIT 12
+            """, [target_date, category]))
+            if not rows:
+                if verbose:
+                    print(f"[brief] {category}: 0 articles, skipped", file=sys.stderr)
                 continue
-            if cat in briefs:
-                continue
-
-            sorted_arts = sorted(cat_articles, key=lambda a: -(a.get("llm_score") or 0))[:20]
-            lines = []
-            for i, a in enumerate(sorted_arts):
-                title = (a.get("title") or "").strip()[:120]
-                score = a.get("llm_score", "?")
-                lines.append(f"[{i+1}] (score={score}) {title}")
-
-            user_msg = f"分类：{CAT_NAMES.get(cat, cat)}，日期：{target_date}\n\n今日文章（按重要度排序）：\n" + "\n".join(lines)
-
+            user_msg = f"分类: {category}\n" + "\n---\n".join(
+                f"[{r['source_title']}] {r['title']}\n摘要: {r['llm_summary_zh'] or r['summary'] or ''}"
+                for r in rows
+            )
             try:
-                parsed = await _llm_call(client, DAILY_BRIEF_PROMPT, user_msg, cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"])
-                brief_text = parsed.get("brief", "")
-                if brief_text:
-                    briefs[cat] = {
-                        "text": brief_text,
-                        "article_count": len(cat_articles),
-                        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                    }
-                    generated += 1
-                    if verbose:
-                        print(f"[brief] {cat}: {len(brief_text)} chars from {len(cat_articles)} articles", file=sys.stderr)
+                result = await _llm_call(
+                    client, system_prompt, user_msg,
+                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                )
+                text = result.get("text") or ""
+                _db.upsert_brief(
+                    conn, date=target_date, category=category,
+                    text=text, article_count=len(rows), generated_at=now_iso,
+                )
+                summaries[category] = {"chars": len(text), "articles": len(rows)}
+                if verbose:
+                    print(f"[brief] {category}: {len(text)} chars from {len(rows)} articles",
+                          file=sys.stderr)
             except Exception as exc:
                 if verbose:
-                    print(f"[brief] {cat} failed: {exc}", file=sys.stderr)
+                    print(f"[brief] {category} failed: {exc}", file=sys.stderr)
 
-    if generated > 0:
-        existing[target_date] = briefs
-        BRIEF_JSON.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
-
+    conn.close()
     if verbose:
-        print(f"[brief] done: {generated} categories for {target_date}", file=sys.stderr)
-    return {"date": target_date, "generated": generated, "categories": list(briefs.keys())}
+        print(f"[brief] done: {len(summaries)} categories for {target_date}", file=sys.stderr)
+    return {"date": target_date, "categories": summaries}
 
 
 # ── CLI ──
