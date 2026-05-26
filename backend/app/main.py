@@ -400,9 +400,10 @@ _brief_regen_in_flight: bool = False
 
 
 def _run_fetcher(only: list[str] | None) -> None:
-    """Spawn fetch_data.py in a subprocess. Designed to run inside a
-    BackgroundTask; releases the in-flight lock in `finally` so a crashed
-    subprocess doesn't permanently jam the endpoint."""
+    """Spawn fetch_data.py in a subprocess, then auto-trigger LLM classify +
+    summarize if news was fetched. Designed to run inside a BackgroundTask;
+    releases the in-flight lock in ``finally`` so a crashed subprocess doesn't
+    permanently jam the endpoint."""
     global _refresh_in_flight
     try:
         cmd = [sys.executable, str(ROOT / "scripts" / "fetch_data.py")]
@@ -414,6 +415,22 @@ def _run_fetcher(only: list[str] | None) -> None:
             log.info("fetcher refresh finished ok (%d bytes stderr)", len(proc.stderr or ""))
         else:
             log.warning("fetcher refresh exited %s: %s", proc.returncode, (proc.stderr or "")[:500])
+
+        # Auto-trigger LLM pipeline when news was part of the refresh.
+        news_fetched = only is None or "news" in only
+        if news_fetched and proc.returncode == 0:
+            llm_script = str(ROOT / "scripts" / "llm_rank.py")
+            for task in ("news_classify", "news_summarize"):
+                log.info("auto LLM: %s", task)
+                llm_proc = subprocess.run(
+                    [sys.executable, llm_script, "--task", task],
+                    check=False, capture_output=True, text=True, cwd=str(ROOT),
+                    timeout=600,
+                )
+                if llm_proc.returncode == 0:
+                    log.info("auto LLM %s ok", task)
+                else:
+                    log.warning("auto LLM %s exited %s: %s", task, llm_proc.returncode, (llm_proc.stderr or "")[:300])
     finally:
         with _refresh_lock:
             _refresh_in_flight = False
