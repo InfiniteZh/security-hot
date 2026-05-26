@@ -388,12 +388,15 @@ def healthz() -> JSONResponse:
         "status": overall_status,
         "last_fetch": m.fetched_at,
         "fetchers": fetchers,
+        "refresh_in_flight": _refresh_in_flight,
+        "refresh_stage": _refresh_stage,
     })
 
 
 REFRESH_TOKEN_ENV = "SECURITY_HOT_REFRESH_TOKEN"
 _refresh_lock = threading.Lock()
 _refresh_in_flight = False
+_refresh_stage = ""  # "", "fetching", "classifying", "summarizing", "done", "error"
 
 _brief_regen_lock = threading.Lock()
 _brief_regen_in_flight: bool = False
@@ -404,8 +407,9 @@ def _run_fetcher(only: list[str] | None) -> None:
     summarize if news was fetched. Designed to run inside a BackgroundTask;
     releases the in-flight lock in ``finally`` so a crashed subprocess doesn't
     permanently jam the endpoint."""
-    global _refresh_in_flight
+    global _refresh_in_flight, _refresh_stage
     try:
+        _refresh_stage = "fetching"
         cmd = [sys.executable, str(ROOT / "scripts" / "fetch_data.py")]
         if only:
             cmd.extend(["--only", ",".join(only)])
@@ -415,12 +419,14 @@ def _run_fetcher(only: list[str] | None) -> None:
             log.info("fetcher refresh finished ok (%d bytes stderr)", len(proc.stderr or ""))
         else:
             log.warning("fetcher refresh exited %s: %s", proc.returncode, (proc.stderr or "")[:500])
+            _refresh_stage = "error"
+            return
 
-        # Auto-trigger LLM pipeline when news was part of the refresh.
         news_fetched = only is None or "news" in only
-        if news_fetched and proc.returncode == 0:
+        if news_fetched:
             llm_script = str(ROOT / "scripts" / "llm_rank.py")
-            for task in ("news_classify", "news_summarize"):
+            for task, stage in [("news_classify", "classifying"), ("news_summarize", "summarizing")]:
+                _refresh_stage = stage
                 log.info("auto LLM: %s", task)
                 llm_proc = subprocess.run(
                     [sys.executable, llm_script, "--task", task],
@@ -431,6 +437,7 @@ def _run_fetcher(only: list[str] | None) -> None:
                     log.info("auto LLM %s ok", task)
                 else:
                     log.warning("auto LLM %s exited %s: %s", task, llm_proc.returncode, (llm_proc.stderr or "")[:300])
+        _refresh_stage = "done"
     finally:
         with _refresh_lock:
             _refresh_in_flight = False

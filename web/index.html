@@ -947,6 +947,40 @@
     border-radius: 10px;
   }
 
+  /* — Refresh Progress Bar — */
+  .refresh-progress {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 210;
+    background: var(--surface); border-bottom: 1px solid var(--hairline);
+    padding: 10px 24px 12px; display: none;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  }
+  .refresh-progress.visible { display: block; }
+  .refresh-progress-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .refresh-progress-label {
+    font-size: 0.78rem; font-weight: 500; color: var(--ink);
+  }
+  .refresh-progress-stage {
+    font-size: 0.72rem; color: var(--paper-faint);
+    font-family: "Geist Mono", monospace;
+  }
+  .refresh-progress-track {
+    height: 4px; background: var(--surface-2); border-radius: 2px; overflow: hidden;
+  }
+  .refresh-progress-fill {
+    height: 100%; border-radius: 2px; background: var(--ok);
+    transition: width 0.6s ease;
+  }
+  .refresh-progress-steps {
+    display: flex; justify-content: space-between; margin-top: 6px;
+    font-size: 0.65rem; color: var(--paper-veil);
+    font-family: "Geist Mono", monospace;
+  }
+  .refresh-progress-steps span.active { color: var(--ok); font-weight: 600; }
+  .refresh-progress-steps span.done { color: var(--ink); }
+
   /* — Search Graph Modal — */
   .sg-backdrop {
     position: fixed; inset: 0; z-index: 90;
@@ -1159,6 +1193,22 @@
 </style>
 </head>
 <body class="ink-bg text-paper">
+
+  <!-- Refresh Progress Bar -->
+  <div id="refresh-progress" class="refresh-progress">
+    <div class="refresh-progress-header">
+      <span class="refresh-progress-label" id="rp-label"></span>
+      <span class="refresh-progress-stage" id="rp-stage"></span>
+    </div>
+    <div class="refresh-progress-track">
+      <div class="refresh-progress-fill" id="rp-fill" style="width:0%"></div>
+    </div>
+    <div class="refresh-progress-steps">
+      <span id="rp-s1">① RSS</span>
+      <span id="rp-s2">② AI 分类</span>
+      <span id="rp-s3">③ 摘要</span>
+    </div>
+  </div>
 
   <!-- ─────────── HEADER ─────────── -->
   <header class="border-b hairline sticky top-0 z-40 ink-bg above-grain">
@@ -2168,10 +2218,47 @@ async function triggerRefresh(only) {
   await pollRefreshDone(only, startedAt);
 }
 
+function updateProgressBar(stage) {
+  const bar = document.getElementById('refresh-progress');
+  const fill = document.getElementById('rp-fill');
+  const label = document.getElementById('rp-label');
+  const stageEl = document.getElementById('rp-stage');
+  const s1 = document.getElementById('rp-s1');
+  const s2 = document.getElementById('rp-s2');
+  const s3 = document.getElementById('rp-s3');
+  const isZh = lang === 'zh';
+
+  s1.textContent = isZh ? '① 拉取 RSS' : '① Fetch RSS';
+  s2.textContent = isZh ? '② AI 分类' : '② Classify';
+  s3.textContent = isZh ? '③ 生成摘要' : '③ Summarize';
+
+  s1.className = s2.className = s3.className = '';
+
+  if (!stage || stage === 'done' || stage === 'error') {
+    bar.classList.remove('visible');
+    return;
+  }
+
+  bar.classList.add('visible');
+  label.textContent = isZh ? '数据刷新中' : 'Refreshing';
+  stageEl.textContent = t('refresh.stage.' + stage) || stage;
+
+  if (stage === 'fetching') {
+    fill.style.width = '33%';
+    s1.className = 'active';
+  } else if (stage === 'classifying') {
+    fill.style.width = '66%';
+    s1.className = 'done';
+    s2.className = 'active';
+  } else if (stage === 'summarizing') {
+    fill.style.width = '90%';
+    s1.className = 'done';
+    s2.className = 'done';
+    s3.className = 'active';
+  }
+}
+
 async function pollRefreshDone(only, startedAt) {
-  // OSV full run can take ~50s; news ~100s; full ~3min.
-  // Poll every 4s for up to 6 minutes.
-  const startedMs = startedAt.getTime();
   const maxPolls = 90;
   let done = false;
   for (let i = 0; i < maxPolls; i++) {
@@ -2182,27 +2269,23 @@ async function pollRefreshDone(only, startedAt) {
     } catch (_) {
       continue;
     }
-    const fetchers = h.fetchers || [];
-    if (only) {
-      const target = fetchers.find(f => f.name === only);
-      if (target && target.finished_at) {
-        const finishedMs = new Date(target.finished_at).getTime();
-        if (finishedMs > startedMs) { done = true; break; }
-      }
-    } else {
-      // Global: any fetcher finished_at must be > started; treat as "all done"
-      // when manifest's overall fetched_at is newer than start time.
-      if (h.last_fetch) {
-        const fetched = new Date(h.last_fetch).getTime();
-        if (fetched > startedMs) { done = true; break; }
-      }
+    // Update progress bar from backend stage
+    if (h.refresh_stage) updateProgressBar(h.refresh_stage);
+
+    // Check if completely done (no longer in flight)
+    if (h.refresh_in_flight === false && h.refresh_stage === 'done') {
+      done = true;
+      break;
+    }
+    if (h.refresh_stage === 'error') {
+      break;
     }
   }
+  updateProgressBar('');
   refreshState.inFlight.delete(only);
   updateRefreshButtonStates();
   if (done) {
     showRefreshToast(`${t("refresh.done")}${only ? ' · ' + only : ''}`, "ok");
-    // Re-pull all UI data after a successful refresh.
     await fetchAll();
   } else {
     showRefreshToast(t("refresh.timeout"), "warn", 6000);
