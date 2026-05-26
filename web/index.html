@@ -957,7 +957,7 @@
   }
   .sg-backdrop.hidden { display: none; }
   .sg-modal {
-    width: 1060px; max-width: 95vw; height: 640px; max-height: 88vh;
+    width: 92vw; max-width: 1400px; height: 86vh; max-height: 900px;
     background: #FAFAF7; border-radius: 20px; overflow: hidden;
     box-shadow: 0 32px 100px rgba(0,0,0,0.3);
     display: flex; flex-direction: column;
@@ -987,7 +987,7 @@
     flex: 1; position: relative; overflow: hidden; background: #FAFAF7;
     transition: flex 0.3s ease;
   }
-  .sg-graph.shrunk { flex: 0.6; }
+  .sg-graph.shrunk { flex: 1; }
   .sg-graph canvas { position: absolute; inset: 0; pointer-events: none; }
   .sg-legend {
     position: absolute; bottom: 16px; left: 16px;
@@ -1006,7 +1006,7 @@
   /* — Graph nodes — */
   .sg-node {
     position: absolute; border-radius: 12px; padding: 8px 12px;
-    font-size: 0.72rem; line-height: 1.35; max-width: 210px;
+    font-size: 0.72rem; line-height: 1.35; width: 200px; max-width: 200px;
     box-shadow: 0 2px 10px rgba(0,0,0,0.08); cursor: pointer;
     transition: transform 0.15s, box-shadow 0.15s;
     z-index: 3; background: var(--surface);
@@ -1032,6 +1032,7 @@
   .sg-b-crit { background: #DC262618; color: #DC2626; }
   .sg-b-high { background: #D9770618; color: #D97706; }
   .sg-b-med { background: #B4530918; color: #B45309; }
+  .sg-b-low { background: #2563EB18; color: #2563EB; }
   .sg-b-poc { background: #05966918; color: #059669; }
   .sg-b-score { background: #10A37F18; color: #10A37F; }
   .sg-b-itw { background: #DC262618; color: #DC2626; }
@@ -1044,11 +1045,12 @@
   /* — Detail panel — */
   .sg-detail {
     width: 0; overflow: hidden; background: var(--surface);
-    border-left: 1px solid var(--hairline); transition: width 0.3s ease; flex-shrink: 0;
+    border-left: 1px solid var(--hairline); transition: width 0.3s ease;
+    flex-shrink: 0; margin-left: auto;
   }
-  .sg-detail.open { width: 380px; }
+  .sg-detail.open { width: 420px; }
   .sg-detail-inner {
-    width: 380px; padding: 24px; overflow-y: auto; height: 100%; position: relative;
+    width: 420px; padding: 24px; overflow-y: auto; height: 100%; position: relative;
   }
   .sg-detail-close {
     position: absolute; top: 12px; right: 12px; background: none; border: none;
@@ -1440,7 +1442,6 @@
         <div class="sg-legend" id="sg-legend" style="display:none;">
           <span><span class="sg-legend-dot vuln"></span><span data-i18n="search.legend_vuln"></span></span>
           <span><span class="sg-legend-dot news"></span><span data-i18n="search.legend_news"></span></span>
-          <span><span class="sg-legend-dot shared"></span><span data-i18n="search.legend_shared"></span></span>
         </div>
       </div>
       <div class="sg-detail" id="sg-detail">
@@ -2568,6 +2569,7 @@ window.addEventListener("keydown", (e) => {
     const bd = document.getElementById('sg-backdrop');
     if (bd && !bd.classList.contains('hidden')) {
       e.preventDefault();
+      e.stopImmediatePropagation();
       const detail = document.getElementById('sg-detail');
       if (detail && detail.classList.contains('open')) {
         closeSgDetail();
@@ -3122,24 +3124,30 @@ function renderSearchGraph() {
   let html = '';
 
   // Center node
-  html += `<div class="sg-node center" style="left:calc(50% - 40px); top:calc(50% - 40px);">${escapeHtmlSg(d.query)}</div>`;
+  html += `<div class="sg-node center" style="left:50%; top:50%; transform:translate(-50%,-50%);">${escapeHtmlSg(d.query)}</div>`;
 
-  // Vuln nodes — right semicircle
+  // Layout: place nodes in columns to avoid overlap.
+  // Vulns on right half (60-95%), news on left half (5-40%).
+  // Each column distributes items evenly top-to-bottom with generous spacing.
+
+  // Vuln nodes — right side, evenly spaced vertically
   const vCount = d.vulns.length;
   const maxHeat = Math.max(...d.vulns.map(v => v.heat || 0), 1);
   d.vulns.forEach((v, i) => {
-    const angle = -70 + (140 / Math.max(vCount - 1, 1)) * i; // -70 to +70 degrees
-    const rad = angle * Math.PI / 180;
-    const rx = 38 + Math.random() * 3; // % from center
-    const ry = 40 + Math.random() * 3;
-    const left = 50 + Math.cos(rad) * rx;
-    const top = 50 + Math.sin(rad) * ry;
+    // Spread across 2 columns if >5 nodes
+    const col = vCount > 5 ? (i % 2) : 0;
+    const rowIdx = vCount > 5 ? Math.floor(i / 2) : i;
+    const rowCount = vCount > 5 ? Math.ceil(vCount / 2) : vCount;
+    const topPad = 8;
+    const topRange = 84;
+    const top = rowCount === 1 ? 50 : topPad + (topRange / Math.max(rowCount - 1, 1)) * rowIdx;
+    const left = col === 0 ? 66 : 84;
 
     const badges = [];
     if (v.is_kev) badges.push('<span class="sg-node-badge sg-b-kev">KEV</span>');
     if (v.is_itw) badges.push('<span class="sg-node-badge sg-b-itw">ITW</span>');
-    const sevClass = v.severity === 'critical' ? 'sg-b-crit' : v.severity === 'high' ? 'sg-b-high' : v.severity === 'medium' ? 'sg-b-med' : '';
-    if (sevClass) badges.push(`<span class="sg-node-badge ${sevClass}">${v.severity.toUpperCase()}</span>`);
+    const sevClass = v.severity === 'critical' ? 'sg-b-crit' : v.severity === 'high' ? 'sg-b-high' : v.severity === 'medium' ? 'sg-b-med' : v.severity === 'low' ? 'sg-b-low' : '';
+    if (sevClass) badges.push(`<span class="sg-node-badge ${sevClass}">${t('sev.' + v.severity)}</span>`);
     if (v.pocs && v.pocs.length) badges.push('<span class="sg-node-badge sg-b-poc">PoC</span>');
 
     const heatPct = Math.round((v.heat / maxHeat) * 100);
@@ -3154,15 +3162,16 @@ function renderSearchGraph() {
     </div>`;
   });
 
-  // News nodes — left semicircle
+  // News nodes — left side, evenly spaced vertically
   const nCount = d.news.length;
   d.news.forEach((a, i) => {
-    const angle = 110 + (140 / Math.max(nCount - 1, 1)) * i; // 110 to 250 degrees
-    const rad = angle * Math.PI / 180;
-    const rx = 38 + Math.random() * 3;
-    const ry = 40 + Math.random() * 3;
-    const left = 50 + Math.cos(rad) * rx;
-    const top = 50 + Math.sin(rad) * ry;
+    const col = nCount > 5 ? (i % 2) : 0;
+    const rowIdx = nCount > 5 ? Math.floor(i / 2) : i;
+    const rowCount = nCount > 5 ? Math.ceil(nCount / 2) : nCount;
+    const topPad = 8;
+    const topRange = 84;
+    const top = rowCount === 1 ? 50 : topPad + (topRange / Math.max(rowCount - 1, 1)) * rowIdx;
+    const left = col === 0 ? 18 : 36;
 
     const score = a.llm_score != null ? a.llm_score : '?';
     const cat = a.llm_category || '';
@@ -3171,18 +3180,6 @@ function renderSearchGraph() {
       <span class="sg-node-badge sg-b-score">AI ${score}</span>
       <span class="sg-node-title">${escapeHtmlSg(a.title)}</span>
       <span class="sg-node-meta">${escapeHtmlSg(a.source_title || '')} · ${escapeHtmlSg(cat)}</span>
-    </div>`;
-  });
-
-  // Shared CVE bridge nodes
-  d.links.forEach((lk, i) => {
-    const baseTop = 85;
-    const spacing = d.links.length > 1 ? 60 / (d.links.length - 1) : 0;
-    const left = 35 + spacing * i;
-    html += `<div class="sg-node shared" data-sg-link="${escapeHtmlSg(lk.cve_id)}" style="left:${left}%; top:${baseTop}%; transform:translate(-50%,-50%);">
-      <span class="sg-node-badge sg-b-link">LINK</span>
-      <span class="sg-node-title">${escapeHtmlSg(lk.cve_id)}</span>
-      <span class="sg-node-meta">${lk.vuln_ids.length} vuln · ${lk.news_ids.length} news</span>
     </div>`;
   });
 
@@ -3220,62 +3217,33 @@ function drawSgLines() {
     ctx.stroke();
   });
 
-  // Lines from center to shared CVE nodes (dashed)
-  panel.querySelectorAll('.sg-node.shared').forEach(n => {
-    const r = n.getBoundingClientRect();
-    const nx = r.left - pRect.left + r.width / 2;
-    const ny = r.top - pRect.top + r.height / 2;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(nx, ny);
-    ctx.strokeStyle = 'rgba(139,92,246,0.3)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 4]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  });
-
-  // Lines from shared CVE nodes to their linked vuln/news nodes
+  // Direct dashed lines between linked vuln↔news nodes (shared CVE)
   if (sgData && sgData.links) {
     sgData.links.forEach(lk => {
-      const sharedEl = panel.querySelector(`.sg-node.shared[data-sg-link="${lk.cve_id}"]`);
-      if (!sharedEl) return;
-      const sr = sharedEl.getBoundingClientRect();
-      const sx = sr.left - pRect.left + sr.width / 2;
-      const sy = sr.top - pRect.top + sr.height / 2;
-
-      // Link to vulns
       lk.vuln_ids.forEach(vid => {
         const vi = sgData.vulns.findIndex(v => v.id === vid || v.cve_id === vid);
         if (vi < 0) return;
         const vel = panel.querySelector(`.sg-node.vuln[data-sg-id="v-${vi}"]`);
         if (!vel) return;
         const vr = vel.getBoundingClientRect();
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(vr.left - pRect.left + vr.width / 2, vr.top - pRect.top + vr.height / 2);
-        ctx.strokeStyle = 'rgba(139,92,246,0.25)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([3, 3]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      });
+        const vx = vr.left - pRect.left + vr.width / 2;
+        const vy = vr.top - pRect.top + vr.height / 2;
 
-      // Link to news
-      lk.news_ids.forEach(nid => {
-        const ni = sgData.news.findIndex(a => a.id === nid);
-        if (ni < 0) return;
-        const nel = panel.querySelector(`.sg-node.news[data-sg-id="n-${ni}"]`);
-        if (!nel) return;
-        const nr = nel.getBoundingClientRect();
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(nr.left - pRect.left + nr.width / 2, nr.top - pRect.top + nr.height / 2);
-        ctx.strokeStyle = 'rgba(139,92,246,0.25)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([3, 3]);
-        ctx.stroke();
-        ctx.setLineDash([]);
+        lk.news_ids.forEach(nid => {
+          const ni = sgData.news.findIndex(a => a.id === nid);
+          if (ni < 0) return;
+          const nel = panel.querySelector(`.sg-node.news[data-sg-id="n-${ni}"]`);
+          if (!nel) return;
+          const nr = nel.getBoundingClientRect();
+          ctx.beginPath();
+          ctx.moveTo(vx, vy);
+          ctx.lineTo(nr.left - pRect.left + nr.width / 2, nr.top - pRect.top + nr.height / 2);
+          ctx.strokeStyle = 'rgba(139,92,246,0.35)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 4]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        });
       });
     });
   }
@@ -3305,8 +3273,8 @@ function showSgDetail(type, idx) {
     if (v.is_kev) html += `<span class="sg-node-badge sg-b-kev">KEV</span>`;
     if (v.is_itw) html += `<span class="sg-node-badge sg-b-itw">ITW</span>`;
     if (v.severity && v.severity !== 'unknown') {
-      const sc = v.severity === 'critical' ? 'sg-b-crit' : v.severity === 'high' ? 'sg-b-high' : 'sg-b-med';
-      html += `<span class="sg-node-badge ${sc}">${v.severity.toUpperCase()}</span>`;
+      const sc = v.severity === 'critical' ? 'sg-b-crit' : v.severity === 'high' ? 'sg-b-high' : v.severity === 'low' ? 'sg-b-low' : 'sg-b-med';
+      html += `<span class="sg-node-badge ${sc}">${t('sev.' + v.severity)}</span>`;
     }
     if (v.cvss != null) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">CVSS ${v.cvss}</span>`;
     if (v.epss_score != null) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">EPSS ${v.epss_score.toFixed(2)}</span>`;
