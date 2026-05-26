@@ -2213,8 +2213,9 @@ async function triggerRefresh(only) {
     showRefreshToast(`${t("refresh.failed")}: HTTP ${res.status}`, "error");
     return;
   }
-  // 202 queued — start polling /api/healthz
+  // 202 queued — show progress bar immediately, then start polling
   showRefreshToast(`${t("refresh.starting")}${only ? ' · ' + only : ''}`, "ok", 2500);
+  updateProgressBar('fetching');
   await pollRefreshDone(only, startedAt);
 }
 
@@ -3045,6 +3046,13 @@ async function showNewsDetail(link, label) {
 
 async function boot() {
   applyI18n();
+  // Check if a refresh is already in flight (e.g. page reloaded during refresh)
+  try {
+    const h = await fetch("/api/healthz").then(r => r.json());
+    if (h.refresh_in_flight && h.refresh_stage) {
+      updateProgressBar(h.refresh_stage);
+    }
+  } catch (_) {}
   // hydrate from URL
   const params = new URLSearchParams(location.search);
   const urlDate = params.get("date");
