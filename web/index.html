@@ -947,6 +947,156 @@
     border-radius: 10px;
   }
 
+  /* — Search Graph Modal — */
+  .sg-backdrop {
+    position: fixed; inset: 0; z-index: 90;
+    background: rgba(10, 10, 10, 0.55);
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+    animation: fade-in 200ms ease-out;
+  }
+  .sg-backdrop.hidden { display: none; }
+  .sg-modal {
+    width: 1060px; max-width: 95vw; height: 640px; max-height: 88vh;
+    background: #FAFAF7; border-radius: 20px; overflow: hidden;
+    box-shadow: 0 32px 100px rgba(0,0,0,0.3);
+    display: flex; flex-direction: column;
+  }
+  .sg-search-bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px 24px; border-bottom: 1px solid var(--hairline);
+    background: var(--surface); flex-shrink: 0;
+  }
+  .sg-search-bar svg { color: var(--paper-veil); flex-shrink: 0; }
+  .sg-search-bar input {
+    border: none; outline: none; font-size: 1.05rem; flex: 1;
+    font-family: "Geist", sans-serif; background: none; color: var(--ink);
+  }
+  .sg-search-bar input::placeholder { color: var(--paper-veil); }
+  .sg-search-stats {
+    font-size: 0.72rem; color: var(--paper-veil); white-space: nowrap;
+    font-family: "Geist Mono", monospace;
+  }
+  .sg-search-bar .sg-hint {
+    font-size: 0.68rem; color: var(--paper-veil); background: var(--surface-2);
+    padding: 3px 8px; border-radius: 5px; font-family: "Geist Mono", monospace;
+    border: 1px solid var(--hairline);
+  }
+  .sg-main { display: flex; flex: 1; overflow: hidden; }
+  .sg-graph {
+    flex: 1; position: relative; overflow: hidden; background: #FAFAF7;
+    transition: flex 0.3s ease;
+  }
+  .sg-graph.shrunk { flex: 0.6; }
+  .sg-graph canvas { position: absolute; inset: 0; pointer-events: none; }
+  .sg-legend {
+    position: absolute; bottom: 16px; left: 16px;
+    display: flex; gap: 14px; font-size: 0.68rem; color: var(--paper-faint);
+    background: var(--surface); padding: 6px 12px; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06); z-index: 5;
+  }
+  .sg-legend-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    display: inline-block; margin-right: 4px; vertical-align: middle;
+  }
+  .sg-legend-dot.vuln { background: #EF4444; }
+  .sg-legend-dot.news { background: #3B82F6; }
+  .sg-legend-dot.shared { background: #8B5CF6; }
+
+  /* — Graph nodes — */
+  .sg-node {
+    position: absolute; border-radius: 12px; padding: 8px 12px;
+    font-size: 0.72rem; line-height: 1.35; max-width: 210px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08); cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+    z-index: 3; background: var(--surface);
+  }
+  .sg-node:hover { transform: scale(1.05); box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 10; }
+  .sg-node.active { box-shadow: 0 0 0 2px var(--ok), 0 4px 16px rgba(0,0,0,0.12); z-index: 11; }
+  .sg-node.center {
+    background: var(--ink); color: #fff; font-weight: 700; font-size: 1.1rem;
+    border-radius: 50%; width: 80px; height: 80px; display: flex;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 0; max-width: none; box-shadow: 0 6px 24px rgba(0,0,0,0.2);
+    cursor: default;
+  }
+  .sg-node.center:hover { transform: none; }
+  .sg-node.vuln { border-left: 3px solid #EF4444; }
+  .sg-node.news { border-left: 3px solid #3B82F6; }
+  .sg-node.shared { border-left: 3px solid #8B5CF6; }
+  .sg-node-badge {
+    display: inline-block; font-size: 0.58rem; padding: 1px 5px; border-radius: 3px;
+    font-weight: 600; margin-right: 3px; font-family: "Geist Mono", monospace;
+  }
+  .sg-b-kev { background: #7C3AED18; color: #7C3AED; }
+  .sg-b-crit { background: #DC262618; color: #DC2626; }
+  .sg-b-high { background: #D9770618; color: #D97706; }
+  .sg-b-med { background: #B4530918; color: #B45309; }
+  .sg-b-poc { background: #05966918; color: #059669; }
+  .sg-b-score { background: #10A37F18; color: #10A37F; }
+  .sg-b-itw { background: #DC262618; color: #DC2626; }
+  .sg-b-link { background: #8B5CF618; color: #8B5CF6; }
+  .sg-node-title { font-weight: 500; margin-top: 3px; display: block; color: var(--ink); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .sg-node-meta { color: var(--paper-veil); font-size: 0.6rem; margin-top: 2px; font-family: "Geist Mono", monospace; display: block; }
+  .sg-heat-bar { margin-top: 4px; height: 3px; border-radius: 2px; background: var(--surface-2); }
+  .sg-heat-fill { height: 100%; border-radius: 2px; }
+
+  /* — Detail panel — */
+  .sg-detail {
+    width: 0; overflow: hidden; background: var(--surface);
+    border-left: 1px solid var(--hairline); transition: width 0.3s ease; flex-shrink: 0;
+  }
+  .sg-detail.open { width: 380px; }
+  .sg-detail-inner {
+    width: 380px; padding: 24px; overflow-y: auto; height: 100%; position: relative;
+  }
+  .sg-detail-close {
+    position: absolute; top: 12px; right: 12px; background: none; border: none;
+    cursor: pointer; color: var(--paper-veil); font-size: 1.1rem;
+    width: 28px; height: 28px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .sg-detail-close:hover { background: var(--surface-2); color: var(--ink); }
+  .sg-detail-type { font-size: 0.65rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 8px; }
+  .sg-detail-type.vuln { color: #EF4444; }
+  .sg-detail-type.news { color: #3B82F6; }
+  .sg-detail-title { font-size: 1.05rem; font-weight: 600; line-height: 1.4; margin-bottom: 12px; }
+  .sg-detail-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 16px; }
+  .sg-detail-section { margin-bottom: 16px; }
+  .sg-detail-label { font-size: 0.68rem; font-weight: 600; color: var(--paper-veil); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .sg-detail-text { font-size: 0.82rem; line-height: 1.6; color: var(--paper-dim); }
+  .sg-detail-link {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 0.78rem; color: var(--ok); text-decoration: none; font-weight: 500; margin-top: 12px;
+  }
+  .sg-detail-link:hover { text-decoration: underline; }
+  .sg-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 0.75rem; }
+  .sg-detail-grid-label { color: var(--paper-veil); font-size: 0.68rem; }
+  .sg-detail-grid-value { font-family: "Geist Mono", monospace; }
+  .sg-related-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 8px 0; border-bottom: 1px solid var(--surface-2);
+    font-size: 0.75rem; cursor: pointer;
+  }
+  .sg-related-item:hover { color: var(--ok); }
+  .sg-related-dot { width: 6px; height: 6px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+
+  /* — Stat bar — */
+  .sg-stat-bar {
+    display: flex; align-items: center; gap: 16px;
+    padding: 8px 24px; border-top: 1px solid var(--hairline);
+    background: var(--surface); font-size: 0.68rem; color: var(--paper-veil);
+    flex-shrink: 0; font-family: "Geist Mono", monospace;
+  }
+
+  /* — Empty / loading states — */
+  .sg-empty {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    height: 100%; color: var(--paper-veil); gap: 8px;
+  }
+  .sg-empty svg { opacity: 0.3; }
+  .sg-empty-text { font-size: 0.9rem; }
+
   /* — Search banner — */
   .search-banner {
     padding: 11px 16px;
@@ -1269,6 +1419,44 @@
       </div>
     </footer>
   </div>
+
+<!-- Search Graph Modal -->
+<div id="sg-backdrop" class="sg-backdrop hidden" onclick="if(event.target===this)closeSearchGraph()">
+  <div class="sg-modal" onclick="event.stopPropagation()">
+    <div class="sg-search-bar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+      <input id="sg-input" type="text" autocomplete="off" />
+      <span id="sg-stats" class="sg-search-stats"></span>
+      <span class="sg-hint" data-i18n="search.hint_close">ESC</span>
+    </div>
+    <div class="sg-main">
+      <div class="sg-graph" id="sg-graph">
+        <canvas id="sg-canvas"></canvas>
+        <div id="sg-nodes"></div>
+        <div class="sg-empty" id="sg-empty">
+          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          <div class="sg-empty-text" data-i18n="search.empty"></div>
+        </div>
+        <div class="sg-legend" id="sg-legend" style="display:none;">
+          <span><span class="sg-legend-dot vuln"></span><span data-i18n="search.legend_vuln"></span></span>
+          <span><span class="sg-legend-dot news"></span><span data-i18n="search.legend_news"></span></span>
+          <span><span class="sg-legend-dot shared"></span><span data-i18n="search.legend_shared"></span></span>
+        </div>
+      </div>
+      <div class="sg-detail" id="sg-detail">
+        <div class="sg-detail-inner" id="sg-detail-inner"></div>
+      </div>
+    </div>
+    <div class="sg-stat-bar" id="sg-stat-bar">
+      <span>⌘K</span>
+      <span>·</span>
+      <span data-i18n="search.data_range"></span>
+      <span>·</span>
+      <span id="sg-stat-counts"></span>
+      <span style="margin-left:auto;" data-i18n="search.click_hint"></span>
+    </div>
+  </div>
+</div>
 
 <!-- I18N dictionary lives in its own file so future module splits (state.js
      / api.js / render.js / events.js — backlog) can each import a single
@@ -1721,17 +1909,15 @@ function renderNewsCard(a) {
 function renderNewsList() {
   // Data source precedence:
   //   showHidden  → state.hiddenNews (off-topic articles, audit view)
-  //   else search → state._searchResults
   //   else        → state.news (date-filtered slice)
-  // In all three modes the same filters (lang, category, q, sort) apply,
-  // so the controls feel consistent.
+  // Search is now handled via the knowledge graph modal (⌘K).
   let items;
   if (state.showHidden) items = state.hiddenNews;
-  else items = state._searchResults !== null ? state._searchResults : state.news;
+  else items = state.news;
   if (state.newsLang !== "all") items = items.filter(a => a.lang === state.newsLang);
   if (state.newsCategory !== "all") items = items.filter(a => a.llm_category === state.newsCategory);
   const q = state.q.toLowerCase();
-  if (q && state._searchResults === null) items = items.filter(a => (a.title||"").toLowerCase().includes(q) || (a.summary||"").toLowerCase().includes(q) || (a.source_title||"").toLowerCase().includes(q));
+  if (q) items = items.filter(a => (a.title||"").toLowerCase().includes(q) || (a.summary||"").toLowerCase().includes(q) || (a.source_title||"").toLowerCase().includes(q));
   const sorted = [...items].sort((a, b) => {
     if (state.sort === "time") return (b.published||"") > (a.published||"") ? 1 : -1;
     const sa = a.llm_score != null ? a.llm_score : -1;
@@ -1750,13 +1936,6 @@ function renderNewsList() {
       <span>${isZh ? "已隐藏视图" : "Hidden view"} · ${state.hiddenNews.length} ${isZh ? "篇被 LLM 判为离题(is_relevant=0). 排序/分类/语言筛选照常生效." : "off-topic articles. Sort / category / lang filters still apply."}</span>
       <button class="clear-btn" style="color:#991B1B;" onclick="toggleHidden()">${isZh ? "退出" : "Exit"}</button>
     </div>`;
-  } else if (state._searchResults !== null) {
-    const isZh = lang === "zh";
-    banner = `<div class="search-banner">
-      <span>🔍</span>
-      <span>${isZh ? "全局搜索" : "Global search"}: <span class="text-paper">"${escapeHtml(state.q)}"</span> · ${state._searchResults.length} ${isZh ? "条结果 · 跨 30 天" : "results · 30-day window"}</span>
-      <button class="clear-btn" onclick="document.getElementById('search').value=''; state.q=''; state._searchResults=null; renderNewsList(); renderVulnList();">${isZh ? "清除" : "Clear"}</button>
-    </div>`;
   }
 
   if (limited.length === 0) {
@@ -1770,7 +1949,7 @@ function renderNewsList() {
   // tab counts
   const tabCount = document.getElementById("tab-news-count");
   if (tabCount) tabCount.textContent = `· ${state.news.length}`;
-  // category counts (live with state.news; not _searchResults)
+  // category counts (live with state.news)
   ["all", "incident", "vuln", "supply-chain", "research", "industry"].forEach(c => {
     const count = c === "all" ? state.news.length : state.news.filter(a => a.llm_category === c).length;
     document.querySelectorAll(`[data-catcount="${c}"]`).forEach(n => n.textContent = `· ${count}`);
@@ -1778,9 +1957,9 @@ function renderNewsList() {
 }
 
 // ─── hidden articles toggle ───────────────────────────────────────────────────
-// When ON, renderNewsList reads from state.hiddenNews (instead of state.news /
-// _searchResults) so all the regular controls — sort, category, lang, search
-// banner — apply uniformly. Visually we mark the button with data-on="true".
+// When ON, renderNewsList reads from state.hiddenNews (instead of state.news)
+// so all the regular controls — sort, category, lang filters — apply
+// uniformly. Visually we mark the button with data-on="true".
 state.showHidden = false;
 state.hiddenNews = [];
 
@@ -2371,44 +2550,31 @@ document.getElementById("news-catfilter").addEventListener("click", (e) => {
   renderNewsList();
 });
 
-// ─── search: server-side global ────────────────────────────────────────────
-// state._searchResults: null = not searching; array = results (covers normal
-// news list when set). q < 2 chars falls back to client-side filtering on
-// the currently-loaded slice (cheap + responsive for short queries).
-let searchTimer;
-state._searchResults = null;
-
-async function performGlobalSearch(q) {
-  if (!q || q.length < 2) {
-    state._searchResults = null;
-    renderNewsList(); renderVulnList();
-    return;
-  }
-  try {
-    // Hit the API without date filter — searches the full 30-day window in
-    // SQLite (already mtime-cached so this is ~5ms after the first hit).
-    const r = await fetch(`/api/news?q=${encodeURIComponent(q)}&limit=200`);
-    if (r.ok) {
-      state._searchResults = await r.json();
-    } else {
-      state._searchResults = [];
-    }
-  } catch (e) {
-    state._searchResults = [];
-  }
-  renderNewsList(); renderVulnList();
-}
-
-document.getElementById("search").addEventListener("input", (e) => {
-  clearTimeout(searchTimer);
-  state.q = e.target.value.trim();
-  searchTimer = setTimeout(() => performGlobalSearch(state.q), 250);
+// ─── search: opens knowledge graph modal ──────────────────────────────────
+// Search input: open the graph modal instead of inline search
+document.getElementById("search").addEventListener("focus", (e) => {
+  e.target.blur();
+  openSearchGraph();
 });
-// cmd-k focus
+// cmd-k opens graph modal
 window.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
-    document.getElementById("search").focus();
+    openSearchGraph();
+    return;
+  }
+  // ESC handling for search graph
+  if (e.key === "Escape") {
+    const bd = document.getElementById('sg-backdrop');
+    if (bd && !bd.classList.contains('hidden')) {
+      e.preventDefault();
+      const detail = document.getElementById('sg-detail');
+      if (detail && detail.classList.contains('open')) {
+        closeSgDetail();
+      } else {
+        closeSearchGraph();
+      }
+    }
   }
 });
 
@@ -2846,6 +3012,420 @@ function installInfiniteScroll() {
   if (newsSentinel) obs.observe(newsSentinel);
   if (vulnSentinel) obs.observe(vulnSentinel);
 }
+
+// ─── Search Knowledge Graph ──────────────────────────────────────────────────
+let sgTimer = null;
+let sgData = null;   // current search result
+let sgActiveNode = null; // currently selected node id
+
+function openSearchGraph() {
+  const bd = document.getElementById('sg-backdrop');
+  bd.classList.remove('hidden');
+  const inp = document.getElementById('sg-input');
+  inp.placeholder = t('search.placeholder');
+  inp.value = '';
+  inp.focus();
+  sgData = null;
+  sgActiveNode = null;
+  document.getElementById('sg-nodes').innerHTML = '';
+  document.getElementById('sg-empty').style.display = 'flex';
+  document.getElementById('sg-legend').style.display = 'none';
+  document.getElementById('sg-stats').textContent = '';
+  document.getElementById('sg-stat-counts').textContent = '';
+  document.getElementById('sg-detail').classList.remove('open');
+  document.getElementById('sg-graph').classList.remove('shrunk');
+  clearSgCanvas();
+  // Apply i18n to new elements
+  bd.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const val = t(key);
+    if (typeof val === 'string') el.textContent = val;
+  });
+}
+
+function closeSearchGraph() {
+  document.getElementById('sg-backdrop').classList.add('hidden');
+  sgData = null;
+  sgActiveNode = null;
+}
+
+function closeSgDetail() {
+  document.getElementById('sg-detail').classList.remove('open');
+  document.getElementById('sg-graph').classList.remove('shrunk');
+  sgActiveNode = null;
+  document.querySelectorAll('.sg-node.active').forEach(n => n.classList.remove('active'));
+  setTimeout(drawSgLines, 320);
+}
+
+function clearSgCanvas() {
+  const c = document.getElementById('sg-canvas');
+  const ctx = c.getContext('2d');
+  c.width = c.parentElement.offsetWidth;
+  c.height = c.parentElement.offsetHeight;
+  ctx.clearRect(0, 0, c.width, c.height);
+}
+
+function escapeHtmlSg(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function sgSearch(q) {
+  if (!q || q.length < 2) {
+    sgData = null;
+    document.getElementById('sg-nodes').innerHTML = '';
+    document.getElementById('sg-empty').style.display = 'flex';
+    document.getElementById('sg-legend').style.display = 'none';
+    document.getElementById('sg-stats').textContent = '';
+    document.getElementById('sg-stat-counts').textContent = '';
+    clearSgCanvas();
+    return;
+  }
+  try {
+    const r = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=10`);
+    if (!r.ok) return;
+    sgData = await r.json();
+    renderSearchGraph();
+  } catch (e) {
+    console.error('search graph error', e);
+  }
+}
+
+function renderSearchGraph() {
+  const d = sgData;
+  if (!d) return;
+  const container = document.getElementById('sg-nodes');
+  const empty = document.getElementById('sg-empty');
+  const legend = document.getElementById('sg-legend');
+
+  if (d.vulns.length === 0 && d.news.length === 0) {
+    container.innerHTML = '';
+    empty.style.display = 'flex';
+    empty.querySelector('.sg-empty-text').textContent = t('search.no_results');
+    legend.style.display = 'none';
+    clearSgCanvas();
+    return;
+  }
+
+  empty.style.display = 'none';
+  legend.style.display = 'flex';
+
+  // Stats
+  const statsText = t('search.stats');
+  const statStr = typeof statsText === 'function'
+    ? statsText(d.vulns.length, d.news.length, d.links.length)
+    : `${d.vulns.length} / ${d.news.length} / ${d.links.length}`;
+  document.getElementById('sg-stats').textContent = statStr;
+  document.getElementById('sg-stat-counts').textContent = statStr;
+
+  let html = '';
+
+  // Center node
+  html += `<div class="sg-node center" style="left:calc(50% - 40px); top:calc(50% - 40px);">${escapeHtmlSg(d.query)}</div>`;
+
+  // Vuln nodes — right semicircle
+  const vCount = d.vulns.length;
+  const maxHeat = Math.max(...d.vulns.map(v => v.heat || 0), 1);
+  d.vulns.forEach((v, i) => {
+    const angle = -70 + (140 / Math.max(vCount - 1, 1)) * i; // -70 to +70 degrees
+    const rad = angle * Math.PI / 180;
+    const rx = 38 + Math.random() * 3; // % from center
+    const ry = 40 + Math.random() * 3;
+    const left = 50 + Math.cos(rad) * rx;
+    const top = 50 + Math.sin(rad) * ry;
+
+    const badges = [];
+    if (v.is_kev) badges.push('<span class="sg-node-badge sg-b-kev">KEV</span>');
+    if (v.is_itw) badges.push('<span class="sg-node-badge sg-b-itw">ITW</span>');
+    const sevClass = v.severity === 'critical' ? 'sg-b-crit' : v.severity === 'high' ? 'sg-b-high' : v.severity === 'medium' ? 'sg-b-med' : '';
+    if (sevClass) badges.push(`<span class="sg-node-badge ${sevClass}">${v.severity.toUpperCase()}</span>`);
+    if (v.pocs && v.pocs.length) badges.push('<span class="sg-node-badge sg-b-poc">PoC</span>');
+
+    const heatPct = Math.round((v.heat / maxHeat) * 100);
+    const heatColor = v.severity === 'critical' ? '#EF4444' : v.severity === 'high' ? '#D97706' : '#10A37F';
+    const meta = v.cve_id || v.ghsa_id || v.source || '';
+
+    html += `<div class="sg-node vuln" data-sg-id="v-${i}" onclick="showSgDetail('vuln',${i})" style="left:${left}%; top:${top}%; transform:translate(-50%,-50%);">
+      ${badges.join('')}
+      <span class="sg-node-title">${escapeHtmlSg(v.title)}</span>
+      <span class="sg-node-meta">${escapeHtmlSg(meta)}</span>
+      <div class="sg-heat-bar"><div class="sg-heat-fill" style="width:${heatPct}%; background:${heatColor};"></div></div>
+    </div>`;
+  });
+
+  // News nodes — left semicircle
+  const nCount = d.news.length;
+  d.news.forEach((a, i) => {
+    const angle = 110 + (140 / Math.max(nCount - 1, 1)) * i; // 110 to 250 degrees
+    const rad = angle * Math.PI / 180;
+    const rx = 38 + Math.random() * 3;
+    const ry = 40 + Math.random() * 3;
+    const left = 50 + Math.cos(rad) * rx;
+    const top = 50 + Math.sin(rad) * ry;
+
+    const score = a.llm_score != null ? a.llm_score : '?';
+    const cat = a.llm_category || '';
+
+    html += `<div class="sg-node news" data-sg-id="n-${i}" onclick="showSgDetail('news',${i})" style="left:${left}%; top:${top}%; transform:translate(-50%,-50%);">
+      <span class="sg-node-badge sg-b-score">AI ${score}</span>
+      <span class="sg-node-title">${escapeHtmlSg(a.title)}</span>
+      <span class="sg-node-meta">${escapeHtmlSg(a.source_title || '')} · ${escapeHtmlSg(cat)}</span>
+    </div>`;
+  });
+
+  // Shared CVE bridge nodes
+  d.links.forEach((lk, i) => {
+    const baseTop = 85;
+    const spacing = d.links.length > 1 ? 60 / (d.links.length - 1) : 0;
+    const left = 35 + spacing * i;
+    html += `<div class="sg-node shared" data-sg-link="${escapeHtmlSg(lk.cve_id)}" style="left:${left}%; top:${baseTop}%; transform:translate(-50%,-50%);">
+      <span class="sg-node-badge sg-b-link">LINK</span>
+      <span class="sg-node-title">${escapeHtmlSg(lk.cve_id)}</span>
+      <span class="sg-node-meta">${lk.vuln_ids.length} vuln · ${lk.news_ids.length} news</span>
+    </div>`;
+  });
+
+  container.innerHTML = html;
+  setTimeout(drawSgLines, 50);
+}
+
+function drawSgLines() {
+  const panel = document.getElementById('sg-graph');
+  const canvas = document.getElementById('sg-canvas');
+  canvas.width = panel.offsetWidth;
+  canvas.height = panel.offsetHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const centerEl = panel.querySelector('.sg-node.center');
+  if (!centerEl) return;
+  const pRect = panel.getBoundingClientRect();
+  const cRect = centerEl.getBoundingClientRect();
+  const cx = cRect.left - pRect.left + cRect.width / 2;
+  const cy = cRect.top - pRect.top + cRect.height / 2;
+
+  // Lines from center to each non-shared node
+  panel.querySelectorAll('.sg-node.vuln, .sg-node.news').forEach(n => {
+    const r = n.getBoundingClientRect();
+    const nx = r.left - pRect.left + r.width / 2;
+    const ny = r.top - pRect.top + r.height / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    const cpx = (cx + nx) / 2 + (nx > cx ? -15 : 15);
+    const cpy = (cy + ny) / 2 - 10;
+    ctx.quadraticCurveTo(cpx, cpy, nx, ny);
+    ctx.strokeStyle = n.classList.contains('vuln') ? 'rgba(239,68,68,0.18)' : 'rgba(59,130,246,0.18)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  });
+
+  // Lines from center to shared CVE nodes (dashed)
+  panel.querySelectorAll('.sg-node.shared').forEach(n => {
+    const r = n.getBoundingClientRect();
+    const nx = r.left - pRect.left + r.width / 2;
+    const ny = r.top - pRect.top + r.height / 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(nx, ny);
+    ctx.strokeStyle = 'rgba(139,92,246,0.3)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // Lines from shared CVE nodes to their linked vuln/news nodes
+  if (sgData && sgData.links) {
+    sgData.links.forEach(lk => {
+      const sharedEl = panel.querySelector(`.sg-node.shared[data-sg-link="${lk.cve_id}"]`);
+      if (!sharedEl) return;
+      const sr = sharedEl.getBoundingClientRect();
+      const sx = sr.left - pRect.left + sr.width / 2;
+      const sy = sr.top - pRect.top + sr.height / 2;
+
+      // Link to vulns
+      lk.vuln_ids.forEach(vid => {
+        const vi = sgData.vulns.findIndex(v => v.id === vid || v.cve_id === vid);
+        if (vi < 0) return;
+        const vel = panel.querySelector(`.sg-node.vuln[data-sg-id="v-${vi}"]`);
+        if (!vel) return;
+        const vr = vel.getBoundingClientRect();
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(vr.left - pRect.left + vr.width / 2, vr.top - pRect.top + vr.height / 2);
+        ctx.strokeStyle = 'rgba(139,92,246,0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      });
+
+      // Link to news
+      lk.news_ids.forEach(nid => {
+        const ni = sgData.news.findIndex(a => a.id === nid);
+        if (ni < 0) return;
+        const nel = panel.querySelector(`.sg-node.news[data-sg-id="n-${ni}"]`);
+        if (!nel) return;
+        const nr = nel.getBoundingClientRect();
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(nr.left - pRect.left + nr.width / 2, nr.top - pRect.top + nr.height / 2);
+        ctx.strokeStyle = 'rgba(139,92,246,0.25)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      });
+    });
+  }
+}
+
+function showSgDetail(type, idx) {
+  const d = sgData;
+  if (!d) return;
+  const item = type === 'vuln' ? d.vulns[idx] : d.news[idx];
+  if (!item) return;
+
+  sgActiveNode = `${type === 'vuln' ? 'v' : 'n'}-${idx}`;
+  document.querySelectorAll('.sg-node').forEach(n => n.classList.remove('active'));
+  const activeEl = document.querySelector(`.sg-node[data-sg-id="${sgActiveNode}"]`);
+  if (activeEl) activeEl.classList.add('active');
+
+  const panel = document.getElementById('sg-detail');
+  const inner = document.getElementById('sg-detail-inner');
+
+  let html = `<button class="sg-detail-close" onclick="closeSgDetail()">✕</button>`;
+
+  if (type === 'vuln') {
+    const v = item;
+    html += `<div class="sg-detail-type vuln">${t('search.legend_vuln')}</div>`;
+    html += `<div class="sg-detail-title">${escapeHtmlSg(v.title)}</div>`;
+    html += `<div class="sg-detail-badges">`;
+    if (v.is_kev) html += `<span class="sg-node-badge sg-b-kev">KEV</span>`;
+    if (v.is_itw) html += `<span class="sg-node-badge sg-b-itw">ITW</span>`;
+    if (v.severity && v.severity !== 'unknown') {
+      const sc = v.severity === 'critical' ? 'sg-b-crit' : v.severity === 'high' ? 'sg-b-high' : 'sg-b-med';
+      html += `<span class="sg-node-badge ${sc}">${v.severity.toUpperCase()}</span>`;
+    }
+    if (v.cvss != null) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">CVSS ${v.cvss}</span>`;
+    if (v.epss_score != null) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">EPSS ${v.epss_score.toFixed(2)}</span>`;
+    if (v.pocs && v.pocs.length) html += `<span class="sg-node-badge sg-b-poc">${v.pocs.length} PoC</span>`;
+    html += `</div>`;
+
+    // AI Summary
+    const summary = v.ai_summary || v.summary || '';
+    if (summary) {
+      html += `<div class="sg-detail-section"><div class="sg-detail-label">${t('search.detail_summary')}</div><div class="sg-detail-text">${escapeHtmlSg(summary)}</div></div>`;
+    }
+
+    // Key info grid
+    html += `<div class="sg-detail-section"><div class="sg-detail-label">${t('search.detail_info')}</div><div class="sg-detail-grid">`;
+    if (v.cve_id) html += `<div><span class="sg-detail-grid-label">CVE</span><br/><span class="sg-detail-grid-value">${escapeHtmlSg(v.cve_id)}</span></div>`;
+    if (v.vendor) html += `<div><span class="sg-detail-grid-label">Vendor</span><br/>${escapeHtmlSg(v.vendor)}</div>`;
+    if (v.product) html += `<div><span class="sg-detail-grid-label">Product</span><br/>${escapeHtmlSg(v.product)}</div>`;
+    html += `<div><span class="sg-detail-grid-label">Heat</span><br/><span class="sg-detail-grid-value" style="color:#EF4444;font-weight:600;">${v.heat}</span></div>`;
+    if (v.published) html += `<div><span class="sg-detail-grid-label">Published</span><br/><span class="sg-detail-grid-value">${escapeHtmlSg(v.published.slice(0,10))}</span></div>`;
+    html += `</div></div>`;
+
+    // Related news
+    const relatedLinks = d.links.filter(l => l.vuln_ids.includes(v.id) || l.vuln_ids.includes(v.cve_id));
+    const relatedNewsIds = new Set();
+    relatedLinks.forEach(l => l.news_ids.forEach(id => relatedNewsIds.add(id)));
+    if (relatedNewsIds.size > 0) {
+      html += `<div class="sg-detail-section"><div class="sg-detail-label">${t('search.detail_related')} (${relatedNewsIds.size})</div>`;
+      d.news.forEach((a, ni) => {
+        if (!relatedNewsIds.has(a.id)) return;
+        html += `<div class="sg-related-item" onclick="showSgDetail('news',${ni})">
+          <div class="sg-related-dot" style="background:#3B82F6;"></div>
+          <div>${escapeHtmlSg(a.title)}<br/><span style="color:var(--paper-veil);font-size:.65rem;">${escapeHtmlSg(a.source_title || '')} · AI ${a.llm_score || '?'}</span></div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    // References / PoCs
+    if (v.pocs && v.pocs.length) {
+      html += `<div class="sg-detail-section"><div class="sg-detail-label">${t('detail.pocs')} (${v.pocs.length})</div>`;
+      v.pocs.slice(0, 3).forEach(p => {
+        html += `<a href="${escapeHtmlSg(p.url)}" target="_blank" rel="noopener" class="sg-detail-link" style="display:block;margin-top:4px;">${escapeHtmlSg(p.title || p.url)} ${p.stars ? '⭐' + p.stars : ''}</a>`;
+      });
+      html += `</div>`;
+    }
+
+    // Open link
+    if (v.references && v.references.length) {
+      html += `<a href="${escapeHtmlSg(v.references[0].url)}" target="_blank" rel="noopener" class="sg-detail-link">${t('search.detail_open')}</a>`;
+    } else if (v.cve_id) {
+      html += `<a href="https://nvd.nist.gov/vuln/detail/${encodeURIComponent(v.cve_id)}" target="_blank" rel="noopener" class="sg-detail-link">${t('search.detail_open')}</a>`;
+    }
+
+  } else {
+    // News article
+    const a = item;
+    html += `<div class="sg-detail-type news">${t('search.legend_news')}</div>`;
+    html += `<div class="sg-detail-title">${escapeHtmlSg(a.title)}</div>`;
+    html += `<div class="sg-detail-badges">`;
+    if (a.llm_score != null) html += `<span class="sg-node-badge sg-b-score">AI ${a.llm_score}</span>`;
+    if (a.llm_category) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">${escapeHtmlSg(a.llm_category)}</span>`;
+    if (a.lang) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">${a.lang.toUpperCase()}</span>`;
+    if (a.mirror_count > 0) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">${a.mirror_count} mirrors</span>`;
+    html += `</div>`;
+
+    // AI Summary
+    const summary = a.llm_summary_zh || a.summary || '';
+    if (summary) {
+      html += `<div class="sg-detail-section"><div class="sg-detail-label">${t('search.detail_summary')}</div><div class="sg-detail-text">${escapeHtmlSg(summary)}</div></div>`;
+    }
+
+    // Key info
+    html += `<div class="sg-detail-section"><div class="sg-detail-label">${t('search.detail_info')}</div><div class="sg-detail-grid">`;
+    html += `<div><span class="sg-detail-grid-label">Source</span><br/>${escapeHtmlSg(a.source_title || '')}</div>`;
+    if (a.published) html += `<div><span class="sg-detail-grid-label">Published</span><br/><span class="sg-detail-grid-value">${escapeHtmlSg(a.published.slice(0,10))}</span></div>`;
+    if (a.llm_category) html += `<div><span class="sg-detail-grid-label">Category</span><br/>${escapeHtmlSg(a.llm_category)}</div>`;
+    html += `</div></div>`;
+
+    // Related vulns
+    const relatedLinks = d.links.filter(l => l.news_ids.includes(a.id));
+    const relatedVulnIds = new Set();
+    relatedLinks.forEach(l => l.vuln_ids.forEach(id => relatedVulnIds.add(id)));
+    if (relatedVulnIds.size > 0) {
+      html += `<div class="sg-detail-section"><div class="sg-detail-label">${t('search.detail_related')} (${relatedVulnIds.size})</div>`;
+      d.vulns.forEach((v, vi) => {
+        if (!relatedVulnIds.has(v.id) && !relatedVulnIds.has(v.cve_id)) return;
+        html += `<div class="sg-related-item" onclick="showSgDetail('vuln',${vi})">
+          <div class="sg-related-dot" style="background:#EF4444;"></div>
+          <div>${escapeHtmlSg(v.title)}<br/><span style="color:var(--paper-veil);font-size:.65rem;">${escapeHtmlSg(v.cve_id || v.ghsa_id || '')} · heat ${v.heat}</span></div>
+        </div>`;
+      });
+      html += `</div>`;
+    }
+
+    // Open link
+    if (a.link) {
+      html += `<a href="${escapeHtmlSg(a.link)}" target="_blank" rel="noopener" class="sg-detail-link">${t('search.detail_open')}</a>`;
+    }
+  }
+
+  inner.innerHTML = html;
+  panel.classList.add('open');
+  document.getElementById('sg-graph').classList.add('shrunk');
+  setTimeout(drawSgLines, 320);
+}
+
+// Wire up search input
+document.getElementById('sg-input').addEventListener('input', (e) => {
+  clearTimeout(sgTimer);
+  const q = e.target.value.trim();
+  sgTimer = setTimeout(() => sgSearch(q), 300);
+});
+
+// Resize handler
+window.addEventListener('resize', () => {
+  if (!document.getElementById('sg-backdrop').classList.contains('hidden')) {
+    drawSgLines();
+  }
+});
 
 boot();
 </script>
