@@ -459,6 +459,7 @@ def _cve_signals() -> dict[str, dict]:
 
 
 _VULN_RSS_SOURCES = frozenset({
+    "vulners", "vuldb", "sploitus",
     "vulners_com", "vuldb_com", "sploitus_com",
     "blog_nsfocus_net", "securityonline_info",
 })

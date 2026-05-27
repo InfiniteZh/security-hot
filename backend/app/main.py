@@ -402,10 +402,26 @@ _brief_regen_lock = threading.Lock()
 _brief_regen_in_flight: bool = False
 
 
-def _run_fetcher(only: list[str] | None) -> None:
-    """Spawn fetch_data.py in a subprocess, then auto-trigger LLM classify +
-    summarize if news was fetched. Designed to run inside a BackgroundTask;
-    releases the in-flight lock in ``finally`` so a crashed subprocess doesn't
+_LLM_TASKS_BY_SCOPE = {
+    "news": ["news_classify", "news_summarize", "daily_brief"],
+    "vuln": [],  # vuln_assess already auto-runs at end of fetch_data.py
+    "all":  ["news_classify", "news_summarize", "daily_brief"],
+}
+
+# Maps each LLM task to the progress-bar stage shown in the UI
+# (frontend reads _refresh_stage via /api/healthz, only knows 3 stages).
+_LLM_STAGES = {
+    "news_classify":  "classifying",
+    "news_summarize": "summarizing",
+    "daily_brief":    "summarizing",
+}
+
+
+def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> None:
+    """Spawn fetch_data.py, then optionally chain llm_rank.py per task.
+    Runs each LLM task in its own subprocess so _refresh_stage can advance
+    per task and drive the frontend's 3-stage progress bar.
+    Releases the in-flight lock in `finally` so a crashed subprocess doesn't
     permanently jam the endpoint."""
     global _refresh_in_flight, _refresh_stage
     try:
@@ -422,21 +438,19 @@ def _run_fetcher(only: list[str] | None) -> None:
             _refresh_stage = "error"
             return
 
-        news_fetched = only is None or "news" in only
-        if news_fetched:
-            llm_script = str(ROOT / "scripts" / "llm_rank.py")
-            for task, stage in [("news_classify", "classifying"), ("news_summarize", "summarizing")]:
-                _refresh_stage = stage
-                log.info("auto LLM: %s", task)
-                llm_proc = subprocess.run(
-                    [sys.executable, llm_script, "--task", task],
-                    check=False, capture_output=True, text=True, cwd=str(ROOT),
-                    timeout=600,
-                )
-                if llm_proc.returncode == 0:
-                    log.info("auto LLM %s ok", task)
-                else:
-                    log.warning("auto LLM %s exited %s: %s", task, llm_proc.returncode, (llm_proc.stderr or "")[:300])
+        llm_script = str(ROOT / "scripts" / "llm_rank.py")
+        for task in (llm_tasks or []):
+            _refresh_stage = _LLM_STAGES.get(task, "classifying")
+            log.info("auto LLM: %s (stage=%s)", task, _refresh_stage)
+            llm_proc = subprocess.run(
+                [sys.executable, llm_script, "--task", task],
+                check=False, capture_output=True, text=True, cwd=str(ROOT),
+                timeout=600,
+            )
+            if llm_proc.returncode == 0:
+                log.info("auto LLM %s ok", task)
+            else:
+                log.warning("auto LLM %s exited %s: %s", task, llm_proc.returncode, (llm_proc.stderr or "")[:300])
         _refresh_stage = "done"
     finally:
         with _refresh_lock:
@@ -447,6 +461,7 @@ def _run_fetcher(only: list[str] | None) -> None:
 def api_refresh(
     background: BackgroundTasks,
     only: str | None = Query(default=None, description="comma-separated fetcher names; default = all"),
+    llm: str | None = Query(default=None, description="LLM scope: news | vuln | all | none (default: none)"),
     x_refresh_token: str | None = Header(default=None),
 ) -> JSONResponse:
     """Trigger a fetcher run in the background.
@@ -454,6 +469,10 @@ def api_refresh(
     Auth: set `SECURITY_HOT_REFRESH_TOKEN` env var. If unset, the endpoint is
     disabled (returns 503). Pass `X-Refresh-Token: <token>` to authorize.
     Token compare is constant-time (secrets.compare_digest).
+
+    `llm` chains llm_rank.py after fetch: `news` runs classify+summarize+brief;
+    `vuln` is a no-op (vuln_assess auto-runs from fetch_data.py); `all` runs
+    everything news-side; default `none` skips LLM entirely.
     """
     expected = os.environ.get(REFRESH_TOKEN_ENV)
     if not expected:
@@ -466,8 +485,9 @@ def api_refresh(
             return JSONResponse({"queued": False, "reason": "already running"}, status_code=409)
         _refresh_in_flight = True
     chosen = [s.strip() for s in only.split(",") if s.strip()] if only else None
-    background.add_task(_run_fetcher, chosen)
-    return JSONResponse({"queued": True, "only": chosen}, status_code=202)
+    llm_tasks = _LLM_TASKS_BY_SCOPE.get((llm or "none").lower(), [])
+    background.add_task(_run_fetcher, chosen, llm_tasks or None)
+    return JSONResponse({"queued": True, "only": chosen, "llm": llm_tasks}, status_code=202)
 
 
 @app.get("/api/news/hidden", response_model=list[Article], tags=["news"])

@@ -604,7 +604,7 @@ async def _fetch_one_source_to_sqlite(
 
     entries_raw = [{
         "title": (e.get("title") or "(untitled)")[:500],
-        "summary": (e.get("summary") or "")[:2000],
+        "summary": clean_summary(e.get("summary", ""), limit=2000),
         "link": _make_canonical(e.get("link", "")),
         "_raw": e,
     } for e in parsed.entries if e.get("link") and _in_window(e)]

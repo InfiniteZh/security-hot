@@ -1242,10 +1242,10 @@
           <button id="lang-zh" class="lang-btn nav-pill" data-lang="zh">中</button>
           <button id="lang-en" class="lang-btn nav-pill" data-lang="en">EN</button>
         </div>
-        <button id="refresh-all" data-refresh-only="news"
+        <button id="refresh-all" data-refresh-mode="active-tab"
                 title="" data-i18n-title="refresh.title"
                 class="refresh-btn btn-icon"
-                aria-label="Refresh news">
+                aria-label="Refresh">
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="23 4 23 10 17 10"></polyline>
             <polyline points="1 20 1 14 7 14"></polyline>
@@ -1642,6 +1642,7 @@ function relTime(iso) {
 }
 function severityClass(s) { return "sev sev-" + s; }
 function escapeHtml(s) { return (s||"").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function stripHtml(s) { return (s||"").replace(/<[^>]+>/g, " ").replace(/&\w+;/g, " ").replace(/\s+/g, " ").trim(); }
 
 // Minimal safe markdown → HTML for LLM-generated brief text.
 // Supports: # / ## / ### headings, - / * bullets, 1. ordered lists,
@@ -1922,7 +1923,7 @@ function renderNewsCard(a) {
   // Some sources (defend.network, vulners) leave lang=''; restricting to
   // lang==='en' dropped the AI summary for them.
   const aiSummary = a.llm_summary_zh && a.llm_summary_zh.trim();
-  const origSummary = (a.summary || "").trim();
+  const origSummary = stripHtml(a.summary || "");
   const byline = a.source_title || a.source_slug || "";
   const absTime = a.published || a.fetched_at || "";
   return `
@@ -2157,8 +2158,9 @@ function updateRefreshButtonStates() {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function triggerRefresh(only) {
-  // `only` = "" → all fetchers; otherwise a single fetcher name.
+async function triggerRefresh(only, llm) {
+  // `only` = "" → all fetchers; otherwise a comma-list of fetcher names.
+  // `llm`  = "news" | "vuln" | "all" | undefined → chain LLM tasks after fetch.
   let token = getRefreshToken();
   if (!token) {
     token = window.prompt(t("refresh.prompt"));
@@ -2174,7 +2176,10 @@ async function triggerRefresh(only) {
   updateRefreshButtonStates();
   const startedAt = new Date();
 
-  const qs = only ? `?only=${encodeURIComponent(only)}` : "";
+  const params = new URLSearchParams();
+  if (only) params.set("only", only);
+  if (llm)  params.set("llm", llm);
+  const qs = params.toString() ? `?${params}` : "";
   let res;
   try {
     res = await fetch(`/api/refresh${qs}`, {
@@ -2293,6 +2298,10 @@ async function pollRefreshDone(only, startedAt) {
   }
 }
 
+// Vuln tab fetchers (everything except `news` itself; `news` feeds the news
+// tab and also CVE-bridge, but refreshing it here would duplicate news-tab work).
+const VULN_FETCHERS = "kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto";
+
 // Document-level delegation so dynamically-rendered .refresh-btn elements
 // (in renderPipeline) keep working without re-binding.
 document.addEventListener("click", (e) => {
@@ -2300,8 +2309,17 @@ document.addEventListener("click", (e) => {
   if (!btn) return;
   e.preventDefault();
   if (btn.disabled) return;
+  const mode = btn.getAttribute("data-refresh-mode");
+  if (mode === "active-tab") {
+    if (state.activeTab === "news") {
+      triggerRefresh("news", "news");           // fetch news → classify + summarize + brief
+    } else {
+      triggerRefresh(VULN_FETCHERS, "vuln");    // fetch vuln signals; vuln_assess auto-runs
+    }
+    return;
+  }
   const only = btn.getAttribute("data-refresh-only") || "";
-  triggerRefresh(only);
+  triggerRefresh(only);                         // per-source pipeline button: fetch only
 });
 
 const CAT_LABELS = {
@@ -2559,6 +2577,14 @@ function setActiveTab(tab) {
   document.getElementById("news-catfilter").style.display    = tab === "news" ? "flex" : "none";
   document.getElementById("news-lang-filter").style.display  = tab === "news" ? "flex" : "none";
   document.getElementById("hidden-toggle").style.display     = tab === "news" ? "inline-flex" : "none";
+  // Top-right refresh button: tooltip + aria reflect what it'll actually refresh.
+  const rb = document.getElementById("refresh-all");
+  if (rb) {
+    const key = tab === "news" ? "refresh.title.news" : "refresh.title.vuln";
+    rb.setAttribute("data-i18n-title", key);
+    rb.title = t(key);
+    rb.setAttribute("aria-label", t(key));
+  }
   // Heat board switches data source per-tab
   if (typeof fetchOne === "function") fetchOne("heat").then(() => renderHeat());
 }
@@ -2965,7 +2991,7 @@ function renderNewsDetail(a, link) {
   const cat = a.llm_category;
   const catLabel = cat ? (t("cat." + cat) || cat) : "";
   const aiSummary = (a.llm_summary_zh || "").trim();
-  const origSummary = (a.summary || "").trim();
+  const origSummary = stripHtml(a.summary || "");
   const byline = a.source_title || a.source_slug || "";
   const absTime = a.published || "";
   const scoreBar = a.llm_score != null ? Math.min(a.llm_score, 10) : 0;
