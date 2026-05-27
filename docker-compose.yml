@@ -1,6 +1,10 @@
 services:
   web:
-    build: .
+    build:
+      context: .
+      args:
+        APP_UID: ${APP_UID:-10001}
+        APP_GID: ${APP_GID:-10001}
     ports:
       - "8000:8000"
     env_file:
@@ -18,7 +22,11 @@ services:
   fetcher:
     # One-shot job: re-run with `docker compose run --rm fetcher` (or
     # schedule via host cron / a sidecar like ofelia).
-    build: .
+    build:
+      context: .
+      args:
+        APP_UID: ${APP_UID:-10001}
+        APP_GID: ${APP_GID:-10001}
     profiles: ["job"]
     env_file:
       - .env

@@ -27,8 +27,14 @@ RUN mkdir -p backend/cache backend/history
 
 EXPOSE 8000
 
-# Drop privileges.
-RUN useradd -u 10001 -m -d /home/app app \
+# Drop privileges. UID/GID are build args so bind-mounted host dirs
+# (backend/cache, backend/history) can match the deploy user — avoids
+# "unable to open database file" from SQLite when the container user
+# can't write the mount point.
+ARG APP_UID=10001
+ARG APP_GID=10001
+RUN groupadd -g ${APP_GID} app \
+    && useradd -u ${APP_UID} -g ${APP_GID} -m -d /home/app app \
     && chown -R app:app /app
 USER app
 
