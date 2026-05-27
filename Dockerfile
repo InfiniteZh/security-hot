@@ -21,6 +21,9 @@ RUN uv sync --frozen --no-dev
 COPY backend ./backend
 COPY scripts ./scripts
 COPY web ./web
+# Full ~695-feed catalog produced by scripts/merge_rss.py — without this
+# the news fetcher silently falls back to the ~26 hardcoded NEWS_SOURCES.
+COPY rss/merged.opml ./rss/merged.opml
 
 # Place an empty cache dir; the first fetch fills it.
 RUN mkdir -p backend/cache backend/history
