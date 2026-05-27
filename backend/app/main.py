@@ -15,12 +15,14 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import logging
 import os
 import secrets
 import subprocess
 import sys
 import threading
+import time as _time
 from pathlib import Path
 from typing import Literal
 
@@ -383,6 +385,19 @@ def healthz() -> JSONResponse:
             overall_status = "error"
         elif r.status == "no_data" and overall_status == "ok":
             overall_status = "degraded"
+    refresh_elapsed_s = round(_time.monotonic() - _refresh_started_at, 1) if _refresh_in_flight and _refresh_started_at else None
+
+    progress = None
+    if _refresh_in_flight:
+        try:
+            _pf = ROOT / "backend" / "cache" / ".refresh_progress.json"
+            if _pf.exists():
+                _pd = _json.loads(_pf.read_text(encoding="utf-8"))
+                if _time.time() - _pd.get("ts", 0) < 600:
+                    progress = _pd
+        except (OSError, ValueError):
+            pass
+
     return JSONResponse({
         "ok": overall_status == "ok",
         "status": overall_status,
@@ -390,6 +405,9 @@ def healthz() -> JSONResponse:
         "fetchers": fetchers,
         "refresh_in_flight": _refresh_in_flight,
         "refresh_stage": _refresh_stage,
+        "refresh_elapsed_s": refresh_elapsed_s,
+        "refresh_stage_history": _refresh_stage_history if _refresh_stage_history else None,
+        "refresh_progress": progress,
     })
 
 
@@ -397,6 +415,9 @@ REFRESH_TOKEN_ENV = "SECURITY_HOT_REFRESH_TOKEN"
 _refresh_lock = threading.Lock()
 _refresh_in_flight = False
 _refresh_stage = ""  # "", "fetching", "classifying", "summarizing", "done", "error"
+_refresh_started_at: float | None = None
+_refresh_stage_started_at: float | None = None
+_refresh_stage_history: dict = {}       # {stage: elapsed_s} for the most recent completed run
 
 _brief_regen_lock = threading.Lock()
 _brief_regen_in_flight: bool = False
@@ -417,15 +438,32 @@ _LLM_STAGES = {
 }
 
 
+def _set_stage(stage: str) -> None:
+    global _refresh_stage, _refresh_stage_started_at, _refresh_stage_history
+    now = _time.monotonic()
+    if _refresh_stage and _refresh_stage_started_at:
+        _refresh_stage_history[_refresh_stage] = round(now - _refresh_stage_started_at, 1)
+    _refresh_stage = stage
+    _refresh_stage_started_at = now
+
+
 def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> None:
     """Spawn fetch_data.py, then optionally chain llm_rank.py per task.
     Runs each LLM task in its own subprocess so _refresh_stage can advance
     per task and drive the frontend's 3-stage progress bar.
     Releases the in-flight lock in `finally` so a crashed subprocess doesn't
     permanently jam the endpoint."""
-    global _refresh_in_flight, _refresh_stage
+    global _refresh_in_flight, _refresh_stage, _refresh_started_at, _refresh_stage_history
     try:
-        _refresh_stage = "fetching"
+        _refresh_started_at = _time.monotonic()
+        _refresh_stage = ""
+        _refresh_stage_started_at = None
+        _refresh_stage_history = {}
+        try:
+            (ROOT / "backend" / "cache" / ".refresh_progress.json").unlink(missing_ok=True)
+        except OSError:
+            pass
+        _set_stage("fetching")
         cmd = [sys.executable, str(ROOT / "scripts" / "fetch_data.py")]
         if only:
             cmd.extend(["--only", ",".join(only)])
@@ -435,23 +473,28 @@ def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> 
             log.info("fetcher refresh finished ok (%d bytes stderr)", len(proc.stderr or ""))
         else:
             log.warning("fetcher refresh exited %s: %s", proc.returncode, (proc.stderr or "")[:500])
-            _refresh_stage = "error"
+            _set_stage("error")
             return
 
         llm_script = str(ROOT / "scripts" / "llm_rank.py")
         for task in (llm_tasks or []):
-            _refresh_stage = _LLM_STAGES.get(task, "classifying")
+            new_stage = _LLM_STAGES.get(task, "classifying")
+            if new_stage != _refresh_stage:
+                _set_stage(new_stage)
             log.info("auto LLM: %s (stage=%s)", task, _refresh_stage)
-            llm_proc = subprocess.run(
-                [sys.executable, llm_script, "--task", task],
-                check=False, capture_output=True, text=True, cwd=str(ROOT),
-                timeout=600,
-            )
-            if llm_proc.returncode == 0:
-                log.info("auto LLM %s ok", task)
-            else:
-                log.warning("auto LLM %s exited %s: %s", task, llm_proc.returncode, (llm_proc.stderr or "")[:300])
-        _refresh_stage = "done"
+            try:
+                llm_proc = subprocess.run(
+                    [sys.executable, llm_script, "--task", task],
+                    check=False, capture_output=True, text=True, cwd=str(ROOT),
+                    timeout=3600,
+                )
+                if llm_proc.returncode == 0:
+                    log.info("auto LLM %s ok", task)
+                else:
+                    log.warning("auto LLM %s exited %s: %s", task, llm_proc.returncode, (llm_proc.stderr or "")[:300])
+            except subprocess.TimeoutExpired:
+                log.warning("auto LLM %s timed out after 3600s, partial results saved", task)
+        _set_stage("done")
     finally:
         with _refresh_lock:
             _refresh_in_flight = False

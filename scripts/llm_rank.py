@@ -42,6 +42,7 @@ from pathlib import Path
 import httpx
 
 import db as _db
+import refresh_progress as _prog
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -314,11 +315,15 @@ async def classify_news(
         # Build batches
         batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        _classify_done = 0
 
         system_prompt = _CLASSIFY_SYSTEM_PROMPT
         sem = asyncio.Semaphore(cfg["concurrency"])
+        _prog.start("classifying")
+        _prog.report("classifying", len(rows), 0, label="news_classify")
 
         async def process(batch, batch_num, client):
+            nonlocal _classify_done
             user_msg = _build_classify_user_msg(batch)
             async with sem:
                 try:
@@ -329,6 +334,8 @@ async def classify_news(
                 except Exception as exc:
                     if verbose:
                         print(f"[phase1] batch {batch_num} failed: {exc}", file=sys.stderr)
+                    _classify_done += len(batch)
+                    _prog.report("classifying", len(rows), _classify_done, label="news_classify")
                     return
                 items = result.get("items", [])
                 for item in items:
@@ -351,6 +358,8 @@ async def classify_news(
                         now_iso, rowid,
                     ])
                 conn.commit()
+                _classify_done += len(batch)
+                _prog.report("classifying", len(rows), _classify_done, label="news_classify")
                 if verbose:
                     print(f"[phase1] batch {batch_num}/{len(batches)}: +{len(items)}", file=sys.stderr)
 
@@ -401,6 +410,7 @@ async def summarize_news(
 
         batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        _summ_done = 0
 
         system_prompt = """你是安全资讯摘要助手。
 为每篇安全文章生成 3-5 句中文摘要（200-300 字），内容应覆盖：
@@ -413,8 +423,11 @@ async def summarize_news(
 不要 markdown, 不要前缀。"""
 
         sem = asyncio.Semaphore(cfg["concurrency"])
+        _prog.start("summarizing")
+        _prog.report("summarizing", len(rows), 0, label="news_summarize")
 
         async def process(batch, batch_num, client):
+            nonlocal _summ_done
             user_msg = "\n---\n".join(
                 f"id={r['id']}\ntitle: {r['title']}\nsummary: {(r['summary'] or '')[:500]}"
                 for r in batch
@@ -428,6 +441,8 @@ async def summarize_news(
                 except Exception as exc:
                     if verbose:
                         print(f"[phase2] batch {batch_num} failed: {exc}", file=sys.stderr)
+                    _summ_done += len(batch)
+                    _prog.report("summarizing", len(rows), _summ_done, label="news_summarize")
                     return
                 for item in result.get("items", []):
                     conn.execute(
@@ -435,6 +450,8 @@ async def summarize_news(
                         [(item.get("summary") or "")[:800], now_iso, item.get("id")],
                     )
                 conn.commit()
+                _summ_done += len(batch)
+                _prog.report("summarizing", len(rows), _summ_done, label="news_summarize")
                 if verbose:
                     print(f"[phase2] batch {batch_num}/{len(batches)}: +{len(result.get('items', []))}",
                           file=sys.stderr)
@@ -620,17 +637,20 @@ async def generate_daily_brief(
 
 输出格式：仅输出一个 JSON 对象 `{"text": "..."}`，其中 text 的值是**纯 markdown 字符串**（不是再嵌套的 JSON）。markdown 中的换行用 `\\n`、引号用 `\\"` 转义即可。除该 JSON 外不要任何前后文字、不要 ```json 围栏。"""
 
+        _brief_total = sum(
+            min(conn.execute(
+                "SELECT COUNT(*) FROM articles WHERE substr(published,1,10)=? AND llm_category=? AND (is_relevant=1 OR is_relevant IS NULL) AND (cluster_id IS NULL OR is_cluster_primary=1)",
+                [target_date, c]).fetchone()[0], 12)
+            for c in ALL_CATEGORIES)
+        _brief_articles_done = 0
+        _prog.start("summarizing")
+        _prog.report("summarizing", _brief_total, 0, label="daily_brief")
+
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
             for category in ALL_CATEGORIES:
-                # Strictly match published date — NOT first_seen_date and NOT
-                # a fetched_at fallback. The news list view in the frontend
-                # filters by published[:10] == date (with NULL excluded), so
-                # using COALESCE here makes counts inconsistent between brief
-                # and visible articles. Articles without published date won't
-                # appear in any specific day's brief or news view — that's
-                # honest behavior (we don't know when they were published).
-                # is_relevant: accept NULL (not yet classified) so cold-start
-                # works without waiting for classify backlog to finish.
+                # Filter by published date (not fetched_at) so counts match
+                # the frontend news view. is_relevant accepts NULL for
+                # cold-start before classify backlog finishes.
                 rows = list(conn.execute("""
                     SELECT title, summary, source_title, llm_summary_zh
                     FROM articles
@@ -670,10 +690,14 @@ async def generate_daily_brief(
                         text=text, article_count=len(rows), generated_at=now_iso,
                     )
                     summaries[category] = {"chars": len(text), "articles": len(rows)}
+                    _brief_articles_done += len(rows)
+                    _prog.report("summarizing", _brief_total, _brief_articles_done, label="daily_brief")
                     if verbose:
                         print(f"[brief] {category}: {len(text)} chars from {len(rows)} articles",
                               file=sys.stderr)
                 except Exception as exc:
+                    _brief_articles_done += len(rows)
+                    _prog.report("summarizing", _brief_total, _brief_articles_done, label="daily_brief")
                     if verbose:
                         print(f"[brief] {category} failed: {exc}", file=sys.stderr)
 

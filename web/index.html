@@ -1198,7 +1198,10 @@
   <div id="refresh-progress" class="refresh-progress">
     <div class="refresh-progress-header">
       <span class="refresh-progress-label" id="rp-label"></span>
-      <span class="refresh-progress-stage" id="rp-stage"></span>
+      <span style="display:flex;align-items:center;gap:12px;">
+        <span class="refresh-progress-stage" id="rp-elapsed" style="color:var(--ink);font-weight:500;"></span>
+        <span class="refresh-progress-stage" id="rp-stage"></span>
+      </span>
     </div>
     <div class="refresh-progress-track">
       <div class="refresh-progress-fill" id="rp-fill" style="width:0%"></div>
@@ -2158,6 +2161,193 @@ function updateRefreshButtonStates() {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
+// ─── progress bar: real elapsed time + ETA from historical data ─────────
+const TIMING_HISTORY_KEY = "sh.refreshTimingHistory";
+let _rpTickTimer = null;
+let _timingCache = null;  // cached parse of localStorage, refreshed on save
+
+function _loadTimingHistory() {
+  if (_timingCache) return _timingCache;
+  try { _timingCache = JSON.parse(localStorage.getItem(TIMING_HISTORY_KEY)) || []; } catch { _timingCache = []; }
+  return _timingCache;
+}
+function _saveTimingRun(stageHistory) {
+  const runs = _loadTimingHistory();
+  runs.push({ ts: Date.now(), stages: stageHistory });
+  while (runs.length > 5) runs.shift();
+  localStorage.setItem(TIMING_HISTORY_KEY, JSON.stringify(runs));
+  _timingCache = runs;
+}
+function _estimateTotal() {
+  const runs = _loadTimingHistory();
+  const totals = runs.map(r => Object.values(r.stages || {}).reduce((a, b) => a + b, 0)).filter(v => v > 0);
+  if (totals.length === 0) return null;
+  return Math.round(totals.reduce((a, b) => a + b, 0) / totals.length);
+}
+function _fmtSec(s) {
+  if (s == null || s < 0) return '--:--';
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+// Live state that the tick timer reads
+const _rpState = { stage: '', elapsedS: null, progress: null };
+
+function _rpTick() {
+  const elapsedEl = document.getElementById('rp-elapsed');
+  const stageEl = document.getElementById('rp-stage');
+  if (!elapsedEl) return;
+  const isZh = lang === 'zh';
+  const elapsed = _rpState.elapsedS;
+  if (elapsed == null) { elapsedEl.textContent = ''; return; }
+
+  const displayElapsed = elapsed + (Date.now() - (_rpState._lastPollAt || Date.now())) / 1000;
+  let text = _fmtSec(displayElapsed);
+
+  // tqdm-style ETA: prefer real-time progress data from subprocess
+  // Interpolate eta_s locally so the countdown ticks between 4s polls
+  const p = _rpState.progress;
+  if (p && p.total > 0 && p.done < p.total) {
+    if (p.eta_s != null) {
+      const sincePoll = (Date.now() - (_rpState._lastPollAt || Date.now())) / 1000;
+      const eta = Math.max(0, p.eta_s - sincePoll);
+      text += isZh ? ` · 预计还需 ${_fmtSec(eta)}` : ` · ~${_fmtSec(eta)} left`;
+    }
+  } else if (p && p.total > 0 && p.done >= p.total) {
+    text += isZh ? ' · 即将完成' : ' · almost done';
+  } else {
+    // Fallback: use historical averages
+    const estTotal = _estimateTotal();
+    if (estTotal != null && displayElapsed < estTotal) {
+      const remaining = Math.max(0, estTotal - displayElapsed);
+      text += isZh ? ` · 预计还需 ${_fmtSec(remaining)}` : ` · ~${_fmtSec(remaining)} left`;
+    } else if (estTotal != null) {
+      text += isZh ? ' · 即将完成' : ' · almost done';
+    }
+  }
+  elapsedEl.textContent = text;
+
+  // Stage sub-text: show items done/total + rate from subprocess progress
+  const stage = _rpState.stage;
+  const stageName = t('refresh.stage.' + stage) || stage;
+  if (p && p.total > 0) {
+    const pct = Math.round(p.done / p.total * 100);
+    const rateStr = p.rate > 0 ? ` ${p.rate.toFixed(1)}/s` : '';
+    stageEl.textContent = `${stageName} ${p.done}/${p.total} (${pct}%)${rateStr}`;
+  } else {
+    stageEl.textContent = stageName;
+  }
+}
+
+function updateProgressBar(stage, healthData) {
+  const bar = document.getElementById('refresh-progress');
+  const fill = document.getElementById('rp-fill');
+  const label = document.getElementById('rp-label');
+  const s1 = document.getElementById('rp-s1');
+  const s2 = document.getElementById('rp-s2');
+  const s3 = document.getElementById('rp-s3');
+  const isZh = lang === 'zh';
+
+  s1.textContent = isZh ? '① 拉取 RSS' : '① Fetch RSS';
+  s2.textContent = isZh ? '② AI 分类' : '② Classify';
+  s3.textContent = isZh ? '③ 生成摘要' : '③ Summarize';
+
+  s1.className = s2.className = s3.className = '';
+
+  if (!stage || stage === 'done' || stage === 'error') {
+    bar.classList.remove('visible');
+    if (_rpTickTimer) { clearInterval(_rpTickTimer); _rpTickTimer = null; }
+    _rpState.stage = '';
+    return;
+  }
+
+  bar.classList.add('visible');
+  label.textContent = isZh ? '数据刷新中' : 'Refreshing';
+
+  _rpState.stage = stage;
+  if (healthData) {
+    _rpState.elapsedS = healthData.refresh_elapsed_s;
+    _rpState.progress = healthData.refresh_progress;
+    _rpState._lastPollAt = Date.now();
+  }
+
+  if (!_rpTickTimer) {
+    _rpTick();
+    _rpTickTimer = setInterval(_rpTick, 1000);
+  }
+
+  // Progress fill: prefer real done/total from subprocess, else historical, else fixed
+  const p = _rpState.progress;
+  const stageWeights = { fetching: 0.33, classifying: 0.34, summarizing: 0.33 };
+  const stageStart = { fetching: 0, classifying: 0.33, summarizing: 0.67 };
+
+  if (p && p.total > 0) {
+    const inStagePct = Math.min(p.done / p.total, 1);
+    const base = stageStart[stage] || 0;
+    const weight = stageWeights[stage] || 0.33;
+    const totalPct = (base + inStagePct * weight) * 100;
+    fill.style.width = `${Math.max(Math.min(totalPct, 98), 3)}%`;
+  } else {
+    if (stage === 'fetching')          fill.style.width = '10%';
+    else if (stage === 'classifying')  fill.style.width = '40%';
+    else if (stage === 'summarizing')  fill.style.width = '75%';
+  }
+
+  if (stage === 'fetching') {
+    s1.className = 'active';
+  } else if (stage === 'classifying') {
+    s1.className = 'done';
+    s2.className = 'active';
+  } else if (stage === 'summarizing') {
+    s1.className = 'done';
+    s2.className = 'done';
+    s3.className = 'active';
+  }
+}
+
+async function pollRefreshDone(only, startedAt) {
+  const maxPolls = 90;
+  let done = false;
+  let errored = false;
+  let lastStageHistory = null;
+  for (let i = 0; i < maxPolls; i++) {
+    await sleep(4000);
+    let h;
+    try {
+      h = await fetch("/api/healthz").then(r => r.json());
+    } catch (_) {
+      continue;
+    }
+    if (h.refresh_stage_history) lastStageHistory = h.refresh_stage_history;
+
+    if (h.refresh_stage) updateProgressBar(h.refresh_stage, h);
+
+    if (h.refresh_in_flight === false && h.refresh_stage === 'done') {
+      done = true;
+      break;
+    }
+    if (h.refresh_stage === 'error') {
+      errored = true;
+      break;
+    }
+  }
+  if (done && lastStageHistory && Object.keys(lastStageHistory).length > 0) {
+    _saveTimingRun(lastStageHistory);
+  }
+  updateProgressBar('');
+  refreshState.inFlight.delete(only);
+  updateRefreshButtonStates();
+  if (done) {
+    showRefreshToast(`${t("refresh.done")}${only ? ' · ' + only : ''}`, "ok");
+    await fetchAll();
+  } else if (errored) {
+    showRefreshToast(t("refresh.stage.error"), "error", 6000);
+  } else {
+    showRefreshToast(t("refresh.timeout"), "warn", 6000);
+  }
+}
+
 async function triggerRefresh(only, llm) {
   // `only` = "" → all fetchers; otherwise a comma-list of fetcher names.
   // `llm`  = "news" | "vuln" | "all" | undefined → chain LLM tasks after fetch.
@@ -2220,82 +2410,10 @@ async function triggerRefresh(only, llm) {
   }
   // 202 queued — show progress bar immediately, then start polling
   showRefreshToast(`${t("refresh.starting")}${only ? ' · ' + only : ''}`, "ok", 2500);
-  updateProgressBar('fetching');
+  _rpState._lastPollAt = Date.now();
+  _rpState.elapsedS = 0;
+  updateProgressBar('fetching', null);
   await pollRefreshDone(only, startedAt);
-}
-
-function updateProgressBar(stage) {
-  const bar = document.getElementById('refresh-progress');
-  const fill = document.getElementById('rp-fill');
-  const label = document.getElementById('rp-label');
-  const stageEl = document.getElementById('rp-stage');
-  const s1 = document.getElementById('rp-s1');
-  const s2 = document.getElementById('rp-s2');
-  const s3 = document.getElementById('rp-s3');
-  const isZh = lang === 'zh';
-
-  s1.textContent = isZh ? '① 拉取 RSS' : '① Fetch RSS';
-  s2.textContent = isZh ? '② AI 分类' : '② Classify';
-  s3.textContent = isZh ? '③ 生成摘要' : '③ Summarize';
-
-  s1.className = s2.className = s3.className = '';
-
-  if (!stage || stage === 'done' || stage === 'error') {
-    bar.classList.remove('visible');
-    return;
-  }
-
-  bar.classList.add('visible');
-  label.textContent = isZh ? '数据刷新中' : 'Refreshing';
-  stageEl.textContent = t('refresh.stage.' + stage) || stage;
-
-  if (stage === 'fetching') {
-    fill.style.width = '33%';
-    s1.className = 'active';
-  } else if (stage === 'classifying') {
-    fill.style.width = '66%';
-    s1.className = 'done';
-    s2.className = 'active';
-  } else if (stage === 'summarizing') {
-    fill.style.width = '90%';
-    s1.className = 'done';
-    s2.className = 'done';
-    s3.className = 'active';
-  }
-}
-
-async function pollRefreshDone(only, startedAt) {
-  const maxPolls = 90;
-  let done = false;
-  for (let i = 0; i < maxPolls; i++) {
-    await sleep(4000);
-    let h;
-    try {
-      h = await fetch("/api/healthz").then(r => r.json());
-    } catch (_) {
-      continue;
-    }
-    // Update progress bar from backend stage
-    if (h.refresh_stage) updateProgressBar(h.refresh_stage);
-
-    // Check if completely done (no longer in flight)
-    if (h.refresh_in_flight === false && h.refresh_stage === 'done') {
-      done = true;
-      break;
-    }
-    if (h.refresh_stage === 'error') {
-      break;
-    }
-  }
-  updateProgressBar('');
-  refreshState.inFlight.delete(only);
-  updateRefreshButtonStates();
-  if (done) {
-    showRefreshToast(`${t("refresh.done")}${only ? ' · ' + only : ''}`, "ok");
-    await fetchAll();
-  } else {
-    showRefreshToast(t("refresh.timeout"), "warn", 6000);
-  }
 }
 
 // Vuln tab fetchers (everything except `news` itself; `news` feeds the news
@@ -2693,8 +2811,8 @@ window.addEventListener("keydown", (e) => {
 // ───────────────────── boot + fetch ─────────────────────
 const ENDPOINTS = [
   { key: "today",    url: () => "/api/today",                                              dateAware: false },
-  { key: "news",     url: () => `/api/news?limit=120${dateQuery()}`,                       dateAware: true },
-  { key: "vuln",     url: () => `/api/vuln?limit=120&sort=heat${dateQuery()}`,             dateAware: true },
+  { key: "news",     url: () => `/api/news?limit=500${dateQuery()}`,                       dateAware: true },
+  { key: "vuln",     url: () => `/api/vuln?limit=500&sort=heat${dateQuery()}`,             dateAware: true },
   { key: "heat",     url: () => {
       const kind = state.activeTab === "news" ? "news" : "vuln";
       const datePart = state.selectedDate ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
@@ -3076,7 +3194,12 @@ async function boot() {
   try {
     const h = await fetch("/api/healthz").then(r => r.json());
     if (h.refresh_in_flight && h.refresh_stage) {
-      updateProgressBar(h.refresh_stage);
+      refreshState.inFlight.add("");
+      updateRefreshButtonStates();
+      _rpState._lastPollAt = Date.now();
+      _rpState.elapsedS = h.refresh_elapsed_s ?? 0;
+      updateProgressBar(h.refresh_stage, h);
+      pollRefreshDone("", new Date());
     }
   } catch (_) {}
   // hydrate from URL

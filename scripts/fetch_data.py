@@ -703,18 +703,31 @@ async def fetch_news_to_sqlite(
     sem = asyncio.Semaphore(concurrency)
     inserted_total = 0
     not_modified = 0
+    _feeds_done = 0
+
+    try:
+        import refresh_progress as _prog
+        _prog.start("fetching")
+        _prog.report("fetching", len(due), 0, label="news_rss")
+    except ImportError:
+        _prog = None
 
     timeout = httpx.Timeout(30.0, connect=10.0)
     async with httpx.AsyncClient(headers=HEADERS, timeout=timeout,
                                   follow_redirects=True) as client:
         async def one(src):
-            nonlocal inserted_total, not_modified
+            nonlocal inserted_total, not_modified, _feeds_done
             async with sem:
                 n, status = await _fetch_one_source_to_sqlite(client, dict(src), conn, ts)
                 inserted_total += n
                 if status == 304:
                     not_modified += 1
+                _feeds_done += 1
+                if _prog and _feeds_done % 10 == 0:
+                    _prog.report("fetching", len(due), _feeds_done, label="news_rss")
         await asyncio.gather(*[one(s) for s in due])
+    if _prog:
+        _prog.report("fetching", len(due), len(due), label="news_rss")
 
     conn.close()
     # Dump today's archive (idempotent: overwrites the day's file)
