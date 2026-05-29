@@ -9,6 +9,11 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      # Run the data pipeline in-process (no host crontab / sidecar needed).
+      # Cadence is tunable via SECURITY_HOT_FETCH_NEWS_MINUTES / _PIPELINE_HOURS
+      # / _FETCH_OTHER_HOURS / _BRIEF_HOUR_UTC — see .env.example.
+      SECURITY_HOT_SCHEDULER_ENABLED: "1"
     volumes:
       # Persist the fetcher cache + history snapshots between container restarts.
       - ./backend/cache:/app/backend/cache

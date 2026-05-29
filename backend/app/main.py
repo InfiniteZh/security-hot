@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import time as _time
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -68,10 +69,31 @@ from .models import (
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web"
 
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Start the optional in-process pipeline scheduler (see scheduler.py).
+    # The job functions live further down this module; they exist by the time
+    # startup runs. Stays None when SECURITY_HOT_SCHEDULER_ENABLED is unset.
+    from .scheduler import start_scheduler, stop_scheduler
+    app.state.scheduler = start_scheduler(
+        fetch_news=_sched_fetch_news,
+        heavy_pipeline=_sched_heavy_pipeline,
+        daily_brief=_sched_daily_brief,
+        fetch_other=_sched_fetch_other,
+    )
+    yield
+    sched = getattr(app.state, "scheduler", None)
+    if sched is not None:
+        log.info("scheduler stopping")
+        stop_scheduler(sched)
+
+
 app = FastAPI(
     title="security-hot",
     version="0.1.0",
     description="Daily aggregator for security news, vulnerability intel, and papers.",
+    lifespan=_lifespan,
 )
 
 # CORS: defaults to localhost:8000 + 127.0.0.1:8000 (single-process mode).
@@ -498,6 +520,91 @@ def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> 
     finally:
         with _refresh_lock:
             _refresh_in_flight = False
+
+
+def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
+    """Run a sequence of (label, script-args, ui_stage) subprocesses under the
+    shared refresh lock. Used by the in-process scheduler (backend/app/scheduler.py).
+
+    Sequential execution is deliberate: it serialises SQLite writers exactly the
+    way the staggered cron cadence does, avoiding WAL write contention between
+    fetch / embed / cluster / LLM. Taking `_refresh_lock` also means a scheduled
+    run and a manual /api/refresh never overlap — whichever starts second is
+    skipped rather than racing on the DB."""
+    global _refresh_in_flight, _refresh_started_at, _refresh_stage
+    global _refresh_stage_started_at, _refresh_stage_history
+    with _refresh_lock:
+        if _refresh_in_flight:
+            log.info("scheduler: skipped — refresh already in flight")
+            return
+        _refresh_in_flight = True
+    try:
+        _refresh_started_at = _time.monotonic()
+        _refresh_stage = ""
+        _refresh_stage_started_at = None
+        _refresh_stage_history = {}
+        try:
+            (ROOT / "backend" / "cache" / ".refresh_progress.json").unlink(missing_ok=True)
+        except OSError:
+            pass
+        for label, args, stage in steps:
+            if stage and stage != _refresh_stage:
+                _set_stage(stage)
+            cmd = [sys.executable, str(ROOT / "scripts" / args[0]), *args[1:]]
+            log.info("scheduler: %s -> %s", label, " ".join(cmd))
+            try:
+                proc = subprocess.run(
+                    cmd, check=False, capture_output=True, text=True,
+                    cwd=str(ROOT), timeout=3600,
+                )
+                if proc.returncode == 0:
+                    log.info("scheduler: %s ok", label)
+                else:
+                    log.warning(
+                        "scheduler: %s exited %s: %s",
+                        label, proc.returncode, (proc.stderr or "")[:400],
+                    )
+            except subprocess.TimeoutExpired:
+                log.warning("scheduler: %s timed out after 3600s", label)
+        _set_stage("done")
+    except Exception:
+        log.exception("scheduler: pipeline run crashed")
+        try:
+            _set_stage("error")
+        except Exception:
+            log.exception("scheduler: failed to record error stage")
+    finally:
+        with _refresh_lock:
+            _refresh_in_flight = False
+
+
+def _sched_fetch_news() -> None:
+    _run_pipeline_steps([
+        ("fetch news", ["fetch_data.py", "--only", "news", "--incremental"], "fetching"),
+    ])
+
+
+def _sched_heavy_pipeline() -> None:
+    # embed + cluster are prep (no dedicated UI stage) → reuse "fetching".
+    _run_pipeline_steps([
+        ("embed", ["embed_articles.py"], "fetching"),
+        ("cluster", ["cluster_articles.py"], "fetching"),
+        ("classify", ["llm_rank.py", "--task", "news_classify"], "classifying"),
+        ("summarize", ["llm_rank.py", "--task", "news_summarize"], "summarizing"),
+    ])
+
+
+def _sched_daily_brief() -> None:
+    _run_pipeline_steps([
+        ("daily brief", ["llm_rank.py", "--task", "daily_brief"], "summarizing"),
+    ])
+
+
+def _sched_fetch_other() -> None:
+    _run_pipeline_steps([
+        ("fetch other", ["fetch_data.py", "--only",
+                          "kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto"], "fetching"),
+    ])
 
 
 @app.post("/api/refresh", tags=["overview"])

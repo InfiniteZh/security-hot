@@ -1,5 +1,14 @@
 # security-hot — cron template for the news pipeline (Phase 2+ decoupled flow).
 #
+# NOTE: This is for BARE-METAL hosts (host has uv + the repo). In a DOCKER
+# deployment there is no host crontab, so use the in-process scheduler instead:
+# set SECURITY_HOT_SCHEDULER_ENABLED=1 (docker-compose already does this for the
+# `web` service). It runs the same scripts on the same cadence inside uvicorn —
+# tune via SECURITY_HOT_FETCH_NEWS_MINUTES / _PIPELINE_HOURS / _FETCH_OTHER_HOURS
+# / _BRIEF_HOUR_UTC. Do not enable it with `uvicorn --reload`; reload can briefly
+# overlap app processes and duplicate scheduled jobs. See backend/app/scheduler.py.
+# The cron below is the bare-metal equivalent.
+#
 # Replace /path/to/security-hot with your absolute repo path.
 # Add to crontab via `crontab -e`. All env vars come from .env via
 # `set -a && . ./.env && set +a`.
