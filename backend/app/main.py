@@ -46,6 +46,7 @@ logging.basicConfig(
 )
 log = logging.getLogger("security-hot")
 
+from . import pipeline_status as ps
 from .data import (
     all_articles,
     all_sources,
@@ -269,6 +270,62 @@ def api_manifest() -> Manifest:
     return manifest_fn()
 
 
+# Human labels for the scheduler jobs (frontend renders these as group headers).
+_JOB_LABELS = {
+    "fetch_news": "资讯抓取",
+    "fetch_other": "其它情报源",
+    "heavy_pipeline": "富化 + LLM 流水线",
+    "daily_brief": "每日简报",
+}
+
+
+@app.get("/api/pipeline", tags=["overview"])
+def api_pipeline() -> JSONResponse:
+    """Durable per-step status of the WHOLE pipeline (fetchers + enrichment/LLM).
+
+    Each step carries: last run time, ok/failed/pending, count, elapsed, the
+    failure reason (stderr tail) if any, and — when the in-process scheduler is
+    running — the next scheduled run. This is what the frontend status modal reads.
+    """
+    ps.bootstrap_from_manifest_if_empty(ROOT / "backend" / "cache" / "manifest.json")
+    steps = ps.load_steps()
+
+    # Next-run time per scheduler job (only present in the in-process scheduler
+    # deployment; cron / local-dev has no scheduler object → next_run is null).
+    sched = getattr(app.state, "scheduler", None)
+    jobs: dict[str, dict] = {}
+    if sched is not None:
+        try:
+            for job in sched.get_jobs():
+                nrt = getattr(job, "next_run_time", None)
+                jobs[job.id] = {
+                    "next_run": nrt.isoformat() if nrt else None,
+                    "label": _JOB_LABELS.get(job.id, job.id),
+                }
+        except Exception:
+            log.exception("pipeline: failed to read scheduler jobs")
+
+    for s in steps:
+        job = jobs.get(s.get("job") or "")
+        s["next_run"] = job["next_run"] if job else None
+        s["job_label"] = _JOB_LABELS.get(s.get("job") or "", s.get("job"))
+
+    n_error = sum(1 for s in steps if s.get("status") == "error")
+    n_pending = sum(1 for s in steps if s.get("status") == "pending")
+    overall = "error" if n_error else ("ok" if (len(steps) - n_pending) else "pending")
+
+    return JSONResponse({
+        "now": ps.now_iso(),
+        "scheduler_enabled": sched is not None,
+        "refresh_in_flight": _refresh_in_flight,
+        "refresh_stage": _refresh_stage,
+        "overall": overall,
+        "error_count": n_error,
+        "jobs": jobs,
+        "steps": steps,
+    })
+
+
 @app.get("/api/brief", tags=["news"])
 def api_brief(
     date: str | None = Query(default=None, description="YYYY-MM-DD; default today"),
@@ -469,6 +526,22 @@ def _set_stage(stage: str) -> None:
     _refresh_stage_started_at = now
 
 
+def _record_step_status(script: str, step: str | None, ok: bool, elapsed: float,
+                        stderr: str | None, returncode: int | None) -> None:
+    """Persist one pipeline step's outcome to the durable status store
+    (backend/app/pipeline_status.py). Fetchers are recorded per-fetcher from the
+    manifest they just wrote; enrichment/LLM scripts by their canonical name.
+    Best-effort: a status-write failure must never break the pipeline."""
+    try:
+        if Path(script).name == "fetch_data.py":
+            ps.upsert_from_manifest(ROOT / "backend" / "cache" / "manifest.json")
+        elif step:
+            ps.upsert_step(step, ok=ok, elapsed_s=elapsed,
+                           error=None if ok else stderr, returncode=returncode)
+    except Exception:
+        log.exception("failed to record pipeline status for %s", script)
+
+
 def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> None:
     """Spawn fetch_data.py, then optionally chain llm_rank.py per task.
     Runs each LLM task in its own subprocess so _refresh_stage can advance
@@ -491,6 +564,7 @@ def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> 
             cmd.extend(["--only", ",".join(only)])
         log.info("fetcher refresh starting: %s", " ".join(cmd))
         proc = subprocess.run(cmd, check=False, capture_output=True, text=True, cwd=str(ROOT))
+        _record_step_status("fetch_data.py", None, proc.returncode == 0, 0, proc.stderr, proc.returncode)
         if proc.returncode == 0:
             log.info("fetcher refresh finished ok (%d bytes stderr)", len(proc.stderr or ""))
         else:
@@ -504,6 +578,8 @@ def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> 
             if new_stage != _refresh_stage:
                 _set_stage(new_stage)
             log.info("auto LLM: %s (stage=%s)", task, _refresh_stage)
+            step = ps.step_name("llm_rank.py", task)
+            t0 = _time.monotonic()
             try:
                 llm_proc = subprocess.run(
                     [sys.executable, llm_script, "--task", task],
@@ -514,8 +590,12 @@ def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> 
                     log.info("auto LLM %s ok", task)
                 else:
                     log.warning("auto LLM %s exited %s: %s", task, llm_proc.returncode, (llm_proc.stderr or "")[:300])
+                _record_step_status("llm_rank.py", step, llm_proc.returncode == 0,
+                                    _time.monotonic() - t0, llm_proc.stderr, llm_proc.returncode)
             except subprocess.TimeoutExpired:
                 log.warning("auto LLM %s timed out after 3600s, partial results saved", task)
+                _record_step_status("llm_rank.py", step, False, _time.monotonic() - t0,
+                                    "timed out after 3600s", None)
         _set_stage("done")
     finally:
         with _refresh_lock:
@@ -552,11 +632,14 @@ def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
                 _set_stage(stage)
             cmd = [sys.executable, str(ROOT / "scripts" / args[0]), *args[1:]]
             log.info("scheduler: %s -> %s", label, " ".join(cmd))
+            step = ps.step_name(args[0], args[2] if args[0] == "llm_rank.py" and len(args) > 2 else None)
+            t0 = _time.monotonic()
             try:
                 proc = subprocess.run(
                     cmd, check=False, capture_output=True, text=True,
                     cwd=str(ROOT), timeout=3600,
                 )
+                elapsed = _time.monotonic() - t0
                 if proc.returncode == 0:
                     log.info("scheduler: %s ok", label)
                 else:
@@ -564,8 +647,11 @@ def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
                         "scheduler: %s exited %s: %s",
                         label, proc.returncode, (proc.stderr or "")[:400],
                     )
+                _record_step_status(args[0], step, proc.returncode == 0, elapsed, proc.stderr, proc.returncode)
             except subprocess.TimeoutExpired:
                 log.warning("scheduler: %s timed out after 3600s", label)
+                _record_step_status(args[0], step, False, _time.monotonic() - t0,
+                                    "timed out after 3600s", None)
         _set_stage("done")
     except Exception:
         log.exception("scheduler: pipeline run crashed")

@@ -607,6 +607,38 @@
   }
   .search-wrap:focus-within .search-hint { display: none; }
 
+  /* — Pipeline status — */
+  .pl-status { position: relative; }
+  .pl-status svg { display:block; }
+  .pl-dot { position:absolute; top:-1px; right:-1px; width:8px; height:8px; border-radius:50%;
+    background:#B9B9B9; box-shadow:0 0 0 1.5px var(--surface, #fff); }
+  .pl-dot[hidden] { display:none; }
+  .pl-dot--ok { background:#10A37F; }
+  .pl-dot--error { background:#C73E3E; animation:plPulse 1.6s ease-in-out infinite; }
+  .pl-dot--pending, .pl-dot--unknown { background:#B9B9B9; }
+  @keyframes plPulse { 0%,100%{box-shadow:0 0 0 1.5px var(--surface,#fff), 0 0 0 0 rgba(199,62,62,.5)}
+                       50%{box-shadow:0 0 0 1.5px var(--surface,#fff), 0 0 0 4px rgba(199,62,62,0)} }
+  .pl-badge { position:absolute; top:-5px; right:-5px; min-width:15px; height:15px; padding:0 3px;
+    border-radius:8px; background:#C73E3E; color:#fff; font:600 9px/15px ui-monospace,monospace;
+    text-align:center; box-shadow:0 0 0 1.5px var(--surface, #fff); }
+  .pl-modal-body { display:flex; flex-direction:column; gap:20px; }
+  .pl-group-title { font:600 11px/1 ui-monospace,monospace; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .pl-next { color:var(--dim); font-weight:400; text-transform:none; letter-spacing:0; }
+  .pl-row { display:grid; grid-template-columns:16px 96px 1fr auto; gap:10px; align-items:baseline;
+    padding:7px 0; border-bottom:1px solid var(--border); }
+  .pl-row:last-child { border-bottom:none; }
+  .pl-ico { font-size:11px; }
+  .pl-ico--ok{color:#10A37F} .pl-ico--error{color:#C73E3E} .pl-ico--pending{color:var(--dim)}
+  .pl-ico--no_data{color:#C9A227} .pl-ico--disabled{color:var(--dim)}
+  .pl-name { font:600 13px/1.4 ui-monospace,monospace; color:var(--text); }
+  .pl-meta { font-size:12px; color:var(--muted); }
+  .pl-when { font:11px/1.4 ui-monospace,monospace; color:var(--dim); white-space:nowrap; text-align:right; }
+  .pl-err { grid-column:2 / -1; margin-top:5px; font:11px/1.55 ui-monospace,monospace; color:#9a2a2a;
+    background:rgba(199,62,62,.07); border-left:2px solid #C73E3E; padding:6px 9px; border-radius:4px;
+    white-space:pre-wrap; word-break:break-word; max-height:140px; overflow:auto; }
+  .pl-empty { color:var(--muted); font-size:13px; padding:24px 0; text-align:center; }
+
   /* — Brief modal — */
   .modal-backdrop {
     position: fixed; inset: 0; z-index: 80;
@@ -1245,6 +1277,15 @@
           <button id="lang-zh" class="lang-btn nav-pill" data-lang="zh">中</button>
           <button id="lang-en" class="lang-btn nav-pill" data-lang="en">EN</button>
         </div>
+        <button id="pipeline-status-btn" onclick="openPipeline()"
+                class="pl-status btn-icon" title="" data-i18n-title="pipeline.title"
+                aria-label="Pipeline status">
+          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+          </svg>
+          <span id="pl-dot" class="pl-dot pl-dot--unknown"></span>
+          <span id="pl-badge" class="pl-badge" hidden>0</span>
+        </button>
         <button id="refresh-all" data-refresh-mode="active-tab"
                 title="" data-i18n-title="refresh.title"
                 class="refresh-btn btn-icon"
@@ -1458,6 +1499,26 @@
       </div>
     </div>
 
+    <!-- ─────────── PIPELINE STATUS MODAL ─────────── -->
+    <div id="pipeline-modal" hidden>
+      <div class="modal-backdrop" onclick="closePipeline()"></div>
+      <div class="modal-shell">
+        <article class="modal-content scrollbar-thin">
+          <header class="modal-header">
+            <div>
+              <div class="modal-date" id="pl-modal-sub">—</div>
+              <h2 class="modal-title" data-i18n="pipeline.title">数据流水线状态</h2>
+            </div>
+            <div class="flex items-center gap-2">
+              <button onclick="fetchPipeline(true)" class="btn-icon" title="" data-i18n-title="pipeline.reload" aria-label="reload">⟳</button>
+              <button class="modal-close" onclick="closePipeline()" data-i18n="modal.close">关闭 ✕</button>
+            </div>
+          </header>
+          <div class="modal-body pl-modal-body" id="pl-content"></div>
+        </article>
+      </div>
+    </div>
+
     <!-- ─────────── FOOTER ─────────── -->
     <footer class="border-t hairline mt-8 py-8 above-grain">
       <div class="flex flex-wrap items-center justify-between gap-3 footer-meta">
@@ -1554,6 +1615,7 @@ document.querySelectorAll(".lang-btn").forEach((b) => {
     localStorage.setItem("sh.lang", lang);
     applyI18n();
     renderAll();
+    if (_plData) { updatePipelineDot(_plData); renderPipeline(_plData); }
   });
 });
 
@@ -2055,6 +2117,10 @@ async function toggleHidden() {
 document.addEventListener('DOMContentLoaded', () => {
   refreshHiddenCount();
   setInterval(refreshHiddenCount, 60000);
+  // Pipeline status dot: fetch once, then keep the header dot fresh in the
+  // background so a failed fetch is visible without opening the modal.
+  fetchPipeline(false);
+  setInterval(() => fetchPipeline(false), 60000);
 });
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -3187,6 +3253,118 @@ async function showNewsDetail(link, label) {
       </div>`);
   }
 }
+
+// ───────────────────── PIPELINE STATUS ─────────────────────
+let _plData = null;
+let _plPollTimer = null;
+
+function _plRel(iso, now) {
+  if (!iso) return t("pipeline.never");
+  const secs = (new Date(now) - new Date(iso)) / 1000;
+  const past = secs >= 0, a = Math.abs(secs);
+  const txt = a < 60 ? Math.round(a) + "s"
+            : a < 3600 ? Math.round(a / 60) + "m"
+            : a < 86400 ? Math.round(a / 3600) + "h"
+            : Math.round(a / 86400) + "d";
+  return past ? t("pipeline.ago", txt) : t("pipeline.in", txt);
+}
+
+function _plIco(status) {
+  return status === "ok" ? "●" : status === "error" ? "✕"
+       : status === "no_data" ? "●" : "○";   // no_data = ran, 0 new (mild); disabled/pending = hollow
+}
+
+function updatePipelineDot(d) {
+  const dot = document.getElementById("pl-dot");
+  const badge = document.getElementById("pl-badge");
+  if (!dot) return;
+  const ov = d && d.overall ? d.overall : "unknown";
+  const n = (d && d.error_count) || 0;
+  // Error → numeric badge in the corner; otherwise → a single status dot.
+  // They share the corner, so only one shows at a time (no overlap).
+  if (n > 0) {
+    dot.hidden = true;
+    badge.hidden = false;
+    badge.textContent = n > 9 ? "9+" : String(n);
+  } else {
+    badge.hidden = true;
+    dot.hidden = false;
+    dot.className = "pl-dot pl-dot--" + ov;
+  }
+  const btn = document.getElementById("pipeline-status-btn");
+  if (btn) btn.setAttribute("title", n > 0 ? t("pipeline.titleError", n) : t("pipeline.title"));
+}
+
+function renderPipeline(d) {
+  const box = document.getElementById("pl-content");
+  if (!box || !d) return;
+  const now = d.now || new Date().toISOString();
+  const order = [], groups = {};
+  for (const s of d.steps) {
+    const key = s.job || "other";
+    if (!groups[key]) { groups[key] = { label: s.job_label || key, next: s.next_run, items: [] }; order.push(key); }
+    groups[key].items.push(s);
+  }
+  let html = "";
+  for (const key of order) {
+    const g = groups[key];
+    const nextTxt = d.scheduler_enabled
+      ? (g.next ? `${t("pipeline.nextRun")} ${_plRel(g.next, now)}` : "")
+      : t("pipeline.schedOff");
+    html += `<section><div class="pl-group-title">${escapeHtml(g.label)}<span class="pl-next">${nextTxt}</span></div>`;
+    for (const s of g.items) {
+      const running = d.refresh_in_flight && s.status !== "pending";
+      const cnt = s.status === "ok" && s.count ? `· ${s.count}` : "";
+      const el = s.elapsed_s ? `· ${s.elapsed_s}s` : "";
+      html += `<div class="pl-row">
+        <span class="pl-ico pl-ico--${s.status}">${_plIco(s.status)}</span>
+        <span class="pl-name">${escapeHtml(s.name)}</span>
+        <span class="pl-meta">${t("pipeline.st." + s.status)} ${cnt} ${el}</span>
+        <span class="pl-when">${_plRel(s.last_run, now)}</span>
+        ${s.error ? `<div class="pl-err">${escapeHtml(s.error)}</div>` : ""}
+      </div>`;
+    }
+    html += `</section>`;
+  }
+  box.innerHTML = html || `<div class="pl-empty">${t("pipeline.empty")}</div>`;
+  const sub = document.getElementById("pl-modal-sub");
+  if (sub) sub.textContent = d.scheduler_enabled ? t("pipeline.subOn") : t("pipeline.subOff");
+}
+
+async function fetchPipeline(force) {
+  try {
+    const d = await fetch("/api/pipeline").then(r => r.json());
+    _plData = d;
+    updatePipelineDot(d);
+    const modal = document.getElementById("pipeline-modal");
+    if (modal && !modal.hidden) renderPipeline(d);
+  } catch (_) {
+    if (force) showRefreshToast(t("pipeline.loadFail"), "error", 4000);
+  }
+}
+
+function openPipeline() {
+  const modal = document.getElementById("pipeline-modal");
+  if (!modal) return;
+  modal.hidden = false;
+  if (_plData) renderPipeline(_plData);
+  fetchPipeline(true);
+  if (_plPollTimer) clearInterval(_plPollTimer);
+  _plPollTimer = setInterval(() => fetchPipeline(false), 5000);
+}
+
+function closePipeline() {
+  const modal = document.getElementById("pipeline-modal");
+  if (modal) modal.hidden = true;
+  if (_plPollTimer) { clearInterval(_plPollTimer); _plPollTimer = null; }
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const modal = document.getElementById("pipeline-modal");
+    if (modal && !modal.hidden) closePipeline();
+  }
+});
 
 async function boot() {
   applyI18n();
