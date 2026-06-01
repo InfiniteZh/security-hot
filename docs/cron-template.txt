@@ -37,3 +37,6 @@ CRON_TZ=UTC
 # Optional: refresh other (non-news) fetchers every 4h
 # NOTE: murphy is intentionally NOT here — it has its own */5 job above.
 30   */4 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto >> /tmp/security-hot-other.log 2>&1
+
+# vuln AI assessment after vuln-source fetch
+45   */4 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task vuln_assess >> /tmp/security-hot-vuln-assess.log 2>&1

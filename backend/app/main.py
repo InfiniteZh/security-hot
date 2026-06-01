@@ -495,7 +495,7 @@ def healthz() -> JSONResponse:
 REFRESH_TOKEN_ENV = "SECURITY_HOT_REFRESH_TOKEN"
 _refresh_lock = threading.Lock()
 _refresh_in_flight = False
-_refresh_stage = ""  # "", "fetching", "classifying", "summarizing", "done", "error"
+_refresh_stage = ""  # "", "fetching", "classifying", "summarizing", "assessing", "done", "error"
 _refresh_started_at: float | None = None
 _refresh_stage_started_at: float | None = None
 _refresh_stage_history: dict = {}       # {stage: elapsed_s} for the most recent completed run
@@ -506,16 +506,17 @@ _brief_regen_in_flight: bool = False
 
 _LLM_TASKS_BY_SCOPE = {
     "news": ["news_classify", "news_summarize", "daily_brief"],
-    "vuln": [],  # vuln_assess already auto-runs at end of fetch_data.py
+    "vuln": ["vuln_assess"],
     "all":  ["news_classify", "news_summarize", "daily_brief"],
 }
 
 # Maps each LLM task to the progress-bar stage shown in the UI
-# (frontend reads _refresh_stage via /api/healthz, only knows 3 stages).
+# (frontend reads _refresh_stage via /api/healthz, only knows 4 stages).
 _LLM_STAGES = {
     "news_classify":  "classifying",
     "news_summarize": "summarizing",
     "daily_brief":    "summarizing",
+    "vuln_assess":    "assessing",
 }
 
 
@@ -677,6 +678,7 @@ def _sched_fetch_murphy() -> None:
     # (default 5min) instead of the 4h "other" bucket. Incremental + idempotent.
     _run_pipeline_steps([
         ("fetch murphy", ["fetch_data.py", "--only", "murphy"], "fetching"),
+        ("vuln assess", ["llm_rank.py", "--task", "vuln_assess"], "assessing"),
     ])
 
 
@@ -701,6 +703,7 @@ def _sched_fetch_other() -> None:
     _run_pipeline_steps([
         ("fetch other", ["fetch_data.py", "--only",
                           "kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto"], "fetching"),
+        ("vuln assess", ["llm_rank.py", "--task", "vuln_assess"], "assessing"),
     ])
 
 
@@ -718,8 +721,8 @@ def api_refresh(
     Token compare is constant-time (secrets.compare_digest).
 
     `llm` chains llm_rank.py after fetch: `news` runs classify+summarize+brief;
-    `vuln` is a no-op (vuln_assess auto-runs from fetch_data.py); `all` runs
-    everything news-side; default `none` skips LLM entirely.
+    `vuln` runs vuln_assess; `all` runs everything news-side; default `none`
+    skips LLM entirely.
     """
     expected = os.environ.get(REFRESH_TOKEN_ENV)
     if not expected:

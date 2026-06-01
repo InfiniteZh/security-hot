@@ -1658,18 +1658,6 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
         except Exception as exc:
             print(f"[trim] epss failed: {exc}", file=sys.stderr)
 
-    # Post-fetch: auto vuln AI assessment when any vuln source was fetched
-    _vuln_fetchers = {"kev", "ghsa", "pocs", "murphy", "osv"}
-    if _vuln_fetchers & set(selected) and os.environ.get("LLM_API_KEY"):
-        try:
-            from llm_rank import assess_vulns
-            t0 = time.monotonic()
-            r = await assess_vulns(days=7, verbose=True)
-            elapsed = round(time.monotonic() - t0, 2)
-            print(f"[ai] vuln_assess: {r.get('assessed',0)} assessed in {elapsed}s", file=sys.stderr)
-        except Exception as exc:
-            print(f"[ai] vuln_assess failed: {exc}", file=sys.stderr)
-
     # Post-fetch: auto embed + cluster when news was fetched
     if "news" in selected:
         try:

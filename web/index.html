@@ -1239,9 +1239,10 @@
       <div class="refresh-progress-fill" id="rp-fill" style="width:0%"></div>
     </div>
     <div class="refresh-progress-steps">
-      <span id="rp-s1">① RSS</span>
-      <span id="rp-s2">② AI 分类</span>
-      <span id="rp-s3">③ 摘要</span>
+      <span id="rp-s1"></span>
+      <span id="rp-s2"></span>
+      <span id="rp-s3"></span>
+      <span id="rp-s4"></span>
     </div>
   </div>
 
@@ -2258,7 +2259,7 @@ function _fmtSec(s) {
 }
 
 // Live state that the tick timer reads
-const _rpState = { stage: '', elapsedS: null, progress: null };
+const _rpState = { stage: '', elapsedS: null, progress: null, scope: '' };
 
 function _rpTick() {
   const elapsedEl = document.getElementById('rp-elapsed');
@@ -2310,16 +2311,35 @@ function updateProgressBar(stage, healthData) {
   const bar = document.getElementById('refresh-progress');
   const fill = document.getElementById('rp-fill');
   const label = document.getElementById('rp-label');
-  const s1 = document.getElementById('rp-s1');
-  const s2 = document.getElementById('rp-s2');
-  const s3 = document.getElementById('rp-s3');
-  const isZh = lang === 'zh';
-
-  s1.textContent = isZh ? '① 拉取 RSS' : '① Fetch RSS';
-  s2.textContent = isZh ? '② AI 分类' : '② Classify';
-  s3.textContent = isZh ? '③ 生成摘要' : '③ Summarize';
-
-  s1.className = s2.className = s3.className = '';
+  const spans = ['rp-s1', 'rp-s2', 'rp-s3', 'rp-s4'].map(id => document.getElementById(id));
+  // Steps match the active pipeline so no phantom stage is shown:
+  //   vuln → fetch→assess; news/all → fetch→classify→summarize; single-source → fetch only.
+  let pipeline = _rpState.scope;
+  // When observing a refresh this tab didn't trigger (scope unknown), infer the
+  // pipeline from the live stage so the right steps show.
+  if (stage === 'assessing') pipeline = 'vuln';
+  else if (stage === 'classifying' || stage === 'summarizing') pipeline = 'news';
+  let steps;
+  if (pipeline === 'vuln') {
+    steps = [['fetching', 'refresh.progress.fetching'], ['assessing', 'refresh.progress.assessing']];
+  } else if (pipeline === 'news' || pipeline === 'all') {
+    steps = [['fetching', 'refresh.progress.fetching'],
+             ['classifying', 'refresh.progress.classifying'],
+             ['summarizing', 'refresh.progress.summarizing']];
+  } else {
+    steps = [['fetching', 'refresh.progress.fetching']];
+  }
+  spans.forEach((el, idx) => {
+    if (idx < steps.length) {
+      el.textContent = `${idx + 1}. ${t(steps[idx][1])}`;
+      el.className = '';
+      el.style.display = '';
+    } else {
+      el.textContent = '';
+      el.className = '';
+      el.style.display = 'none';
+    }
+  });
 
   if (!stage || stage === 'done' || stage === 'error') {
     bar.classList.remove('visible');
@@ -2329,7 +2349,7 @@ function updateProgressBar(stage, healthData) {
   }
 
   bar.classList.add('visible');
-  label.textContent = isZh ? '数据刷新中' : 'Refreshing';
+  label.textContent = t('refresh.progress.label');
 
   _rpState.stage = stage;
   if (healthData) {
@@ -2343,33 +2363,31 @@ function updateProgressBar(stage, healthData) {
     _rpTickTimer = setInterval(_rpTick, 1000);
   }
 
-  // Progress fill: prefer real done/total from subprocess, else historical, else fixed
+  // Equal-weight the active pipeline's stages so the fill spans 0→100% cleanly
+  // regardless of step count (2 for vuln, 3 for news, 1 for single-source).
+  const w = 1 / steps.length;
+  const stageStart = {};
+  steps.forEach(([name], idx) => { stageStart[name] = idx * w; });
+
   const p = _rpState.progress;
-  const stageWeights = { fetching: 0.33, classifying: 0.34, summarizing: 0.33 };
-  const stageStart = { fetching: 0, classifying: 0.33, summarizing: 0.67 };
-
-  if (p && p.total > 0) {
+  if (p && p.total > 0 && stageStart[stage] != null) {
     const inStagePct = Math.min(p.done / p.total, 1);
-    const base = stageStart[stage] || 0;
-    const weight = stageWeights[stage] || 0.33;
-    const totalPct = (base + inStagePct * weight) * 100;
+    const totalPct = (stageStart[stage] + inStagePct * w) * 100;
     fill.style.width = `${Math.max(Math.min(totalPct, 98), 3)}%`;
+  } else if (stageStart[stage] != null) {
+    // No live done/total — park the fill ~40% into the current stage's band.
+    const totalPct = (stageStart[stage] + w * 0.4) * 100;
+    fill.style.width = `${Math.max(Math.min(totalPct, 98), 6)}%`;
   } else {
-    if (stage === 'fetching')          fill.style.width = '10%';
-    else if (stage === 'classifying')  fill.style.width = '40%';
-    else if (stage === 'summarizing')  fill.style.width = '75%';
+    fill.style.width = '10%';
   }
 
-  if (stage === 'fetching') {
-    s1.className = 'active';
-  } else if (stage === 'classifying') {
-    s1.className = 'done';
-    s2.className = 'active';
-  } else if (stage === 'summarizing') {
-    s1.className = 'done';
-    s2.className = 'done';
-    s3.className = 'active';
-  }
+  const activeIdx = steps.findIndex(([name]) => name === stage);
+  spans.forEach((el, idx) => {
+    if (idx >= steps.length) return;
+    if (idx < activeIdx) el.className = 'done';
+    else if (idx === activeIdx) el.className = 'active';
+  });
 }
 
 async function pollRefreshDone(only, startedAt) {
@@ -2478,13 +2496,16 @@ async function triggerRefresh(only, llm) {
   showRefreshToast(`${t("refresh.starting")}${only ? ' · ' + only : ''}`, "ok", 2500);
   _rpState._lastPollAt = Date.now();
   _rpState.elapsedS = 0;
+  // Record which pipeline drives the progress bar so its stages match reality:
+  // news/all → fetch→classify→summarize; vuln → fetch→assess; single-source → fetch only.
+  _rpState.scope = llm || '';
   updateProgressBar('fetching', null);
   await pollRefreshDone(only, startedAt);
 }
 
 // Vuln tab fetchers (everything except `news` itself; `news` feeds the news
 // tab and also CVE-bridge, but refreshing it here would duplicate news-tab work).
-const VULN_FETCHERS = "kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto";
+const VULN_FETCHERS = "kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto,murphy";
 
 // Document-level delegation so dynamically-rendered .refresh-btn elements
 // (in renderPipeline) keep working without re-binding.
@@ -2498,7 +2519,7 @@ document.addEventListener("click", (e) => {
     if (state.activeTab === "news") {
       triggerRefresh("news", "news");           // fetch news → classify + summarize + brief
     } else {
-      triggerRefresh(VULN_FETCHERS, "vuln");    // fetch vuln signals; vuln_assess auto-runs
+      triggerRefresh(VULN_FETCHERS, "vuln");    // fetch vuln signals -> assess
     }
     return;
   }
