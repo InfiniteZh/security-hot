@@ -359,7 +359,10 @@ def _normalize_murphy_time(item: dict, *keys: str) -> str | None:
                 continue
     if parsed is None:
         return value
-    return parsed.isoformat().replace("+00:00", "Z")
+    # MurphySec timestamps carry +08:00 (Beijing). Normalize to UTC so date
+    # filtering (which compares the YYYY-MM-DD prefix against UTC dates) stays
+    # consistent with KEV/GHSA and avoids a ±1-day skew near the day boundary.
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _murphy_bool(item: dict, *keys: str) -> bool:
