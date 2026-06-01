@@ -16,6 +16,8 @@
 # Cadence summary:
 #   - fetcher runs every 15min; smart picking honors per-source interval_minutes
 #     (top=30min, tail=4h) so this is cheap.
+#   - murphy (vuln-warn) polls every 5min on its own — time-sensitive feed,
+#     incremental (last_modify_time window) + idempotent, so it's cheap.
 #   - embed runs every 2h (after fetch settles); downloads intfloat/multilingual-e5-small
 #     (~470MB) on first run to ~/.cache/huggingface; subsequent runs are fast (MPS/CUDA).
 #   - clustering runs every 2h, 15min after embed (reads pre-computed embeddings)
@@ -25,6 +27,7 @@
 CRON_TZ=UTC
 
 */15 * * * *   cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only news --incremental >> /tmp/security-hot-fetch.log 2>&1
+*/5  * * * *   cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only murphy >> /tmp/security-hot-murphy.log 2>&1
 0    */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/embed_articles.py >> /tmp/security-hot-embed.log 2>&1
 15   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/cluster_articles.py >> /tmp/security-hot-cluster.log 2>&1
 30   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task news_classify >> /tmp/security-hot-classify.log 2>&1
@@ -32,4 +35,5 @@ CRON_TZ=UTC
 0    23  * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task daily_brief >> /tmp/security-hot-brief.log 2>&1
 
 # Optional: refresh other (non-news) fetchers every 4h
+# NOTE: murphy is intentionally NOT here — it has its own */5 job above.
 30   */4 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto >> /tmp/security-hot-other.log 2>&1

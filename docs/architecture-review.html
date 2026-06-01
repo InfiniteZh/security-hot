@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>security-hot · 架构评审</title>
+<style>
+  :root{
+    --bg:#FAFAF7; --card:#FFFFFF; --ink:#1A1A18; --muted:#6B6B66;
+    --line:#E8E8E2; --accent:#2D6A4F; --accent2:#1D4E89; --warn:#B45309;
+    --crit:#B91C1C; --murphy:#7C3AED; --code:#F4F4EF; --chip:#F0F0EA;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);
+    line-height:1.65;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:48px 28px 96px}
+  header.hero{border-bottom:1px solid var(--line);padding-bottom:28px;margin-bottom:40px}
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 10px}
+  h1{font-size:34px;font-weight:680;letter-spacing:-.02em;margin:0 0 8px}
+  .sub{color:var(--muted);font-size:15px;margin:0}
+  .meta{display:flex;gap:18px;flex-wrap:wrap;margin-top:18px;font-family:var(--mono);
+    font-size:12px;color:var(--muted)}
+  .meta b{color:var(--ink);font-weight:600}
+  h2{font-size:23px;font-weight:660;letter-spacing:-.01em;margin:52px 0 6px;
+    padding-top:8px;display:flex;align-items:center;gap:10px}
+  h2 .n{font-family:var(--mono);font-size:14px;color:var(--accent);font-weight:600}
+  h3{font-size:16px;font-weight:640;margin:30px 0 10px}
+  p{margin:12px 0}
+  .lead{color:var(--muted);margin:6px 0 0}
+  code{font-family:var(--mono);font-size:.86em;background:var(--code);
+    padding:1.5px 6px;border-radius:5px;color:#3a3a36}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:22px 24px;margin:18px 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;margin:18px 0}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .tile h4{margin:0 0 6px;font-size:14px;font-weight:640}
+  .tile p{margin:0;font-size:13px;color:var(--muted);line-height:1.55}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 8px;
+    border-radius:20px;background:var(--chip);color:#55554f;margin:0 4px 4px 0}
+  .tag.m{background:#F1EBFB;color:var(--murphy)}
+  .tag.s{background:#E7F1EC;color:var(--accent)}
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+  td code{font-size:.82em}
+  tr:last-child td{border-bottom:none}
+  .flow{font-family:var(--mono);font-size:12.5px;background:var(--code);border:1px solid var(--line);
+    border-radius:12px;padding:20px 22px;overflow-x:auto;line-height:1.85;white-space:pre;color:#33332f}
+  .flow b{color:var(--accent2)}
+  .flow .mu{color:var(--murphy);font-weight:600}
+  .pill{font-family:var(--mono);font-size:11px;padding:3px 9px;border-radius:6px;font-weight:600}
+  .pill.on{background:#E7F1EC;color:var(--accent)}
+  .pill.off{background:#FBEAEA;color:var(--crit)}
+  .finding{border-left:3px solid var(--line);padding:4px 0 4px 18px;margin:18px 0}
+  .finding.crit{border-color:var(--crit)} .finding.warn{border-color:var(--warn)}
+  .finding.info{border-color:var(--accent2)}
+  .finding h4{margin:0 0 4px;font-size:14.5px;font-weight:640;display:flex;align-items:center;gap:8px}
+  .sev{font-family:var(--mono);font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:5px;text-transform:uppercase}
+  .sev.c{background:#FBEAEA;color:var(--crit)} .sev.w{background:#FDF1E0;color:var(--warn)}
+  .sev.i{background:#E8F0F9;color:var(--accent2)}
+  .finding p{margin:4px 0;font-size:13.5px;color:#48483f}
+  .kv{display:grid;grid-template-columns:170px 1fr;gap:6px 16px;font-size:13.5px;margin:14px 0}
+  .kv dt{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .kv dd{margin:0}
+  .badge{display:inline-block;background:var(--accent);color:#fff;font-family:var(--mono);
+    font-size:11px;padding:2px 9px;border-radius:6px;font-weight:600}
+  .badge.b2{background:var(--accent2)} .badge.bm{background:var(--murphy)}
+  hr{border:none;border-top:1px solid var(--line);margin:40px 0}
+  footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:12.5px;font-family:var(--mono)}
+  .muted{color:var(--muted)} .nowrap{white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <p class="eyebrow">Architecture Review</p>
+  <h1>security-hot 整体架构评审</h1>
+  <p class="sub">安全行业每日聚合面板 · 重点：墨菲（MurphySec）数据接入落点 + 整体定时调度逻辑</p>
+  <div class="meta">
+    <span>评审日期 <b>2026-05-29</b></span>
+    <span>分支 <b>main</b></span>
+    <span>技术栈 <b>FastAPI · SQLite(FTS5) · APScheduler · 单文件前端</b></span>
+    <span>进程模型 <b>单 uvicorn 进程托管前后端</b></span>
+  </div>
+</header>
+
+<!-- ============ 1. 总览 ============ -->
+<h2><span class="n">01</span> 系统总览与分层</h2>
+<p class="lead">单进程托管：一个 uvicorn 同时跑 FastAPI 后端与 <code>web/index.html</code> 静态前端。数据底座是双轨的——行业资讯走 <b>SQLite</b>（<code>news.db</code>，WAL + FTS5），漏洞/旁路信号走 <b>JSON 缓存</b>（<code>backend/cache/*.json</code>）。</p>
+
+<div class="grid">
+  <div class="tile">
+    <h4>① 抓取层 Fetch</h4>
+    <p><code>scripts/fetch_data.py</code> — 12 个 fetcher 异步并发。news→SQLite，其余→JSON。murphy 在此层。</p>
+  </div>
+  <div class="tile">
+    <h4>② 富化层 Enrich</h4>
+    <p><code>embed_articles</code> / <code>cluster_articles</code> / <code>llm_rank</code>。通过 SQLite WAL 与抓取层<b>完全解耦</b>，0 import 关系。</p>
+  </div>
+  <div class="tile">
+    <h4>③ 服务层 Serve</h4>
+    <p><code>backend/app/</code>：<code>main.py</code>(路由) + <code>data.py</code>(归一化 + 30s TTL 内存缓存) + <code>models.py</code>(Pydantic)。</p>
+  </div>
+  <div class="tile">
+    <h4>④ 展示层 Web</h4>
+    <p><code>web/index.html</code> 单文件，i18n，<code>Promise.allSettled</code> 各 panel 独立渲染。</p>
+  </div>
+  <div class="tile">
+    <h4>⑤ 投送层 Dispatch</h4>
+    <p><code>poisoning_dispatch.py</code> → Kafka 供应链投毒情报。<b>独立旁路</b>，下游消费。</p>
+  </div>
+  <div class="tile">
+    <h4>⑥ 调度层 Schedule</h4>
+    <p>双模式：bare-metal <code>cron</code> 或进程内 <code>APScheduler</code>。二选一驱动 ①②⑤。</p>
+  </div>
+</div>
+
+<div class="card">
+<div class="flow">  ┌─────────────── 数据流（自下而上） ───────────────┐
+
+  外部源(713 RSS + 12 API)
+        │  fetch_data.py  ①抓取
+        ▼
+  ┌──────────────┐        ┌─────────────────────────┐
+  │  news.db     │◀─news──│  articles (llm_* = NULL) │
+  │  SQLite WAL  │        └─────────────────────────┘
+  │  + FTS5      │◀─enrich── embed/cluster/llm_rank  ②富化(WHERE llm_score IS NULL)
+  └──────┬───────┘
+         │        ┌────────────────────────────────────────┐
+  backend/cache/  │ kev ghsa pocs <span class="mu">murphy</span> osv epss nuclei hn masto │ JSON
+         │        └────────────────────────────────────────┘
+         ▼  data.py  ③归一化 (30s TTL mem cache)
+  Vuln / Article / HeatEntry  ── main.py ──▶ GET /api/*  ──▶ web/index.html ④
+         │
+         └─ supply-chain & score≥8 ─▶ poisoning_dispatch.py ─▶ <b>Kafka</b> ⑤
+  └──────────────────────────────────────────────────────┘</div>
+</div>
+
+<!-- ============ 2. 墨菲数据接入 ============ -->
+<h2><span class="n">02</span> 墨菲（MurphySec）数据接入落点 <span class="badge bm">焦点</span></h2>
+<p class="lead">墨菲数据贯穿三层，逐层落点如下。它属于"漏洞情报"轨，最终与 KEV/GHSA/PoC/OSSF 共 5 源跨 CVE-ID 合并。</p>
+
+<h3>落点一 · 抓取 <span class="tag m">scripts/fetch_data.py</span></h3>
+<dl class="kv">
+  <dt>fetcher 注册</dt><dd><code>fetch_data.py:1442</code> — <code>FETCHERS = { … "murphy": fetch_murphy … }</code>，共 12 个之一</dd>
+  <dt>实现函数</dt><dd><code>async def fetch_murphy()</code> @ <code>fetch_data.py:476</code></dd>
+  <dt>API 端点</dt><dd><code>POST https://www.murphysec.com/platform/v2/vuln_warn/list</code></dd>
+  <dt>鉴权</dt><dd>环境变量 <code>MURPHY_CUSTOMER_CODE</code>；<b>未设置则静默禁用</b>（返回 <code>status:disabled, count:0</code>，fail-soft）</dd>
+  <dt>抓取模式</dt><dd>始终 <code>scope=default</code> + <code>time_type=last_modify_time</code> 时间窗口<b>增量</b>，<code>order=last_modify_time_desc</code></dd>
+  <dt>窗口起点</dt><dd>有缓存 → 从 <code>last_success_at</code>；首次无缓存 → 回看 <code>MURPHY_INITIAL_LOOKBACK_MINUTES</code>（默认 240 分钟＝4h）</dd>
+  <dt>分页</dt><dd><code>PAGE_LIMIT=50</code> × <code>MAX_PAGES=100</code>；翻到不足一页 / 达 total 即停</dd>
+  <dt>合并去重</dt><dd>以 <code>_murphy_key</code>（id→cve→package+title 兜底）与旧缓存 merge，保留 <code>first_seen</code>，按时间倒序，截断到 <code>MURPHY_CACHE_MAX_ITEMS=1000</code></dd>
+  <dt>产出文件</dt><dd><code>backend/cache/murphy.json</code>（含 <code>diagnostic</code>: pages/total/previous_count/initial_incremental/truncated）</dd>
+</dl>
+
+<h3>落点二 · 归一化 <span class="tag s">backend/app/data.py</span></h3>
+<dl class="kv">
+  <dt>转换函数</dt><dd><code>_murphy_to_vulns()</code> @ <code>data.py:473</code> — 读 <code>murphy.json</code> → <code>Vuln</code> 模型列表</dd>
+  <dt>severity</dt><dd><code>_normalize_murphy_severity()</code> 独立归一（结合 CVSS）</dd>
+  <dt>ecosystem</dt><dd>三级兜底：显式字段 → 标题解析 → 语言推断（<code>_murphy_language_ecosystem</code>）</dd>
+  <dt>kind 判定</dt><dd><code>kind="supply"</code> 当 <code>malicious</code> 或（有 package 且无 cve），否则 <code>"cve"</code></dd>
+  <dt>标签</dt><dd>固定打 <code>tags=["MURPHY"]</code>；id 优先 <code>cve → ghsa → MURPHY-{key}</code></dd>
+  <dt>跨源合并</dt><dd>与 KEV / GHSA / nomi-sec PoC / OSSF malicious-packages <b>五源跨 CVE-ID 合并</b>，保留全部 PoC 链接与引用</dd>
+</dl>
+
+<h3>落点三 · 服务 / 展示</h3>
+<p>归一化后的墨菲漏洞经 <code>GET /api/vuln</code>（<code>kind=all|cve|supply|poc|itw</code>）暴露，前端"漏洞情报" tab 渲染。供应链投毒类（supply-chain）还会被 <code>poisoning_dispatch.py</code> 旁路投送到 Kafka。</p>
+
+<div class="card">
+  <h4 style="margin-top:0">墨菲可调环境变量一览</h4>
+  <table>
+    <tr><th>变量</th><th>默认</th><th>作用</th></tr>
+    <tr><td><code>MURPHY_CUSTOMER_CODE</code></td><td>—</td><td>鉴权；未设＝禁用</td></tr>
+    <tr><td><code>MURPHY_INITIAL_LOOKBACK_MINUTES</code></td><td>240</td><td>首次无缓存回看窗口</td></tr>
+    <tr><td><code>MURPHY_PAGE_LIMIT</code></td><td>50</td><td>每页条数</td></tr>
+    <tr><td><code>MURPHY_MAX_PAGES</code></td><td>100</td><td>翻页上限（防失控）</td></tr>
+    <tr><td><code>MURPHY_MALICIOUS_CODE</code></td><td>include</td><td>是否含恶意包预警</td></tr>
+    <tr><td><code>MURPHY_CACHE_MAX_ITEMS</code></td><td>1000</td><td>缓存条目上限</td></tr>
+  </table>
+</div>
+
+<!-- ============ 3. 调度逻辑 ============ -->
+<h2><span class="n">03</span> 整体定时调度逻辑</h2>
+<p class="lead">两种<b>互斥</b>的部署调度模式，驱动同一批脚本、同一套节奏。所有作业最终都经 <code>main.py</code> 的共享锁串行化。</p>
+
+<h3>模式 A · Bare-metal cron <span class="muted">（docs/cron-template.txt）</span></h3>
+<p>宿主有 uv + 仓库时使用。env 经 <code>set -a &amp;&amp; . ./.env &amp;&amp; set +a</code> 注入。<code>CRON_TZ=UTC</code>。</p>
+<table>
+  <tr><th>cron</th><th>动作</th><th>说明</th></tr>
+  <tr><td><code>*/15 * * * *</code></td><td>fetch news --incremental</td><td>智能挑源（按 interval_minutes，top=30m/tail=4h，故廉价）</td></tr>
+  <tr><td><code>0 */2 * * *</code></td><td>embed_articles</td><td>抓取沉淀后再嵌入</td></tr>
+  <tr><td><code>15 */2 * * *</code></td><td>cluster_articles</td><td>嵌入后 15min（读预计算向量）</td></tr>
+  <tr><td><code>30 */2 * * *</code></td><td>llm_rank classify</td><td rowspan="2" class="nowrap">错峰避免 SQLite 写竞争</td></tr>
+  <tr><td><code>45 */2 * * *</code></td><td>llm_rank summarize</td></tr>
+  <tr><td><code>0 23 * * *</code></td><td>llm_rank daily_brief</td><td>UTC 23:00 ≈ 北京次日 7am</td></tr>
+  <tr><td><code>30 */4 * * *</code></td><td>fetch other（含 <span class="tag m" style="margin:0">murphy</span>）</td><td><code>kev,ghsa,pocs,<b>murphy</b>,itw,heat,epss,osv,nuclei,hn,masto</code></td></tr>
+</table>
+<p class="muted">→ <b>墨菲在"other"桶里，每 4 小时刷新一次</b>，不在 15 分钟新闻环内。</p>
+
+<h3>模式 B · 进程内 APScheduler <span class="muted">（backend/app/scheduler.py）</span></h3>
+<p>Docker 部署无宿主 crontab，改用进程内 <code>BackgroundScheduler</code>，在 uvicorn 里跑同样脚本。</p>
+<dl class="kv">
+  <dt>总开关</dt><dd><code>SECURITY_HOT_SCHEDULER_ENABLED=1</code> <span class="pill off">默认 OFF</span>（docker-compose 的 web 服务已置位）</dd>
+  <dt>装配点</dt><dd><code>main.py:_lifespan</code> 注入 4 个 0 参回调（避免 import 环），见 <code>main.py:79</code></dd>
+  <dt>线程池</dt><dd><code>ThreadPool(2)</code> · <code>coalesce=True</code> · <code>max_instances=1</code> · <code>misfire_grace_time=300</code></dd>
+  <dt class="nowrap">⚠ 禁忌</dt><dd>勿与 <code>uvicorn --reload</code> 同开——reload 监督进程可能短暂重叠，导致作业重复</dd>
+</dl>
+<table>
+  <tr><th>job id</th><th>触发</th><th>默认</th><th>回调 → 链式步骤</th></tr>
+  <tr><td><code>fetch_news</code></td><td>interval</td><td>15min</td><td><code>_sched_fetch_news</code> → fetch news --incremental</td></tr>
+  <tr><td><code>heavy_pipeline</code></td><td>interval</td><td>2h</td><td><code>_sched_heavy_pipeline</code> → embed → cluster → classify → summarize</td></tr>
+  <tr><td><code>fetch_other</code></td><td>interval</td><td>4h</td><td><code>_sched_fetch_other</code> → fetch <b>含 murphy</b> 全量非新闻</td></tr>
+  <tr><td><code>daily_brief</code></td><td>cron</td><td>23:00 UTC</td><td><code>_sched_daily_brief</code> → llm_rank daily_brief</td></tr>
+</table>
+<p class="muted">env 调参：<code>SECURITY_HOT_FETCH_NEWS_MINUTES</code> / <code>_PIPELINE_HOURS</code> / <code>_FETCH_OTHER_HOURS</code> / <code>_BRIEF_HOUR_UTC</code>。</p>
+
+<h3>并发与锁模型</h3>
+<div class="card">
+<div class="flow">  手动 POST /api/refresh ─┐
+  (token 鉴权)            │
+                          ▼
+  scheduler 4 个 job ──▶ <b>_run_pipeline_steps()</b> ──▶ 取 <b>_refresh_lock</b> (threading.Lock)
+                          │                              │
+                          │                       已在飞行? ─是─▶ 跳过(skip)
+                          ▼                              │否
+                  每步 subprocess.run(uv run …, timeout=3600s)
+                          │
+                  推进 UI stage: fetching → classifying → summarizing</div>
+<p style="margin:14px 0 0;font-size:13.5px"><b>单一互斥点</b>：<code>main.py:437 _refresh_lock</code> + <code>_refresh_in_flight</code> 标志。调度作业与手动刷新共享它 → <b>同进程内</b>永不重叠，crash 也在 <code>finally</code> 释放。</p>
+</div>
+
+<!-- ============ 4. 评审发现 ============ -->
+<h2><span class="n">04</span> 评审发现与建议</h2>
+
+<div class="finding warn">
+  <h4><span class="sev w">Warning</span> 模式 A / B 跨进程不共享锁，同开有真重叠风险</h4>
+  <p><code>_refresh_lock</code> 是 <b>进程内</b> threading.Lock。cron（独立进程）与进程内 scheduler（uvicorn 进程）<b>不共享</b>该锁。若两者被同时启用，二者的抓取/LLM 子进程会真正并发，可能引发 SQLite 写竞争与重复 LLM 花费。</p>
+  <p class="muted">建议：文档已说明"二选一"，但缺少运行时护栏。可在 scheduler 启动时检测宿主 crontab 是否含本仓库条目并告警；或用文件锁（如 <code>flock backend/cache/.pipeline.lock</code>）做跨进程互斥。</p>
+</div>
+
+<div class="finding warn">
+  <h4><span class="sev w">Warning</span> Kafka 投毒投送（poisoning_dispatch.py）未纳入任何调度</h4>
+  <p>最近提交 <code>e877d5d feat(poisoning)</code> 加入了 Kafka 供应链投毒情报投送，但 <code>poisoning_dispatch.py</code> <b>既不在 cron-template，也不在 in-process scheduler</b>——目前只能手动跑。供应链投毒情报的时效性诉求高，手动驱动等于链路断点。</p>
+  <p class="muted">建议：在两种模式各加一条（如紧随 summarize 之后），保持幂等标记 <code>poisoning_dispatched</code> 防重发。</p>
+</div>
+
+<div class="finding info">
+  <h4><span class="sev i">Info</span> 运维脚本未调度（prune_old_articles / refresh_progress）</h4>
+  <p><code>prune_old_articles.py</code>（清理旧文章）与 <code>refresh_progress.py</code> 同样仅手动。长期运行下 <code>news.db</code> 会单调增长，建议为 prune 加一条每日 cron / job。</p>
+</div>
+
+<div class="finding info">
+  <h4><span class="sev i">Info</span> 墨菲首跑仅回看 4 小时</h4>
+  <p>新部署且无缓存时，墨菲只回看 <code>MURPHY_INITIAL_LOOKBACK_MINUTES=240</code> 分钟，初始数据量很小。属设计取舍（避免大回填），但首部署预期需知晓——必要时临时调大该变量做一次性回填。</p>
+</div>
+
+<div class="finding info">
+  <h4><span class="sev i">Info</span> 解耦设计值得肯定</h4>
+  <p>抓取与 LLM 富化经 SQLite WAL 完全解耦（0 import、<code>WHERE llm_score IS NULL</code> 拉取），抓取层 fail-soft（墨菲缺 code 即禁用而非崩溃），<code>data.py</code> 30s TTL 内存缓存 + 启动不预加载——这些都是稳健的工程取舍。</p>
+</div>
+
+<hr>
+<h3>一句话结论</h3>
+<p>架构分层清晰、抓取/富化解耦得当。<b>墨菲</b>接入完整落在 抓取(<code>fetch_data.py:476</code>) → 归一化(<code>data.py:473</code>) → 服务(<code>/api/vuln</code>) 三层，调度上归"other"桶每 4h 刷新。<b>调度</b>双模式（cron / APScheduler）逻辑一致、靠单一进程内锁串行。主要待办是把 <b>Kafka 投毒投送</b>与 <b>prune</b> 纳入自动调度，并为"双模式同开"加跨进程护栏。</p>
+
+<footer>
+  security-hot architecture review · 生成于 2026-05-29 · 引用文件均为评审时实际行号<br>
+  关键文件：scripts/fetch_data.py · backend/app/data.py · backend/app/main.py · backend/app/scheduler.py · docs/cron-template.txt · scripts/poisoning_dispatch.py
+</footer>
+
+</div>
+</body>
+</html>

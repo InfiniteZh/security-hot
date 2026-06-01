@@ -79,6 +79,7 @@ async def _lifespan(app: FastAPI):
     from .scheduler import start_scheduler, stop_scheduler
     app.state.scheduler = start_scheduler(
         fetch_news=_sched_fetch_news,
+        fetch_murphy=_sched_fetch_murphy,
         heavy_pipeline=_sched_heavy_pipeline,
         daily_brief=_sched_daily_brief,
         fetch_other=_sched_fetch_other,
@@ -273,6 +274,7 @@ def api_manifest() -> Manifest:
 # Human labels for the scheduler jobs (frontend renders these as group headers).
 _JOB_LABELS = {
     "fetch_news": "资讯抓取",
+    "fetch_murphy": "墨菲漏洞预警",
     "fetch_other": "其它情报源",
     "heavy_pipeline": "富化 + LLM 流水线",
     "daily_brief": "每日简报",
@@ -670,6 +672,14 @@ def _sched_fetch_news() -> None:
     ])
 
 
+def _sched_fetch_murphy() -> None:
+    # Murphy is a time-sensitive vuln-warn feed → its own short-interval job
+    # (default 5min) instead of the 4h "other" bucket. Incremental + idempotent.
+    _run_pipeline_steps([
+        ("fetch murphy", ["fetch_data.py", "--only", "murphy"], "fetching"),
+    ])
+
+
 def _sched_heavy_pipeline() -> None:
     # embed + cluster are prep (no dedicated UI stage) → reuse "fetching".
     _run_pipeline_steps([
@@ -687,6 +697,7 @@ def _sched_daily_brief() -> None:
 
 
 def _sched_fetch_other() -> None:
+    # murphy is intentionally excluded here — it has its own 5min job above.
     _run_pipeline_steps([
         ("fetch other", ["fetch_data.py", "--only",
                           "kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto"], "fetching"),

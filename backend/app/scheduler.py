@@ -15,9 +15,14 @@ Cadence mirrors the documented cron template and is fully env-tunable:
 
     SECURITY_HOT_SCHEDULER_ENABLED      master switch (default off)
     SECURITY_HOT_FETCH_NEWS_MINUTES     news fetch interval     (default 15)
+    SECURITY_HOT_FETCH_MURPHY_MINUTES   murphy vuln-warn poll   (default 5)
     SECURITY_HOT_PIPELINE_HOURS         embed/cluster/LLM cycle (default 2)
     SECURITY_HOT_FETCH_OTHER_HOURS      non-news fetchers       (default 4)
     SECURITY_HOT_BRIEF_HOUR_UTC         daily brief hour, UTC   (default 23)
+
+Murphy is a time-sensitive vuln-warn feed, so it gets its own short-interval
+job (default 5min) instead of riding the 4h "other" bucket. Its fetch is
+incremental (last_modify_time window) + idempotent, so frequent polling is cheap.
 
 All jobs run on a 2-thread pool with coalesce + max_instances=1, and each job
 itself takes the shared refresh lock (see main._run_pipeline_steps), so the
@@ -52,7 +57,7 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-def start_scheduler(*, fetch_news, heavy_pipeline, daily_brief, fetch_other):
+def start_scheduler(*, fetch_news, heavy_pipeline, daily_brief, fetch_other, fetch_murphy):
     """Build + start the BackgroundScheduler. Returns the scheduler (so the
     caller can shut it down) or None when disabled / unavailable.
 
@@ -71,6 +76,7 @@ def start_scheduler(*, fetch_news, heavy_pipeline, daily_brief, fetch_other):
         return None
 
     news_minutes = _int_env("SECURITY_HOT_FETCH_NEWS_MINUTES", 15)
+    murphy_minutes = _int_env("SECURITY_HOT_FETCH_MURPHY_MINUTES", 5)
     pipeline_hours = _int_env("SECURITY_HOT_PIPELINE_HOURS", 2)
     other_hours = _int_env("SECURITY_HOT_FETCH_OTHER_HOURS", 4)
     brief_hour = _int_env("SECURITY_HOT_BRIEF_HOUR_UTC", 23) % 24
@@ -87,6 +93,7 @@ def start_scheduler(*, fetch_news, heavy_pipeline, daily_brief, fetch_other):
             job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": 300},
         )
         sched.add_job(fetch_news, "interval", minutes=news_minutes, id="fetch_news")
+        sched.add_job(fetch_murphy, "interval", minutes=murphy_minutes, id="fetch_murphy")
         sched.add_job(heavy_pipeline, "interval", hours=pipeline_hours, id="heavy_pipeline")
         sched.add_job(fetch_other, "interval", hours=other_hours, id="fetch_other")
         sched.add_job(daily_brief, "cron", hour=brief_hour, minute=0, id="daily_brief")
@@ -94,8 +101,8 @@ def start_scheduler(*, fetch_news, heavy_pipeline, daily_brief, fetch_other):
         _scheduler = sched
 
     log.info(
-        "scheduler started — news=%dm pipeline=%dh other=%dh brief=%02d:00 UTC",
-        news_minutes, pipeline_hours, other_hours, brief_hour,
+        "scheduler started — news=%dm murphy=%dm pipeline=%dh other=%dh brief=%02d:00 UTC",
+        news_minutes, murphy_minutes, pipeline_hours, other_hours, brief_hour,
     )
     return sched
 

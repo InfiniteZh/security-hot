@@ -3,9 +3,9 @@
 Why this exists
 ---------------
 `manifest.json` is rewritten on every fetch run and only contains the fetchers
-that ran in *that* invocation — so an incremental `--only news` run clobbers it
-down to a single entry. Worse, the enrichment / LLM scripts (embed / cluster /
-llm_rank) never write manifest at all.
+that ran in *that* invocation — so with murphy polling every 5min it gets
+clobbered down to a single entry within minutes. Worse, the enrichment / LLM
+scripts (embed / cluster / llm_rank) never write manifest at all.
 
 This module keeps a small, merge-on-write record of the LAST outcome of every
 pipeline step — both data fetchers and enrichment/LLM scripts — so the frontend
@@ -32,6 +32,7 @@ from pathlib import Path
 STEP_META: dict[str, tuple[str, str]] = {
     # ── data fetchers ──────────────────────────────────────────────
     "news":   ("fetch", "fetch_news"),
+    "murphy": ("fetch", "fetch_murphy"),
     "kev":    ("fetch", "fetch_other"),
     "ghsa":   ("fetch", "fetch_other"),
     "pocs":   ("fetch", "fetch_other"),
@@ -138,10 +139,10 @@ def upsert_from_manifest(manifest_path: Path | str) -> None:
         kind, job = STEP_META.get(name, ("fetch", None))
         ok = bool(r.get("ok"))
         status = r.get("status") or ("ok" if ok else "error")
-        # A fetcher that returns a "disabled" diagnostic (e.g. an unconfigured
-        # source missing its API key/token) isn't "no data" — it never ran.
-        # Surface that distinctly so the UI doesn't paint a normal-but-
-        # unconfigured source as a problem.
+        # A fetcher that returns a "disabled" diagnostic (e.g. murphy with no
+        # MURPHY_CUSTOMER_CODE) isn't "no data" — it never ran. Surface that
+        # distinctly so the UI doesn't paint a normal-but-unconfigured source
+        # as a problem.
         diag = r.get("diagnostic")
         if isinstance(diag, dict) and diag.get("status") == "disabled":
             status = "disabled"

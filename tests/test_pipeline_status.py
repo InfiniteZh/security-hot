@@ -43,12 +43,12 @@ def test_merge_does_not_clobber_other_fetchers(store):
          "finished_at": "2026-05-29T00:00:00+00:00"},
     ]))
     ps.upsert_from_manifest(_write_manifest(store, [
-        {"name": "pocs", "ok": True, "status": "ok", "count": 12,
+        {"name": "murphy", "ok": True, "status": "ok", "count": 12,
          "finished_at": "2026-05-29T00:05:00+00:00"},
     ]))
     steps = {s["name"]: s for s in ps.load_steps()}
-    assert steps["kev"]["count"] == 200      # survived the pocs-only run
-    assert steps["pocs"]["count"] == 12
+    assert steps["kev"]["count"] == 200      # survived the murphy-only run
+    assert steps["murphy"]["count"] == 12
 
 
 def test_failed_fetcher_keeps_error_reason(store):
@@ -64,16 +64,16 @@ def test_failed_fetcher_keeps_error_reason(store):
 
 
 def test_disabled_fetcher_is_not_no_data(store):
-    # An unconfigured source returns a 'disabled' diagnostic + count 0; the
-    # manifest may stamp it 'no_data' but the store should surface 'disabled'.
+    # murphy with no customer code returns a 'disabled' diagnostic + count 0;
+    # the manifest may stamp it 'no_data' but the store should surface 'disabled'.
     ps.upsert_from_manifest(_write_manifest(store, [
-        {"name": "heat", "ok": True, "status": "no_data", "count": 0,
-         "diagnostic": {"status": "disabled", "reason": "source endpoint disabled"},
+        {"name": "murphy", "ok": True, "status": "no_data", "count": 0,
+         "diagnostic": {"status": "disabled", "reason": "MURPHY_CUSTOMER_CODE is not set"},
          "finished_at": "2026-05-29T00:00:00+00:00"},
     ]))
-    heat = {s["name"]: s for s in ps.load_steps()}["heat"]
-    assert heat["status"] == "disabled"
-    assert heat["ok"] is True            # disabled is not a failure
+    murphy = {s["name"]: s for s in ps.load_steps()}["murphy"]
+    assert murphy["status"] == "disabled"
+    assert murphy["ok"] is True            # disabled is not a failure
 
 
 def test_upsert_step_records_llm_failure_with_tail(store):
@@ -96,7 +96,7 @@ def test_upsert_step_ok_clears_error(store):
 
 
 def test_load_steps_includes_pending_for_never_run(store):
-    # Nothing recorded yet → all 16 steps present as pending, in canonical order.
+    # Nothing recorded yet → all 17 steps present as pending, in canonical order.
     steps = ps.load_steps()
     names = [s["name"] for s in steps]
     assert names == list(ps.STEP_META)
