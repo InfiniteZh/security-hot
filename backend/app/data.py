@@ -535,14 +535,17 @@ def _murphy_to_vulns() -> list[Vuln]:
             affected_versions = []
         out.append(Vuln(
             id=cve or ghsa or f"MURPHY-{key}",
-            kind="supply" if malicious or (package and not cve) else "cve",
+            # MurphySec is a software-composition / dependency source → always
+            # categorize as supply-chain risk (final kind is recomputed by
+            # classify_kind, where KEV/ITW still outranks supply for overlaps).
+            kind="supply",
             cve_id=cve,
             ghsa_id=ghsa,
             title=title[:220],
             summary=summary,
             severity=severity,
             cvss=cvss,
-            is_supply_chain=bool(malicious or (package and not cve)),
+            is_supply_chain=True,
             ecosystem=ecosystem,
             package=package,
             vendor=vendor,
