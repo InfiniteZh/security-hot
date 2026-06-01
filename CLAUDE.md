@@ -132,18 +132,18 @@ uv run python scripts/fetch_data.py --concurrency 12 # 提升 news RSS 并发
 ## LLM 管道（两阶段）
 
 ```bash
-uv run python scripts/llm_rank.py                              # 全流程（30天内文章）
+uv run python scripts/llm_rank.py                              # 全流程（7天内文章）
 uv run python scripts/llm_rank.py --task news_classify          # Phase 1: 快速分类打分
 uv run python scripts/llm_rank.py --task news_summarize         # Phase 2: 高分英文生成中文摘要
 uv run python scripts/llm_rank.py --task vuln_assess            # 漏洞 AI 评估
 uv run python scripts/llm_rank.py --task daily_brief            # 每日分类日报
-uv run python scripts/llm_rank.py --days 0 --rescore            # 处理所有文章（不限30天）
+uv run python scripts/llm_rank.py --days 0 --rescore            # 处理所有文章（不限天数）
 uv run python scripts/llm_rank.py --min-score 7                 # 仅 >=7 分的文章生成摘要
 ```
 
 - **Phase 1**（分类+打分）：batch=80，并发 4 路，仅输出 score+cat+reason，极快
 - **Phase 2**（摘要）：仅处理 `llm_score >= min_score` 的英文文章，节省 ~60% token
-- **30 天限制**：默认只处理 30 天内文章，`--days 0` 解除限制
+- **7 天限制**：默认只处理 7 天内文章，`--days 0` 解除限制
 - 新闻分类为 5 类：`incident / vuln / supply-chain / research / industry`
 - 漏洞 AI 评估产出 `ai_severity`（独立于 CVSS 判断）和中文概述
 - 日报按分类生成当日摘要，存入 SQLite `daily_briefs` 表（`GET /api/brief` 读取）
