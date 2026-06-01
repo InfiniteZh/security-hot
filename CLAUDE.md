@@ -17,6 +17,7 @@
 │   │   ├── kev.json           # CISA KEV
 │   │   ├── ghsa.json          # GitHub Security Advisories
 │   │   ├── pocs.json          # nomi-sec PoC mirror
+│   │   ├── murphy.json        # MurphySec vuln_warn 增量缓存
 │   │   ├── itw.json           # inthewild.io (目前空)
 │   │   ├── heat.json          # cvecrowd (目前空)
 │   │   ├── epss.json          # FIRST.org EPSS 每日 CSV
@@ -36,7 +37,7 @@
 │   ├── wechat2rss/sec.opml       # 远端缓存
 │   └── merged.opml               # merge_rss.py 产出
 ├── scripts/
-│   ├── fetch_data.py          # 11 个 fetcher，news 写 SQLite，其他写 JSON
+│   ├── fetch_data.py          # 12 个 fetcher，news 写 SQLite，其他写 JSON
 │   ├── llm_rank.py            # SQLite-backed classify/summarize/brief + vuln_assess
 │   ├── embed_articles.py      # 计算 multilingual-e5-small 嵌入向量（384-dim）
 │   ├── cluster_articles.py    # 余弦相似度镜像聚类（替代原 Jaccard 3-shingle）
@@ -91,7 +92,7 @@ uv run uvicorn backend.app.main:app --reload --port 8000
 
 ### Vuln 归一化与热度
 
-CISA KEV、GHSA、nomi-sec PoC、OSSF malicious-packages 共四个源会跨 CVE-ID 合并：合并后保留所有 PoC 链接、KEV/ITW 标记、所有引用。`kind` 字段按优先级判定 `itw > supply > poc > cve`。
+CISA KEV、GHSA、nomi-sec PoC、MurphySec、OSSF malicious-packages 共五个源会跨 CVE-ID 合并：合并后保留所有 PoC 链接、KEV/ITW 标记、所有引用。`kind` 字段按优先级判定 `itw > supply > poc > cve`。
 
 `heat` 是后端计算的整数：
 - severity (critical 60 / high 35 / medium 15 / low 5)
@@ -107,13 +108,14 @@ uv run python scripts/fetch_data.py --only kev,news  # 子集
 uv run python scripts/fetch_data.py --concurrency 12 # 提升 news RSS 并发
 ```
 
-各 fetcher（在 `scripts/fetch_data.py` 的 `FETCHERS` 字典注册，共 11 个）：
+各 fetcher（在 `scripts/fetch_data.py` 的 `FETCHERS` 字典注册，共 12 个）：
 
 | 名称 | 源 | 说明 |
 | --- | --- | --- |
 | kev | `cisa.gov/.../known_exploited_vulnerabilities.json` | 全量 KEV，按 dateAdded 倒序取 200 |
 | ghsa | `api.github.com/advisories` | 最新 100 条公开 advisory（匿名 60/h，带 GITHUB_TOKEN 提到 5000/h） |
 | pocs | `poc-in-github.motikan2010.net/api/v1` | 最近 100 个 PoC 仓库 |
+| murphy | `murphysec.com/platform/v2/vuln_warn/list` | MurphySec 漏洞预警，始终 `scope=default` + `last_modify_time` 时间窗口；无缓存时默认回看 4 小时 |
 | itw | `inthewild.io/feed` | RSS（feed 当前可能为空） |
 | heat | `cvecrowd.com/api/cves` | 端点格式可能变了，目前 fallback 到 0 |
 | news | 713 个聚合源（merged.opml + curated） | **写 SQLite (`news.db`)**，按 `sources.interval_minutes` 智能挑源；带 Conditional GET |
