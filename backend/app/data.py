@@ -363,6 +363,7 @@ def _normalize_murphy_time(item: dict, *keys: str) -> str | None:
 
 
 def _murphy_bool(item: dict, *keys: str) -> bool:
+    markers = ("投毒", "恶意", "后门", "木马", "malicious", "malware", "backdoor", "trojan")
     for key in keys:
         value = item.get(key)
         if isinstance(value, bool):
@@ -372,20 +373,25 @@ def _murphy_bool(item: dict, *keys: str) -> bool:
         text = str(value).strip().lower()
         if text in {"1", "true", "yes", "y"}:
             return True
-        if any(marker in text for marker in ("malicious", "malware", "投毒", "恶意")):
+        if any(marker in text for marker in markers):
             return True
     problem = item.get("problem_type") or item.get("problemType") or {}
     if isinstance(problem, dict):
-        problem_text = " ".join(str(v) for v in problem.values())
+        cwe = str(problem.get("cwe") or "").strip().lower()
+        if cwe == "cwe-506":
+            return True
+        problem_text = str(problem.get("meaning") or "")
     else:
         problem_text = str(problem)
-    title = _first_text(item, "title", "vuln_name", "vulnName", "name") or ""
-    description = _first_text(item, "description", "desc", "summary") or ""
-    combined = f"{problem_text} {title} {description}".lower()
-    return any(marker in combined for marker in (
-        "cwe-506", "malicious", "malware", "投毒", "恶意代码", "内嵌恶意代码",
-        "窃取隐私", "窃取主机", "窃取环境变量", "外发",
-    ))
+    if "cwe-506" in problem_text.lower():
+        return True
+    raw_tags = item.get("tags") or []
+    if isinstance(raw_tags, list):
+        tag_text = " ".join(str(tag) for tag in raw_tags)
+    else:
+        tag_text = str(raw_tags)
+    combined = f"{problem_text} {tag_text}".lower()
+    return any(marker in combined for marker in markers)
 
 
 def _murphy_title_package(title: str | None) -> tuple[str | None, str | None]:
@@ -464,10 +470,54 @@ def _murphy_references(item: dict) -> list[Reference]:
     elif isinstance(raw_refs, list):
         for ref in raw_refs[:8]:
             if isinstance(ref, dict):
-                add(ref.get("url") or ref.get("link"), ref.get("label") or ref.get("type") or "")
+                add(ref.get("url") or ref.get("link"), ref.get("name") or ref.get("label") or ref.get("type") or "")
             else:
                 add(str(ref))
     return refs[:8]
+
+
+def _murphy_affected_entries(item: dict) -> list[dict]:
+    raw = item.get("affected_version") or item.get("affectedVersion") or []
+    if not isinstance(raw, list):
+        return []
+    return [entry for entry in raw if isinstance(entry, dict)]
+
+
+def _dedupe_nonempty(values) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if not text or text in seen:
+            continue
+        out.append(text)
+        seen.add(text)
+    return out
+
+
+def _murphy_packages(entries: list[dict]) -> str | None:
+    names = _dedupe_nonempty(entry.get("name") for entry in entries)
+    if not names:
+        return None
+    return ", ".join(names[:4])
+
+
+def _murphy_affected_versions(item: dict, entries: list[dict]) -> list[str]:
+    ranges = _dedupe_nonempty(
+        (entry.get("affected") or {}).get("version_range")
+        for entry in entries
+        if isinstance(entry.get("affected") or {}, dict)
+    )
+    if ranges:
+        return ranges[:12]
+    versions = item.get("affected_versions") or item.get("affectedVersions") or item.get("versions") or []
+    if isinstance(versions, str):
+        return [v.strip() for v in re.split(r"[,;\n]", versions) if v.strip()][:12]
+    if isinstance(versions, list):
+        return [str(v) for v in versions[:12] if v]
+    return []
 
 
 def _murphy_to_vulns() -> list[Vuln]:
@@ -485,6 +535,7 @@ def _murphy_to_vulns() -> list[Vuln]:
             item,
             "title", "vuln_name", "vulnName", "vuln_title", "vulnTitle", "name",
         ) or cve or ghsa or str(key)
+        affected_entries = _murphy_affected_entries(item)
         title_ecosystem, title_package = _murphy_title_package(title)
         summary_parts = [
             _first_text(item, "summary", "description", "desc", "vuln_desc", "vulnDesc", "detail", "details"),
@@ -493,13 +544,18 @@ def _murphy_to_vulns() -> list[Vuln]:
         summary = " | ".join(p for p in summary_parts if p)[:800]
         cvss = _first_float(item, "cvss_score", "cvssScore", "cvss", "cvss_v3_score", "cvssV3Score")
         severity = _normalize_murphy_severity(item, cvss)
-        package = _first_text(
-            item,
-            "package_name", "packageName", "package", "pkg_name", "pkgName",
-            "component_name", "componentName", "artifact_id", "artifactId",
-        ) or title_package
+        package = (
+            _murphy_packages(affected_entries)
+            or _first_text(
+                item,
+                "package_name", "packageName", "package", "pkg_name", "pkgName",
+                "component_name", "componentName", "artifact_id", "artifactId",
+            )
+            or title_package
+        )
         ecosystem = (
             _normalize_murphy_ecosystem(_first_text(item, "ecosystem", "package_type", "packageType", "repository"))
+            or _normalize_murphy_ecosystem(next((str(entry.get("repository")) for entry in affected_entries if entry.get("repository")), None))
             or _normalize_murphy_ecosystem(title_ecosystem)
             or _normalize_murphy_ecosystem(_murphy_language_ecosystem(item))
         )
@@ -526,13 +582,7 @@ def _murphy_to_vulns() -> list[Vuln]:
             "last_modify_time", "lastModifyTime", "modify_time", "modified_at",
             "last_updated_time", "lastUpdatedTime", "updated_at", "updated",
         )
-        versions = item.get("affected_versions") or item.get("affectedVersions") or item.get("versions") or []
-        if isinstance(versions, str):
-            affected_versions = [v.strip() for v in re.split(r"[,;\n]", versions) if v.strip()][:12]
-        elif isinstance(versions, list):
-            affected_versions = [str(v) for v in versions[:12] if v]
-        else:
-            affected_versions = []
+        affected_versions = _murphy_affected_versions(item, affected_entries)
         out.append(Vuln(
             id=cve or ghsa or f"MURPHY-{key}",
             # MurphySec is a software-composition / dependency source → always

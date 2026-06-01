@@ -132,22 +132,51 @@ def test_murphy_items_normalize_into_vulns(tmp_path, monkeypatch):
     (tmp_path / "murphy.json").write_text(json.dumps({
         "items": [
             {
-                "_murphy_key": "CVE-2026-1111",
-                "cve_id": "CVE-2026-1111",
-                "vuln_name": "Apache 远程代码执行漏洞",
-                "description": "影响 Apache HTTP Server。",
-                "level": "高危",
-                "cvss_score": "8.8",
+                "mps_id": "MPS-fthb-675x",
+                "cve_id": "",
+                "title": "恶意 NuGet 包 Sicoob.Sdk 冒充巴西银行 SDK",
+                "description": "投毒包收集隐私数据。",
+                "severity": "高危",
+                "cvss_score": "8.2",
+                "problem_type": {"cwe": "CWE-506", "meaning": "内嵌恶意代码"},
+                "repository": "nuget",
+                "affected_version": [
+                    {
+                        "repository": "nuget",
+                        "name": "Sicoob.Sdk",
+                        "affected": {"version_range": "[2.0.0,2.0.4]"},
+                    }
+                ],
+                "tags": ["投毒", "隐私数据收集"],
+                "hazard_level": "高危",
                 "last_modify_time": "2026-05-27T10:00:00+08:00",
-                "detail_url": "https://example.com/detail/CVE-2026-1111",
+                "published_date": "2026-05-27T09:00:00+08:00",
+                "public_time": "2026-05-27T08:00:00+08:00",
+                "references": [{"url": "https://www.oscs1024.com/hd/MPS-fthb-675x", "name": "OSCS"}],
+                "cvssv3": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:H/A:N",
+                "epss": "",
+                "poc": False,
+                "language": "C#",
             },
             {
-                "_murphy_key": "MPS-test-0001",
-                "mps_id": "MPS-test-0001",
-                "title": "NPM仓库evil-pkg等包内置恶意代码",
-                "problem_type": {"cwe": "CWE-506", "meaning": "内嵌恶意代码"},
-                "description": "投毒包窃取环境变量。",
+                "mps_id": "MPS-axios-0001",
+                "cve_id": "CVE-2026-1111",
+                "title": "Axios 原型污染漏洞",
+                "description": "Axios 处理对象属性时存在原型污染问题。",
+                "severity": "中危",
+                "cvss_score": "5.6",
+                "problem_type": {"cwe": "CWE-1321", "meaning": "原型污染"},
+                "repository": "npm",
+                "affected_version": [
+                    {
+                        "repository": "npm",
+                        "name": "axios",
+                        "affected": {"version_range": "<0.30.0"},
+                    }
+                ],
+                "tags": ["漏洞"],
                 "last_modify_time": "2026-05-27T10:05:00+08:00",
+                "references": [{"url": "https://example.com/detail/CVE-2026-1111", "name": "Detail"}],
             },
         ],
     }), encoding="utf-8")
@@ -155,11 +184,22 @@ def test_murphy_items_normalize_into_vulns(tmp_path, monkeypatch):
     vulns = data_mod._murphy_to_vulns()
     by_id = {v.id: v for v in vulns}
 
-    assert by_id["CVE-2026-1111"].severity == "high"
-    assert by_id["CVE-2026-1111"].source == "murphysec"
-    assert by_id["CVE-2026-1111"].references[0].url == "https://example.com/detail/CVE-2026-1111"
-    malware = next(v for v in vulns if v.package == "evil-pkg")
+    malware = by_id["MURPHY-MPS-fthb-675x"]
     assert malware.kind == "supply"
     assert malware.is_supply_chain is True
-    assert malware.ecosystem == "npm"
+    assert malware.package == "Sicoob.Sdk"
+    assert malware.ecosystem == "nuget"
+    assert malware.affected_versions == ["[2.0.0,2.0.4]"]
+    assert malware.severity == "high"
     assert "MALWARE" in malware.tags
+    assert malware.references[0].url == "https://www.oscs1024.com/hd/MPS-fthb-675x"
+
+    cve = by_id["CVE-2026-1111"]
+    assert cve.source == "murphysec"
+    assert cve.package == "axios"
+    assert cve.ecosystem == "npm"
+    assert cve.affected_versions == ["<0.30.0"]
+    assert cve.severity == "medium"
+    assert cve.cve_id == "CVE-2026-1111"
+    assert "MALWARE" not in cve.tags
+    assert cve.references[0].url == "https://example.com/detail/CVE-2026-1111"
