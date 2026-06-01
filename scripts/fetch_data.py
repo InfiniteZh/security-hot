@@ -1612,7 +1612,21 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
     async with httpx.AsyncClient(
         headers=HEADERS, timeout=timeout, limits=limits, follow_redirects=True
     ) as client:
-        manifest = {"fetched_at": now_iso(), "results": []}
+        # Merge into the prior manifest so a partial (--only X) run keeps the
+        # other fetchers' rows — the frontend pipeline panel + per-source
+        # refresh buttons render from manifest.results, so a fresh [] would
+        # wipe every source except the ones just fetched.
+        prev_order: list[str] = []
+        results_by_name: dict = {}
+        if (CACHE / "manifest.json").exists():
+            try:
+                _prev = json.loads((CACHE / "manifest.json").read_text(encoding="utf-8"))
+                for _r in _prev.get("results", []):
+                    if isinstance(_r, dict) and _r.get("name"):
+                        results_by_name[_r["name"]] = _r
+                        prev_order.append(_r["name"])
+            except (json.JSONDecodeError, OSError):
+                pass
         for name in selected:
             t0 = time.monotonic()
             try:
@@ -1647,7 +1661,13 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
                 }
                 print(f"[err] {name:<8} {r['error']}", file=sys.stderr)
             r["finished_at"] = now_iso()
-            manifest["results"].append(r)
+            results_by_name[name] = r
+        # Preserve prior row order; append any newly-seen fetchers in run order.
+        ordered = prev_order + [n for n in selected if n not in prev_order]
+        manifest = {
+            "fetched_at": now_iso(),
+            "results": [results_by_name[n] for n in ordered if n in results_by_name],
+        }
         write_json("manifest.json", manifest)
 
     # Post-fetch: trim EPSS to only CVEs referenced by other sources
