@@ -1,10 +1,10 @@
 """供应链投毒情报投送 —— security-hot → Kafka(schedule_task_normal) → security_copilot disposal。
 
-MVP 范围：当前只投 Socket（tier1 权威源，正文结构化、含包清单+IOC 表）。
-后续扩展只需往 MVP_SOURCES 增源。
+当前只投 tier1 供应链权威源（正文结构化、含包清单+IOC 表），tier2 暂不进入候选。
+后续扩展只需调整 dispatch_common.TIER1_SUPPLY_SOURCES / TIER2_SUPPLY_SOURCES。
 
 三层辨别只投"可处置"的情报（点名具体可被企业安装的包/IOC），不投纯趋势/事件报道：
-  L0 免费 SQL 筛：source_title∈MVP_SOURCES AND llm_category='supply-chain'
+  L0 免费 SQL 筛：source_title∈TIER1_SUPPLY_SOURCES AND llm_category='supply-chain'
                   AND llm_score>=7 AND is_relevant
                   AND (cluster_id IS NULL OR is_cluster_primary=1) AND 未投送过
   L1 LLM triage（基于全文）：问"是否点名了具体可装的包/失陷指标"，仅 actionable 投；
@@ -63,9 +63,6 @@ SCHEMA_VERSION = 2
 MIN_SCORE = 8
 TIER1_MIN_SCORE = 7
 
-# MVP：先只投 Socket（tier1 权威源，正文结构化、含包清单+IOC 表），跑通后再扩展到其他源。
-MVP_SOURCES = {"Socket"}
-
 # triage 喂给 LLM 的正文摘录上限（控 token）。
 TRIAGE_BODY_LIMIT = 6000
 
@@ -109,8 +106,8 @@ def _source_tier(source_title: str | None) -> str:
 
 
 def select_candidates(conn: sqlite3.Connection, fresh_days: int, limit: int | None) -> list[sqlite3.Row]:
-    # MVP：只投 MVP_SOURCES（当前仅 Socket）的供应链文章；分数门槛沿用 tier1。
-    sources = sorted(MVP_SOURCES)
+    # 只投 tier1 供应链权威源；tier2 暂不进入 Kafka 候选。
+    sources = sorted(TIER1_SUPPLY_SOURCES)
     placeholders = ",".join("?" for _ in sources)
     sql = """
         SELECT id, canonical_url, title, summary, llm_summary_zh, llm_score, llm_category, source_title
@@ -265,7 +262,7 @@ async def run(fresh_days: int, limit: int | None, dry_run: bool) -> dict:
     stats = {"candidates": len(candidates), "actionable": 0, "sent": 0,
              "skipped_not_actionable": 0, "errors": 0, "dry_run": dry_run}
     print(f"[dispatch] L0 候选 {len(candidates)} 条 "
-          f"(MVP 源={sorted(MVP_SOURCES)}, score>={TIER1_MIN_SCORE}, fresh={fresh_days}d)",
+          f"(tier1 源={sorted(TIER1_SUPPLY_SOURCES)}, score>={TIER1_MIN_SCORE}, fresh={fresh_days}d)",
           file=sys.stderr)
     if not candidates:
         conn.close()
@@ -291,7 +288,7 @@ async def run(fresh_days: int, limit: int | None, dry_run: bool) -> dict:
             for _i, row in enumerate(candidates, 1):
                 if _prog is not None:
                     _prog.report("dispatching", _total, _i, label="poisoning_dispatch")
-                # 先抓全文再 triage：Socket 这类源把包清单/IOC 放正文，摘要太薄会误判漏投。
+                # 先抓全文再 triage：tier1 源常把包清单/IOC 放正文，摘要太薄会误判漏投。
                 full_body = await fetch_body(client, row["canonical_url"])
                 tri = await triage(client, cfg, row, full_body)
                 tri["source_tier"] = _source_tier(row["source_title"])

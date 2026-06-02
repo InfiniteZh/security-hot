@@ -45,7 +45,7 @@ def _insert(conn, **kw):
     defaults = dict(canonical_url="https://x/1", title="t", summary="s", llm_summary_zh="zh",
                     llm_score=10, llm_category="supply-chain", is_relevant=1,
                     cluster_id=None, is_cluster_primary=None, published="2026-05-29",
-                    source_title="Socket")  # MVP：仅 Socket 进入候选
+                    source_title="Socket")
     defaults.update(kw)
     conn.execute(
         f"INSERT INTO articles ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
@@ -80,10 +80,33 @@ def test_select_candidates_filters(tmp_path):
 
 def test_select_candidates_tier1_lower_threshold(tmp_path):
     conn = _make_db(tmp_path); pd.migrate(conn)
-    _insert(conn, canonical_url="https://x/tier1", llm_score=7, source_title="Socket")
+    for source in pd.TIER1_SUPPLY_SOURCES:
+        slug = source.lower().replace(" ", "-").replace(".", "").replace("/", "-")
+        _insert(conn, canonical_url=f"https://x/tier1-{slug}", llm_score=7, source_title=source)
     _insert(conn, canonical_url="https://x/other", llm_score=7, source_title="Other")
     rows = pd.select_candidates(conn, fresh_days=30, limit=None)
-    assert {r["canonical_url"] for r in rows} == {"https://x/tier1"}
+    assert {r["source_title"] for r in rows} == pd.TIER1_SUPPLY_SOURCES
+
+
+def test_select_candidates_ignores_tier2_sources_for_now(tmp_path):
+    conn = _make_db(tmp_path); pd.migrate(conn)
+    for source in pd.TIER2_SUPPLY_SOURCES:
+        slug = source.lower().replace(" ", "-").replace(".", "").replace("/", "-")
+        _insert(conn, canonical_url=f"https://x/tier2-{slug}", llm_score=10, source_title=source)
+
+    rows = pd.select_candidates(conn, fresh_days=30, limit=None)
+
+    assert rows == []
+
+
+def test_select_candidates_includes_safedep_article_url(tmp_path):
+    conn = _make_db(tmp_path); pd.migrate(conn)
+    url = "https://safedep.io/malicious-faster-axios-npm-epsilon-stealer/"
+    _insert(conn, canonical_url=url, source_title="SafeDep", title="faster-axios Epsilon stealer", llm_score=8)
+
+    rows = pd.select_candidates(conn, fresh_days=30, limit=None)
+
+    assert [r["canonical_url"] for r in rows] == [url]
 
 
 def test_select_candidates_excludes_dispatched(tmp_path):
@@ -163,12 +186,24 @@ def test_clean_fields_keeps_valid_package_and_version():
     assert pd.should_dispatch(tri) is True
 
 
-def test_select_candidates_only_mvp_sources(tmp_path):
+def test_select_candidates_only_tier1_sources(tmp_path):
     conn = _make_db(tmp_path); pd.migrate(conn)
     _insert(conn, canonical_url="https://x/socket", source_title="Socket", llm_score=8)
+    _insert(conn, canonical_url="https://x/safedep", source_title="SafeDep", llm_score=8)
+    _insert(conn, canonical_url="https://x/stepsecurity", source_title="StepSecurity", llm_score=8)
+    _insert(conn, canonical_url="https://x/endor", source_title="Endor Labs", llm_score=8)
+    _insert(conn, canonical_url="https://x/aikido", source_title="Aikido", llm_score=8)
+    _insert(conn, canonical_url="https://x/defend", source_title="defend.network", llm_score=8)
     _insert(conn, canonical_url="https://x/thn", source_title="The Hacker News", llm_score=10)
     rows = pd.select_candidates(conn, fresh_days=30, limit=None)
-    assert {r["canonical_url"] for r in rows} == {"https://x/socket"}
+    assert {r["canonical_url"] for r in rows} == {
+        "https://x/socket",
+        "https://x/safedep",
+        "https://x/stepsecurity",
+        "https://x/endor",
+        "https://x/aikido",
+        "https://x/defend",
+    }
 
 
 # ── 端到端 run（mock LLM + producer + httpx）──────────
