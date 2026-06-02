@@ -6,11 +6,11 @@ Two-phase news pipeline for token efficiency:
   vuln_assess — AI severity + Chinese summary for vulnerabilities
   daily_brief — per-category daily briefing digest
 
-By default, only articles from the last 7 days are processed automatically.
+By default, only articles from the last 3 days are processed automatically.
 Use --days 0 to process all articles, or trigger manually via the API.
 
 Usage:
-  uv run python scripts/llm_rank.py                         # all tasks (7d)
+  uv run python scripts/llm_rank.py                         # all tasks (3d)
   uv run python scripts/llm_rank.py --task news_classify     # phase 1 only
   uv run python scripts/llm_rank.py --task news_summarize    # phase 2 only
   uv run python scripts/llm_rank.py --task vuln_assess       # vulns only
@@ -281,7 +281,7 @@ def _build_classify_user_msg(batch: list) -> str:
 
 
 async def classify_news(
-    days: int = 7,
+    days: int = 3,
     rescore: bool = False,
     limit: int | None = None,
     verbose: bool = True,
@@ -383,7 +383,7 @@ async def classify_news(
 
 async def summarize_news(
     min_score: int = 5,
-    days: int = 7,
+    days: int = 3,
     limit: int | None = None,
     verbose: bool = True,
 ) -> dict:
@@ -474,7 +474,7 @@ async def summarize_news(
 
 # ── Vulnerability AI assessment ──
 
-async def assess_vulns(days: int = 7, limit: int | None = None, verbose: bool = True) -> dict:
+async def assess_vulns(days: int = 3, limit: int | None = None, verbose: bool = True) -> dict:
     cfg = _get_config()
     if not cfg["api_key"]:
         return {"skipped": True}
@@ -760,7 +760,7 @@ async def on_news_fetched(stage_cb=None) -> dict:
             stage_cb("classifying")
         results["classify"] = {
             "ok": True,
-            "result": await classify_news(days=7, verbose=True),
+            "result": await classify_news(days=3, verbose=True),
             "elapsed_s": round(time.monotonic() - t0, 2),
         }
     except Exception as exc:
@@ -776,7 +776,7 @@ async def on_news_fetched(stage_cb=None) -> dict:
             stage_cb("summarizing")
         results["summarize"] = {
             "ok": True,
-            "result": await summarize_news(min_score=5, days=7, verbose=True),
+            "result": await summarize_news(min_score=5, days=3, verbose=True),
             "elapsed_s": round(time.monotonic() - t0, 2),
         }
     except Exception as exc:
@@ -815,7 +815,7 @@ async def on_vuln_fetched(stage_cb=None) -> dict:
             stage_cb("assessing")
         results["vuln_assess"] = {
             "ok": True,
-            "result": await assess_vulns(days=7, verbose=True),
+            "result": await assess_vulns(days=3, verbose=True),
             "elapsed_s": round(time.monotonic() - t0, 2),
         }
     except Exception as exc:
@@ -878,7 +878,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Two-phase LLM pipeline for security-hot")
     p.add_argument("--task", default=None,
                    help="comma-separated: news_classify,news_summarize,news_rank,vuln_assess,daily_brief")
-    p.add_argument("--days", type=int, default=7, help="only process articles within N days (0=all)")
+    p.add_argument("--days", type=int, default=3, help="only process articles within N days (0=all)")
     p.add_argument("--min-score", type=int, default=5, help="minimum score for Phase 2 summarization")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--rescore", action="store_true", help="re-process items missing llm_category")
