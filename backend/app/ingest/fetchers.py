@@ -1678,19 +1678,6 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
         except Exception as exc:
             print(f"[trim] epss failed: {exc}", file=sys.stderr)
 
-    # Post-fetch: auto embed + cluster when news was fetched
-    if "news" in selected:
-        try:
-            from scripts.embed_articles import embed_unembedded_articles
-            from scripts.cluster_articles import cluster_articles_in_db
-            t0 = time.monotonic()
-            n_embed = embed_unembedded_articles(window_hours=72)
-            n_cluster = cluster_articles_in_db(window_hours=72)
-            elapsed = round(time.monotonic() - t0, 2)
-            print(f"[dedup] embed={n_embed} cluster={n_cluster} elapsed={elapsed}s", file=sys.stderr)
-        except Exception as exc:
-            print(f"[dedup] failed: {exc}", file=sys.stderr)
-
     if snapshot:
         # Map fetcher names → the cache files they own. Fetchers writing
         # multiple cache files (osv → osv-npm + osv-pypi) must list both;

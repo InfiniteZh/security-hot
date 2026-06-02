@@ -3,11 +3,12 @@
 # NOTE: This is for BARE-METAL hosts (host has uv + the repo). In a DOCKER
 # deployment there is no host crontab, so use the in-process scheduler instead:
 # set SECURITY_HOT_SCHEDULER_ENABLED=1 (docker-compose already does this for the
-# `web` service). It runs the same scripts on the same cadence inside uvicorn —
-# tune via SECURITY_HOT_FETCH_NEWS_MINUTES / _PIPELINE_HOURS / _FETCH_OTHER_HOURS
-# / _BRIEF_HOUR_UTC. Do not enable it with `uvicorn --reload`; reload can briefly
-# overlap app processes and duplicate scheduled jobs. See backend/app/scheduler.py.
-# The cron below is the bare-metal equivalent.
+# `web` service). The scheduler is the real service driver: AI enrichment now
+# runs inside uvicorn when fetch jobs complete. Tune via
+# SECURITY_HOT_FETCH_NEWS_MINUTES / _FETCH_OTHER_HOURS / _BRIEF_HOUR_UTC. Do
+# not enable it with `uvicorn --reload`; reload can briefly overlap app
+# processes and duplicate scheduled jobs. See backend/app/scheduler.py.
+# The cron below is a bare-metal fetch fallback; it does not run AI enrichment.
 #
 # Replace /path/to/security-hot with your absolute repo path.
 # Add to crontab via `crontab -e`. All env vars come from .env via
@@ -18,25 +19,16 @@
 #     (top=30min, tail=4h) so this is cheap.
 #   - murphy (vuln-warn) polls every 5min on its own — time-sensitive feed,
 #     incremental (last_modify_time window) + idempotent, so it's cheap.
-#   - embed runs every 2h (after fetch settles); downloads intfloat/multilingual-e5-small
-#     (~470MB) on first run to ~/.cache/huggingface; subsequent runs are fast (MPS/CUDA).
-#   - clustering runs every 2h, 15min after embed (reads pre-computed embeddings)
-#   - LLM classify every 2h, summarize 15min later (avoid SQLite write contention)
-#   - daily brief once at 23:00 UTC (~7am Beijing for next-day reading)
+#   - AI enrichment (embed/cluster/classify/summarize/vuln_assess) is triggered
+#     by fetch completion inside the service scheduler, not by cron.
+#   - daily brief once at 23:00 UTC (~7am Beijing for next-day reading).
 
 CRON_TZ=UTC
 
 */15 * * * *   cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only news --incremental >> /tmp/security-hot-fetch.log 2>&1
 */5  * * * *   cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only murphy >> /tmp/security-hot-murphy.log 2>&1 && uv run python scripts/vuln_dispatch.py >> /tmp/security-hot-vuln-dispatch.log 2>&1
-0    */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/embed_articles.py >> /tmp/security-hot-embed.log 2>&1
-15   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/cluster_articles.py >> /tmp/security-hot-cluster.log 2>&1
-30   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task news_classify >> /tmp/security-hot-classify.log 2>&1
-45   */2 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task news_summarize >> /tmp/security-hot-summarize.log 2>&1 && uv run python scripts/poisoning_dispatch.py >> /tmp/security-hot-poisoning-dispatch.log 2>&1
 0    23  * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task daily_brief >> /tmp/security-hot-brief.log 2>&1
 
 # Optional: refresh other (non-news) fetchers every 4h
 # NOTE: murphy is intentionally NOT here — it has its own */5 job above.
 30   */4 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/fetch_data.py --only kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto >> /tmp/security-hot-other.log 2>&1
-
-# vuln AI assessment after vuln-source fetch
-45   */4 * * * cd /path/to/security-hot && set -a && . ./.env && set +a && uv run python scripts/llm_rank.py --task vuln_assess >> /tmp/security-hot-vuln-assess.log 2>&1
