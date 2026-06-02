@@ -23,7 +23,7 @@ import subprocess
 import sys
 import threading
 import time as _time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -47,6 +47,7 @@ logging.basicConfig(
 log = logging.getLogger("security-hot")
 
 from . import pipeline_status as ps
+from .ingest import run_fetchers
 from .data import (
     all_articles,
     all_sources,
@@ -69,6 +70,7 @@ from .models import (
 
 ROOT = Path(__file__).resolve().parents[2]
 WEB = ROOT / "web"
+_main_loop: asyncio.AbstractEventLoop | None = None
 
 
 @asynccontextmanager
@@ -77,6 +79,8 @@ async def _lifespan(app: FastAPI):
     # The job functions live further down this module; they exist by the time
     # startup runs. Stays None when SECURITY_HOT_SCHEDULER_ENABLED is unset.
     from .scheduler import start_scheduler, stop_scheduler
+    global _main_loop
+    _main_loop = asyncio.get_running_loop()
     app.state.scheduler = start_scheduler(
         fetch_news=_sched_fetch_news,
         fetch_murphy=_sched_fetch_murphy,
@@ -89,6 +93,7 @@ async def _lifespan(app: FastAPI):
     if sched is not None:
         log.info("scheduler stopping")
         stop_scheduler(sched)
+    _main_loop = None
 
 
 app = FastAPI(
@@ -493,7 +498,7 @@ def healthz() -> JSONResponse:
 
 
 REFRESH_TOKEN_ENV = "SECURITY_HOT_REFRESH_TOKEN"
-_refresh_lock = threading.Lock()
+_refresh_lock = asyncio.Lock()
 _refresh_in_flight = False
 _refresh_stage = ""  # "", "fetching", "classifying", "summarizing", "assessing", "done", "error"
 _refresh_started_at: float | None = None
@@ -518,6 +523,42 @@ _LLM_STAGES = {
     "daily_brief":    "summarizing",
     "vuln_assess":    "assessing",
 }
+
+
+def _reset_refresh_state() -> None:
+    global _refresh_started_at, _refresh_stage, _refresh_stage_started_at, _refresh_stage_history
+    _refresh_started_at = _time.monotonic()
+    _refresh_stage = ""
+    _refresh_stage_started_at = None
+    _refresh_stage_history = {}
+    try:
+        (ROOT / "backend" / "cache" / ".refresh_progress.json").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+async def _begin_refresh(source: str) -> bool:
+    global _refresh_in_flight
+    async with _refresh_lock:
+        if _refresh_in_flight:
+            log.info("%s: skipped — refresh already in flight", source)
+            return False
+        _refresh_in_flight = True
+        _reset_refresh_state()
+        return True
+
+
+async def _finish_refresh() -> None:
+    global _refresh_in_flight
+    async with _refresh_lock:
+        _refresh_in_flight = False
+
+
+def _run_coro_blocking(coro):
+    if _main_loop is not None and _main_loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(coro, _main_loop)
+        return future.result()
+    return asyncio.run(coro)
 
 
 def _set_stage(stage: str) -> None:
@@ -545,33 +586,60 @@ def _record_step_status(script: str, step: str | None, ok: bool, elapsed: float,
         log.exception("failed to record pipeline status for %s", script)
 
 
-def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> None:
-    """Spawn fetch_data.py, then optionally chain llm_rank.py per task.
-    Runs each LLM task in its own subprocess so _refresh_stage can advance
-    per task and drive the frontend's 3-stage progress bar.
-    Releases the in-flight lock in `finally` so a crashed subprocess doesn't
-    permanently jam the endpoint."""
-    global _refresh_in_flight, _refresh_stage, _refresh_started_at, _refresh_stage_history
+def _fetcher_names_from_args(args: list[str]) -> list[str] | None:
+    if not args or args[0] != "fetch_data.py":
+        return None
+    for idx, arg in enumerate(args[1:]):
+        if arg == "--only" and idx + 2 < len(args):
+            return [s.strip() for s in args[idx + 2].split(",") if s.strip()]
+        if arg.startswith("--only="):
+            return [s.strip() for s in arg.split("=", 1)[1].split(",") if s.strip()]
+    return None
+
+
+def _fetcher_concurrency_from_args(args: list[str]) -> int | None:
+    for idx, arg in enumerate(args[1:]):
+        if arg == "--concurrency" and idx + 2 < len(args):
+            try:
+                return int(args[idx + 2])
+            except ValueError:
+                return None
+        if arg.startswith("--concurrency="):
+            try:
+                return int(arg.split("=", 1)[1])
+            except ValueError:
+                return None
+    return None
+
+
+async def _run_fetch_step(label: str, names: list[str] | None, concurrency: int | None = None) -> bool:
+    log.info("scheduler: %s -> run_fetchers(%s)", label, names or "all")
+    t0 = _time.monotonic()
     try:
-        _refresh_started_at = _time.monotonic()
-        _refresh_stage = ""
-        _refresh_stage_started_at = None
-        _refresh_stage_history = {}
-        try:
-            (ROOT / "backend" / "cache" / ".refresh_progress.json").unlink(missing_ok=True)
-        except OSError:
-            pass
-        _set_stage("fetching")
-        cmd = [sys.executable, str(ROOT / "scripts" / "fetch_data.py")]
-        if only:
-            cmd.extend(["--only", ",".join(only)])
-        log.info("fetcher refresh starting: %s", " ".join(cmd))
-        proc = subprocess.run(cmd, check=False, capture_output=True, text=True, cwd=str(ROOT))
-        _record_step_status("fetch_data.py", None, proc.returncode == 0, 0, proc.stderr, proc.returncode)
-        if proc.returncode == 0:
-            log.info("fetcher refresh finished ok (%d bytes stderr)", len(proc.stderr or ""))
+        result = await run_fetchers(names, concurrency)
+        elapsed = _time.monotonic() - t0
+        ok = bool(result.get("ok"))
+        returncode = int(result.get("returncode", 1))
+        _record_step_status("fetch_data.py", None, ok, elapsed, None, returncode)
+        if ok:
+            log.info("scheduler: %s ok", label)
         else:
-            log.warning("fetcher refresh exited %s: %s", proc.returncode, (proc.stderr or "")[:500])
+            log.warning("scheduler: %s exited %s", label, returncode)
+        return ok
+    except Exception as exc:
+        elapsed = _time.monotonic() - t0
+        error = f"{type(exc).__name__}: {exc}"[:500]
+        _record_step_status("fetch_data.py", None, False, elapsed, error, 1)
+        log.warning("scheduler: %s failed: %s", label, error)
+        return False
+
+
+async def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> None:
+    """Run fetchers in-process, then optionally chain llm_rank.py per task."""
+    try:
+        _set_stage("fetching")
+        ok = await _run_fetch_step("fetcher refresh", only)
+        if not ok:
             _set_stage("error")
             return
 
@@ -584,7 +652,8 @@ def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> 
             step = ps.step_name("llm_rank.py", task)
             t0 = _time.monotonic()
             try:
-                llm_proc = subprocess.run(
+                llm_proc = await asyncio.to_thread(
+                    subprocess.run,
                     [sys.executable, llm_script, "--task", task],
                     check=False, capture_output=True, text=True, cwd=str(ROOT),
                     timeout=3600,
@@ -601,39 +670,17 @@ def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> 
                                     "timed out after 3600s", None)
         _set_stage("done")
     finally:
-        with _refresh_lock:
-            _refresh_in_flight = False
+        await _finish_refresh()
 
 
-@contextmanager
-def _pipeline_run():
-    """Own the shared refresh lock for one in-process pipeline run.
-
-    Yields True if we acquired the run, False if another run is already in
-    flight (caller should no-op). On entry it resets the progress state and
-    clears the on-disk progress file; on an uncaught crash in the body it logs
-    and marks the stage `error`; it always releases the lock. The body is
-    responsible for driving `_set_stage` (including the final `done`).
-
-    Taking `_refresh_lock` means a scheduled run and a manual /api/refresh never
-    overlap — whichever starts second is skipped rather than racing on the DB."""
-    global _refresh_in_flight, _refresh_started_at, _refresh_stage
-    global _refresh_stage_started_at, _refresh_stage_history
-    with _refresh_lock:
-        if _refresh_in_flight:
-            log.info("scheduler: skipped — refresh already in flight")
-            yield False
-            return
-        _refresh_in_flight = True
+@asynccontextmanager
+async def _pipeline_run():
+    """Own the shared refresh state for one scheduler pipeline run."""
+    owned = await _begin_refresh("scheduler")
+    if not owned:
+        yield False
+        return
     try:
-        _refresh_started_at = _time.monotonic()
-        _refresh_stage = ""
-        _refresh_stage_started_at = None
-        _refresh_stage_history = {}
-        try:
-            (ROOT / "backend" / "cache" / ".refresh_progress.json").unlink(missing_ok=True)
-        except OSError:
-            pass
         yield True
     except Exception:
         log.exception("scheduler: pipeline run crashed")
@@ -642,29 +689,28 @@ def _pipeline_run():
         except Exception:
             log.exception("scheduler: failed to record error stage")
     finally:
-        with _refresh_lock:
-            _refresh_in_flight = False
+        await _finish_refresh()
 
 
-def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
-    """Run a sequence of (label, script-args, ui_stage) subprocesses under the
-    shared refresh lock. Used by the in-process scheduler (backend/app/scheduler.py).
-
-    Sequential execution is deliberate: it serialises SQLite writers exactly the
-    way the staggered cron cadence does, avoiding WAL write contention between
-    fetch / embed / cluster / LLM."""
-    with _pipeline_run() as owned:
+async def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
+    """Run a sequence of fetcher and script steps under the shared refresh state."""
+    async with _pipeline_run() as owned:
         if not owned:
             return
         for label, args, stage in steps:
             if stage and stage != _refresh_stage:
                 _set_stage(stage)
+            if args and args[0] == "fetch_data.py":
+                await _run_fetch_step(label, _fetcher_names_from_args(args), _fetcher_concurrency_from_args(args))
+                continue
+
             cmd = [sys.executable, str(ROOT / "scripts" / args[0]), *args[1:]]
             log.info("scheduler: %s -> %s", label, " ".join(cmd))
             step = ps.step_name(args[0], args[2] if args[0] == "llm_rank.py" and len(args) > 2 else None)
             t0 = _time.monotonic()
             try:
-                proc = subprocess.run(
+                proc = await asyncio.to_thread(
+                    subprocess.run,
                     cmd, check=False, capture_output=True, text=True,
                     cwd=str(ROOT), timeout=3600,
                 )
@@ -685,35 +731,30 @@ def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
 
 
 def _sched_fetch_news() -> None:
-    _run_pipeline_steps([
+    _run_coro_blocking(_run_pipeline_steps([
         ("fetch news", ["fetch_data.py", "--only", "news", "--incremental"], "fetching"),
-    ])
+    ]))
 
 
-def _sched_fetch_murphy() -> None:
+async def _sched_fetch_murphy_async() -> None:
     # Murphy is a time-sensitive vuln-warn feed → its own short-interval job
     # (default 5min) instead of the 4h "other" bucket. Incremental + idempotent.
     # Unlike the generic _run_pipeline_steps list, this job (a) aborts the rest
     # of the pipeline if the fetch fails and (b) runs vuln_dispatch in-process,
     # so it drives the steps explicitly rather than declaratively.
-    with _pipeline_run() as owned:
+    async with _pipeline_run() as owned:
         if not owned:
             return
 
         _set_stage("fetching")
-        fetch_cmd = [sys.executable, str(ROOT / "scripts" / "fetch_data.py"), "--only", "murphy"]
-        log.info("scheduler: fetch murphy -> %s", " ".join(fetch_cmd))
-        t0 = _time.monotonic()
-        proc = subprocess.run(fetch_cmd, check=False, capture_output=True, text=True, cwd=str(ROOT), timeout=3600)
-        _record_step_status("fetch_data.py", None, proc.returncode == 0, _time.monotonic() - t0, proc.stderr, proc.returncode)
-        if proc.returncode != 0:
-            log.warning("scheduler: fetch murphy exited %s: %s", proc.returncode, (proc.stderr or "")[:400])
+        ok = await _run_fetch_step("fetch murphy", ["murphy"])
+        if not ok:
             _set_stage("error")
             return
 
         try:
             from scripts import vuln_dispatch
-            stats = asyncio.run(vuln_dispatch.run())
+            stats = await vuln_dispatch.run()
             ok = int(stats.get("errors", 0)) == 0
             ps.upsert_step(
                 ps.step_name("vuln_dispatch.py", None),
@@ -735,7 +776,8 @@ def _sched_fetch_murphy() -> None:
         step = ps.step_name("llm_rank.py", "vuln_assess")
         t0 = _time.monotonic()
         try:
-            assess_proc = subprocess.run(
+            assess_proc = await asyncio.to_thread(
+                subprocess.run,
                 assess_cmd, check=False, capture_output=True, text=True, cwd=str(ROOT), timeout=3600,
             )
             _record_step_status(
@@ -748,33 +790,37 @@ def _sched_fetch_murphy() -> None:
         _set_stage("done")
 
 
+def _sched_fetch_murphy() -> None:
+    _run_coro_blocking(_sched_fetch_murphy_async())
+
+
 def _sched_heavy_pipeline() -> None:
     # embed + cluster are prep (no dedicated UI stage) → reuse "fetching".
-    _run_pipeline_steps([
+    _run_coro_blocking(_run_pipeline_steps([
         ("embed", ["embed_articles.py"], "fetching"),
         ("cluster", ["cluster_articles.py"], "fetching"),
         ("classify", ["llm_rank.py", "--task", "news_classify"], "classifying"),
         ("summarize", ["llm_rank.py", "--task", "news_summarize"], "summarizing"),
-    ])
+    ]))
 
 
 def _sched_daily_brief() -> None:
-    _run_pipeline_steps([
+    _run_coro_blocking(_run_pipeline_steps([
         ("daily brief", ["llm_rank.py", "--task", "daily_brief"], "summarizing"),
-    ])
+    ]))
 
 
 def _sched_fetch_other() -> None:
     # murphy is intentionally excluded here — it has its own 5min job above.
-    _run_pipeline_steps([
+    _run_coro_blocking(_run_pipeline_steps([
         ("fetch other", ["fetch_data.py", "--only",
                           "kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto"], "fetching"),
         ("vuln assess", ["llm_rank.py", "--task", "vuln_assess"], "assessing"),
-    ])
+    ]))
 
 
 @app.post("/api/refresh", tags=["overview"])
-def api_refresh(
+async def api_refresh(
     background: BackgroundTasks,
     only: str | None = Query(default=None, description="comma-separated fetcher names; default = all"),
     llm: str | None = Query(default=None, description="LLM scope: news | vuln | all | none (default: none)"),
@@ -795,11 +841,8 @@ def api_refresh(
         raise HTTPException(status_code=503, detail=f"refresh disabled; set {REFRESH_TOKEN_ENV} to enable")
     if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
         raise HTTPException(status_code=401, detail="invalid refresh token")
-    global _refresh_in_flight
-    with _refresh_lock:
-        if _refresh_in_flight:
-            return JSONResponse({"queued": False, "reason": "already running"}, status_code=409)
-        _refresh_in_flight = True
+    if not await _begin_refresh("manual refresh"):
+        return JSONResponse({"queued": False, "reason": "already running"}, status_code=409)
     chosen = [s.strip() for s in only.split(",") if s.strip()] if only else None
     llm_tasks = _LLM_TASKS_BY_SCOPE.get((llm or "none").lower(), [])
     background.add_task(_run_fetcher, chosen, llm_tasks or None)
