@@ -41,6 +41,39 @@ _DSN_DOMAIN_RE = re.compile(
     r"(?:[a-zA-Z]{2,63})(?=[/:]|$)"
 )
 
+# 代码/资源文件后缀——这些"伪 TLD"会让 index.js / setup.py 之类文件名被误判成域名。
+# 域名识别时若末段落在此集合内，直接丢弃（散文里的文件名不是失陷指标）。
+_CODE_FILE_EXT = {
+    "js", "mjs", "cjs", "jsx", "ts", "tsx", "py", "pyc", "pyi", "go", "rs",
+    "rb", "php", "java", "kt", "kts", "scala", "swift", "json", "md", "txt",
+    "sh", "bash", "zsh", "yml", "yaml", "lock", "toml", "cfg", "ini", "env",
+    "xml", "html", "htm", "css", "scss", "sass", "less", "png", "jpg", "jpeg",
+    "gif", "svg", "webp", "ico", "exe", "dll", "so", "dylib", "bin", "sql",
+    "c", "cpp", "cc", "h", "hpp", "log", "csv", "tsv", "pdf", "zip", "gz",
+    "tar", "tgz", "whl", "jar", "war", "class", "map", "ipynb", "md5", "sha256",
+}
+
+# 合法包名：可选 @scope/，允许 . _ - / : @ * 等生态分隔符；禁止空格/括号/散文。
+_PKG_RE = re.compile(r"^[@A-Za-z0-9][\w.@/:*\-]{0,119}$")
+# 合法版本号：纯版本串，禁止空格与中文（'95 versions' / '多个版本受影响' 一律判空）。
+_VER_RE = re.compile(r"^[vV0-9~^<>=]?[\w.\-+*]{0,39}$")
+
+
+def valid_package(name: str | None) -> str:
+    """校验并归一化包名；prose（含空格/括号）或非法字符 → 返回 ''。"""
+    name = (name or "").strip()
+    if not name or " " in name or "\t" in name or "(" in name or ")" in name:
+        return ""
+    return name if _PKG_RE.match(name) else ""
+
+
+def valid_version(ver: str | None) -> str:
+    """校验版本号；含空格/中文/说明文字 → 返回 ''。"""
+    ver = (ver or "").strip()
+    if not ver or " " in ver:
+        return ""
+    return ver if _VER_RE.match(ver) else ""
+
 
 def make_producer(bootstrap: str):
     from aiokafka import AIOKafkaProducer
@@ -124,12 +157,17 @@ def extract_iocs(text: str, exclude: set[str] | None = None) -> list[dict]:
     for m in _IPV6_RE.finditer(normalized):
         add(m.group(0).lower(), "ipv6")
     for m in _DSN_DOMAIN_RE.finditer(normalized):
-        add(m.group(0).lower(), "domain")
+        value = m.group(0)
+        if value.rsplit(".", 1)[-1].lower() in _CODE_FILE_EXT:
+            continue
+        add(value.lower(), "domain")
     for m in _DOMAIN_RE.finditer(normalized):
         if in_url_span(m.start(), m.end()):
             continue
         value = m.group(0)
         if _IPV4_RE.fullmatch(value):
             continue
+        if value.rsplit(".", 1)[-1].lower() in _CODE_FILE_EXT:
+            continue  # index.js / setup.py 之类文件名不是域名
         add(value.lower(), "domain")
     return out

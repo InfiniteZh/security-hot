@@ -1,12 +1,18 @@
 """供应链投毒情报投送 —— security-hot → Kafka(schedule_task_normal) → security_copilot disposal。
 
+MVP 范围：当前只投 Socket（tier1 权威源，正文结构化、含包清单+IOC 表）。
+后续扩展只需往 MVP_SOURCES 增源。
+
 三层辨别只投"可处置"的情报（点名具体可被企业安装的包/IOC），不投纯趋势/事件报道：
-  L0 免费 SQL 筛：llm_category='supply-chain' AND llm_score>=8 AND is_relevant
+  L0 免费 SQL 筛：source_title∈MVP_SOURCES AND llm_category='supply-chain'
+                  AND llm_score>=7 AND is_relevant
                   AND (cluster_id IS NULL OR is_cluster_primary=1) AND 未投送过
-  L1 轻量 LLM triage：复用 llm_rank 的模型问"是否点名了具体可装的包/IOC"，仅 actionable 投
+  L1 LLM triage（基于全文）：问"是否点名了具体可装的包/失陷指标"，仅 actionable 投；
+                  package/version/iocs 经 dispatch_common 严格校验，散文/文件名/commit hash 一律剔除
   （L2 权威兜底在 security_copilot disposal 的 extractor，已存在）
 
-投送前拉取 canonical_url 全文（news.db 无全文，只有 RSS 摘要）。
+先抓 canonical_url 全文再 triage（news.db 无全文，只有 RSS 摘要；薄摘要会漏判）。
+净化后既无有效 package 又无有效 IOC → 不投。
 幂等：poisoning_dispatched 标记防重发。
 
 用法（cron，跟在 llm_rank 之后）：
@@ -24,6 +30,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -42,17 +49,35 @@ from dispatch_common import (  # noqa: E402
     fetch_body,
     make_producer,
     send,
+    valid_package,
+    valid_version,
 )
 from llm_rank import _get_config, _llm_call  # noqa: E402  复用 llm_rank 的模型/调用
+
+try:  # best-effort：CLI 独立运行时缺失也不致命
+    import refresh_progress as _prog  # noqa: E402
+except Exception:  # pragma: no cover
+    _prog = None
 
 SCHEMA_VERSION = 2
 MIN_SCORE = 8
 TIER1_MIN_SCORE = 7
 
-_TRIAGE_SYSTEM = """你是供应链投毒情报分诊员。判断一篇文章是否"可处置"——\
+# MVP：先只投 Socket（tier1 权威源，正文结构化、含包清单+IOC 表），跑通后再扩展到其他源。
+MVP_SOURCES = {"Socket"}
+
+# triage 喂给 LLM 的正文摘录上限（控 token）。
+TRIAGE_BODY_LIMIT = 6000
+
+_TRIAGE_SYSTEM = """你是供应链投毒情报分诊员。基于【正文】（而非仅标题/摘要）判断文章是否"可处置"——\
 即是否点名了具体的、企业内网可能安装/使用的开源组件（含生态：npm/pypi/maven/go/cargo/nuget/gem 等），\
-或给出了具体可联查的 IOC（域名/IP/文件 hash）。
+或给出了具体可联查的失陷指标。
 纯趋势评论、宏观报道、无具体组件/IOC 的事件通报 → 不可处置。
+字段规则（严格遵守）：
+- package：只填单个具体包名（如 @scope/name 或 name），不含空格/说明文字；无则空串。
+- version：只填版本号（如 4.0.4），不要写"多个版本"之类描述；无则空串。
+- iocs：只填真正的失陷指标——恶意域名 / IP / 文件 SHA256或MD5 / 恶意 URL。\
+绝不要填：包名、文件名（如 index.js）、文件路径、加密算法描述、git commit hash、报告人账号、恶意软件家族名、生态名。无则空数组 []。
 只输出严格 JSON：{"actionable": true/false, "ecosystem": "", "package": "", "version": "", "iocs": [], "reason": "中文<=50字"}"""
 
 
@@ -84,16 +109,15 @@ def _source_tier(source_title: str | None) -> str:
 
 
 def select_candidates(conn: sqlite3.Connection, fresh_days: int, limit: int | None) -> list[sqlite3.Row]:
-    tier1 = sorted(TIER1_SUPPLY_SOURCES)
-    placeholders = ",".join("?" for _ in tier1)
+    # MVP：只投 MVP_SOURCES（当前仅 Socket）的供应链文章；分数门槛沿用 tier1。
+    sources = sorted(MVP_SOURCES)
+    placeholders = ",".join("?" for _ in sources)
     sql = """
         SELECT id, canonical_url, title, summary, llm_summary_zh, llm_score, llm_category, source_title
         FROM articles
         WHERE llm_category = 'supply-chain'
-          AND (
-                llm_score >= ?
-                OR (source_title IN ({tier1_placeholders}) AND llm_score >= ?)
-              )
+          AND source_title IN ({source_placeholders})
+          AND llm_score >= ?
           AND (is_relevant = 1 OR is_relevant IS NULL)
           AND (cluster_id IS NULL OR is_cluster_primary = 1)
           AND COALESCE(poisoning_dispatched, 0) = 0
@@ -102,8 +126,8 @@ def select_candidates(conn: sqlite3.Connection, fresh_days: int, limit: int | No
                 OR substr(published, 1, 10) >= date('now', ?)
               )
         ORDER BY llm_score DESC, published DESC
-    """.format(tier1_placeholders=placeholders)
-    params = [MIN_SCORE, *tier1, TIER1_MIN_SCORE, f"-{fresh_days} days"]
+    """.format(source_placeholders=placeholders)
+    params = [*sources, TIER1_MIN_SCORE, f"-{fresh_days} days"]
     rows = list(conn.execute(sql, params))
     if limit is not None:
         rows = rows[:limit]
@@ -112,11 +136,12 @@ def select_candidates(conn: sqlite3.Connection, fresh_days: int, limit: int | No
 
 # ── L1：LLM triage ────────────────────────────────────────
 
-async def triage(client, cfg, row: sqlite3.Row) -> dict:
+async def triage(client, cfg, row: sqlite3.Row, body: str = "") -> dict:
     user_msg = json.dumps({
         "title": row["title"],
         "summary": row["summary"] or "",
         "summary_zh": row["llm_summary_zh"] or "",
+        "body": (body or "")[:TRIAGE_BODY_LIMIT],
     }, ensure_ascii=False)
     try:
         result = await _llm_call(
@@ -139,6 +164,14 @@ async def triage(client, cfg, row: sqlite3.Row) -> dict:
 
 # ── 消息构造 ──────────────────────────────────────────────
 
+# LLM 偶尔会把 advisory 自身的 commit / 报告人账号 / 命名空间说明塞进 iocs——
+# 这些不是失陷指标，带这些注解词的值整条丢弃。
+_IOC_ANNOTATION_DROP = re.compile(
+    r"\b(commit|source\s+account|source\s+commit|reporter|advisory|namespace|maintainer)\b",
+    re.IGNORECASE,
+)
+
+
 def _message_iocs(values: list, package: str | None = None) -> list[dict]:
     out: list[dict] = []
     seen: set[str] = set()
@@ -148,10 +181,10 @@ def _message_iocs(values: list, package: str | None = None) -> list[dict]:
             raw = str(value.get("value") or "").strip()
         else:
             raw = str(value).strip()
-        extracted = extract_iocs(raw, exclude=exclude)
-        if not extracted and raw:
-            extracted = [{"value": raw, "type": "unknown"}]
-        for item in extracted:
+        if not raw or _IOC_ANNOTATION_DROP.search(raw):
+            continue
+        # 只保留正则识别出真实类型的 IOC；散文/文件名/算法描述（无可识别类型）一律丢弃。
+        for item in extract_iocs(raw, exclude=exclude):
             key = item["value"].lower()
             if key in seen:
                 continue
@@ -160,15 +193,23 @@ def _message_iocs(values: list, package: str | None = None) -> list[dict]:
     return out
 
 
+def clean_fields(triage_result: dict) -> tuple[str, str, list[dict]]:
+    """对 triage 输出做严格净化，返回 (package, version, iocs)。"""
+    package = valid_package(triage_result.get("package") or "")
+    version = valid_version(triage_result.get("version") or "")
+    iocs = _message_iocs(triage_result.get("iocs") or [], package=package or None)
+    return package, version, iocs
+
+
 def should_dispatch(triage_result: dict) -> bool:
-    return bool(triage_result.get("actionable")) and (
-        bool(triage_result.get("package"))
-        or bool(triage_result.get("iocs"))
-    )
+    if not triage_result.get("actionable"):
+        return False
+    package, _version, iocs = clean_fields(triage_result)
+    return bool(package or iocs)
 
 
 def build_message(row: sqlite3.Row, triage_result: dict, full_body: str) -> dict:
-    version = triage_result.get("version") or ""
+    package, version, iocs = clean_fields(triage_result)
     return {
         "schema_version": SCHEMA_VERSION,
         "source": "security-hot",
@@ -179,10 +220,10 @@ def build_message(row: sqlite3.Row, triage_result: dict, full_body: str) -> dict
         "title": row["title"],
         "canonical_url": row["canonical_url"],
         "ecosystem": triage_result.get("ecosystem") or "",
-        "package": triage_result.get("package") or "",
+        "package": package,
         "affected_version": [version] if version else [],
         "fix_version": "",
-        "iocs": _message_iocs(triage_result.get("iocs") or [], package=triage_result.get("package")),
+        "iocs": iocs,
         "cve_id": None,
         "ghsa_id": None,
         "severity": "unknown",
@@ -223,7 +264,8 @@ async def run(fresh_days: int, limit: int | None, dry_run: bool) -> dict:
     candidates = select_candidates(conn, fresh_days, limit)
     stats = {"candidates": len(candidates), "actionable": 0, "sent": 0,
              "skipped_not_actionable": 0, "errors": 0, "dry_run": dry_run}
-    print(f"[dispatch] L0 候选 {len(candidates)} 条 (score>={MIN_SCORE}, tier1>={TIER1_MIN_SCORE}, fresh={fresh_days}d)",
+    print(f"[dispatch] L0 候选 {len(candidates)} 条 "
+          f"(MVP 源={sorted(MVP_SOURCES)}, score>={TIER1_MIN_SCORE}, fresh={fresh_days}d)",
           file=sys.stderr)
     if not candidates:
         conn.close()
@@ -240,10 +282,18 @@ async def run(fresh_days: int, limit: int | None, dry_run: bool) -> dict:
             stats["errors"] += 1
             return stats
 
+    _total = len(candidates)
+    if _prog is not None:
+        _prog.start("dispatching")
+        _prog.report("dispatching", _total, 0, label="poisoning_dispatch")
     try:
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-            for row in candidates:
-                tri = await triage(client, cfg, row)
+            for _i, row in enumerate(candidates, 1):
+                if _prog is not None:
+                    _prog.report("dispatching", _total, _i, label="poisoning_dispatch")
+                # 先抓全文再 triage：Socket 这类源把包清单/IOC 放正文，摘要太薄会误判漏投。
+                full_body = await fetch_body(client, row["canonical_url"])
+                tri = await triage(client, cfg, row, full_body)
                 tri["source_tier"] = _source_tier(row["source_title"])
                 if not should_dispatch(tri):
                     stats["skipped_not_actionable"] += 1
@@ -253,7 +303,6 @@ async def run(fresh_days: int, limit: int | None, dry_run: bool) -> dict:
                     continue
 
                 stats["actionable"] += 1
-                full_body = await fetch_body(client, row["canonical_url"])
                 msg = build_message(row, tri, full_body)
 
                 if dry_run:

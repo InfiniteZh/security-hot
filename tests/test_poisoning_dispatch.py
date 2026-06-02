@@ -45,7 +45,7 @@ def _insert(conn, **kw):
     defaults = dict(canonical_url="https://x/1", title="t", summary="s", llm_summary_zh="zh",
                     llm_score=10, llm_category="supply-chain", is_relevant=1,
                     cluster_id=None, is_cluster_primary=None, published="2026-05-29",
-                    source_title="Other")
+                    source_title="Socket")  # MVP：仅 Socket 进入候选
     defaults.update(kw)
     conn.execute(
         f"INSERT INTO articles ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
@@ -123,6 +123,54 @@ def test_message_iocs_excludes_package_name_and_dsn_hex_false_positive():
     assert "o4511335034847232.ingest.de.sentry.io" in values
 
 
+# ── 净化：剔除散文/文件名/commit/账号噪声（这是本次治理的核心）────────
+
+def test_message_iocs_drops_prose_and_filenames():
+    """LLM 塞进来的非失陷指标——文件名、文件路径、算法描述、家族名——全部丢弃。"""
+    junk = ["index.js 4.2MB", "/tmp/p*.js", "ROT-21+AES-128-GCM", "Miasma",
+            "RedHatInsights/javascript-clients"]
+    iocs = pd._message_iocs(junk)
+    assert iocs == []  # 无一可识别为真实 IOC 类型
+
+
+def test_message_iocs_drops_advisory_commit_and_account():
+    """advisory 自身 commit hash / 报告人账号带注解词 → 整条丢弃。"""
+    vals = ["ed851ff141e13db6dd7c16a3d4f1b3b92eb9fa6a917f5243ba22ccb933554e43 (source commit)",
+            "kam193 (source account)"]
+    assert pd._message_iocs(vals) == []
+
+
+def test_message_iocs_keeps_real_iocs():
+    iocs = pd._message_iocs(["evil-c2.example", "1.2.3.4",
+                             "https://malware.test/drop"])
+    by_type = {i["type"] for i in iocs}
+    assert by_type == {"domain", "ipv4", "url"}
+
+
+def test_clean_fields_rejects_prose_package_and_version():
+    tri = {"actionable": True, "package": "Redhat cloud services npm namespace (Miasma worm)",
+           "version": "95 versions", "iocs": []}
+    pkg, ver, iocs = pd.clean_fields(tri)
+    assert pkg == "" and ver == "" and iocs == []
+    assert pd.should_dispatch(tri) is False  # 净化后无 package 无 IOC → 不投
+
+
+def test_clean_fields_keeps_valid_package_and_version():
+    tri = {"actionable": True, "package": "@redhat-cloud-services/chrome",
+           "version": "4.0.4", "iocs": []}
+    pkg, ver, iocs = pd.clean_fields(tri)
+    assert pkg == "@redhat-cloud-services/chrome" and ver == "4.0.4"
+    assert pd.should_dispatch(tri) is True
+
+
+def test_select_candidates_only_mvp_sources(tmp_path):
+    conn = _make_db(tmp_path); pd.migrate(conn)
+    _insert(conn, canonical_url="https://x/socket", source_title="Socket", llm_score=8)
+    _insert(conn, canonical_url="https://x/thn", source_title="The Hacker News", llm_score=10)
+    rows = pd.select_candidates(conn, fresh_days=30, limit=None)
+    assert {r["canonical_url"] for r in rows} == {"https://x/socket"}
+
+
 # ── 端到端 run（mock LLM + producer + httpx）──────────
 
 @pytest.mark.asyncio
@@ -133,7 +181,7 @@ async def test_run_actionable_sends_and_marks(tmp_path, monkeypatch):
     monkeypatch.setattr(pd, "_get_config", lambda: {
         "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
     # triage → actionable
-    async def fake_triage(client, cfg, row):
+    async def fake_triage(client, cfg, row, body=""):
         return {"actionable": True, "ecosystem": "npm", "package": "noon-contracts",
                 "version": "", "iocs": [], "reason": "ok"}
     monkeypatch.setattr(pd, "triage", fake_triage)
@@ -164,10 +212,12 @@ async def test_run_not_actionable_marks_without_send(tmp_path, monkeypatch):
     monkeypatch.setattr(pd.db, "connect", lambda *a, **k: conn)
     monkeypatch.setattr(pd, "_get_config", lambda: {
         "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
-    async def fake_triage(client, cfg, row):
+    async def fake_triage(client, cfg, row, body=""):
         return {"actionable": False, "reason": "纯趋势", "ecosystem": "",
                 "package": "", "version": "", "iocs": []}
     monkeypatch.setattr(pd, "triage", fake_triage)
+    async def fake_fetch(client, url): return "body"
+    monkeypatch.setattr(pd, "fetch_body", fake_fetch)
 
     sent = []
     class FakeProducer:
@@ -193,11 +243,13 @@ async def test_run_actionable_without_package_or_ioc_marks_without_send(tmp_path
     monkeypatch.setattr(pd, "_get_config", lambda: {
         "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
 
-    async def fake_triage(client, cfg, row):
+    async def fake_triage(client, cfg, row, body=""):
         return {"actionable": True, "ecosystem": "", "package": "",
                 "version": "", "iocs": [], "reason": "泛泛分析"}
 
     monkeypatch.setattr(pd, "triage", fake_triage)
+    async def fake_fetch(client, url): return "body"
+    monkeypatch.setattr(pd, "fetch_body", fake_fetch)
 
     sent = []
     class FakeProducer:
@@ -220,7 +272,7 @@ async def test_run_dry_run_no_side_effects(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(pd.db, "connect", lambda *a, **k: conn)
     monkeypatch.setattr(pd, "_get_config", lambda: {
         "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
-    async def fake_triage(client, cfg, row):
+    async def fake_triage(client, cfg, row, body=""):
         return {"actionable": True, "ecosystem": "npm", "package": "p",
                 "version": "", "iocs": [], "reason": "ok"}
     monkeypatch.setattr(pd, "triage", fake_triage)
