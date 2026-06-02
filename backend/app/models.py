@@ -65,6 +65,8 @@ class Vuln(BaseModel):
     pocs: list[PocLink] = Field(default_factory=list)
     references: list[Reference] = Field(default_factory=list)
     affected_versions: list[str] = Field(default_factory=list)
+    iocs: list[str] = Field(default_factory=list)
+    fix_versions: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     source: str
     published: str | None = None

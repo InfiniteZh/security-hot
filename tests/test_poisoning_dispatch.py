@@ -33,17 +33,19 @@ def _make_db(tmp_path) -> sqlite3.Connection:
             id INTEGER PRIMARY KEY, canonical_url TEXT UNIQUE, title TEXT,
             summary TEXT, llm_summary_zh TEXT, llm_score INTEGER, llm_category TEXT,
             is_relevant INTEGER, cluster_id INTEGER, is_cluster_primary INTEGER,
-            published TEXT
+            published TEXT, source_title TEXT
         )""")
     return conn
 
 
 def _insert(conn, **kw):
     cols = ["canonical_url", "title", "summary", "llm_summary_zh", "llm_score",
-            "llm_category", "is_relevant", "cluster_id", "is_cluster_primary", "published"]
+            "llm_category", "is_relevant", "cluster_id", "is_cluster_primary", "published",
+            "source_title"]
     defaults = dict(canonical_url="https://x/1", title="t", summary="s", llm_summary_zh="zh",
                     llm_score=10, llm_category="supply-chain", is_relevant=1,
-                    cluster_id=None, is_cluster_primary=None, published="2026-05-29")
+                    cluster_id=None, is_cluster_primary=None, published="2026-05-29",
+                    source_title="Other")
     defaults.update(kw)
     conn.execute(
         f"INSERT INTO articles ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})",
@@ -71,9 +73,17 @@ def test_select_candidates_filters(tmp_path):
     _insert(conn, canonical_url="https://x/cat", llm_category="incident", llm_score=10)  # ✗ 非投毒
     _insert(conn, canonical_url="https://x/irr", is_relevant=0, llm_score=10)       # ✗ 不相关
     _insert(conn, canonical_url="https://x/mirror", cluster_id=5, is_cluster_primary=0, llm_score=10)  # ✗ 镜像非主
-    rows = pd.select_candidates(conn, since_days=30, limit=None)
+    rows = pd.select_candidates(conn, fresh_days=30, limit=None)
     urls = {r["canonical_url"] for r in rows}
     assert urls == {"https://x/ok"}
+
+
+def test_select_candidates_tier1_lower_threshold(tmp_path):
+    conn = _make_db(tmp_path); pd.migrate(conn)
+    _insert(conn, canonical_url="https://x/tier1", llm_score=7, source_title="Socket")
+    _insert(conn, canonical_url="https://x/other", llm_score=7, source_title="Other")
+    rows = pd.select_candidates(conn, fresh_days=30, limit=None)
+    assert {r["canonical_url"] for r in rows} == {"https://x/tier1"}
 
 
 def test_select_candidates_excludes_dispatched(tmp_path):
@@ -81,7 +91,7 @@ def test_select_candidates_excludes_dispatched(tmp_path):
     _insert(conn, canonical_url="https://x/a", llm_score=9)
     conn.execute("UPDATE articles SET poisoning_dispatched=1 WHERE canonical_url='https://x/a'")
     conn.commit()
-    assert pd.select_candidates(conn, since_days=30, limit=None) == []
+    assert pd.select_candidates(conn, fresh_days=30, limit=None) == []
 
 
 # ── 消息构造 ───────────────────────────────────────────
@@ -93,12 +103,24 @@ def test_build_message_schema(tmp_path):
     tri = {"actionable": True, "ecosystem": "npm", "package": "noon-contracts",
            "version": "", "iocs": [], "reason": "点名 npm 包"}
     msg = pd.build_message(row, tri, "完整正文")
-    assert msg["schema_version"] == 1
+    assert msg["schema_version"] == 2
     assert msg["kind"] == "poisoning_intel"
+    assert msg["origin"] == "news"
+    assert msg["ref_id"] == row["id"]
     assert msg["article_id"] == row["id"]
     assert msg["canonical_url"] == "https://x/p"
+    assert msg["package"] == "noon-contracts"
     assert msg["full_body"] == "完整正文"
     assert msg["triage"]["package"] == "noon-contracts"
+
+
+def test_message_iocs_excludes_package_name_and_dsn_hex_false_positive():
+    dsn = "d565e3f03d0b1a7c8935d7ff94237316@o4511335034847232.ingest.de.sentry.io/123"
+    iocs = pd._message_iocs([f"Sicoob.Sdk {dsn}"], package="Sicoob.Sdk")
+    values = {item["value"] for item in iocs}
+    assert "sicoob.sdk" not in values
+    assert "d565e3f03d0b1a7c8935d7ff94237316" not in values
+    assert "o4511335034847232.ingest.de.sentry.io" in values
 
 
 # ── 端到端 run（mock LLM + producer + httpx）──────────
@@ -128,7 +150,7 @@ async def test_run_actionable_sends_and_marks(tmp_path, monkeypatch):
     import aiokafka
     monkeypatch.setattr(aiokafka, "AIOKafkaProducer", lambda **kw: FakeProducer())
 
-    stats = await pd.run(since_days=30, limit=None, dry_run=False)
+    stats = await pd.run(fresh_days=30, limit=None, dry_run=False)
     assert stats["sent"] == 1
     assert len(sent) == 1
     # 已标记 dispatched
@@ -155,11 +177,39 @@ async def test_run_not_actionable_marks_without_send(tmp_path, monkeypatch):
     import aiokafka
     monkeypatch.setattr(aiokafka, "AIOKafkaProducer", lambda **kw: FakeProducer())
 
-    stats = await pd.run(since_days=30, limit=None, dry_run=False)
+    stats = await pd.run(fresh_days=30, limit=None, dry_run=False)
     assert stats["sent"] == 0
     assert stats["skipped_not_actionable"] == 1
     assert sent == []
     # 非可处置也标记 dispatched，避免反复 triage
+    assert list(conn.execute("SELECT poisoning_dispatched FROM articles"))[0][0] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_actionable_without_package_or_ioc_marks_without_send(tmp_path, monkeypatch):
+    conn = _make_db(tmp_path); pd.migrate(conn)
+    _insert(conn, canonical_url="https://x/generic", llm_score=10)
+    monkeypatch.setattr(pd.db, "connect", lambda *a, **k: conn)
+    monkeypatch.setattr(pd, "_get_config", lambda: {
+        "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
+
+    async def fake_triage(client, cfg, row):
+        return {"actionable": True, "ecosystem": "", "package": "",
+                "version": "", "iocs": [], "reason": "泛泛分析"}
+
+    monkeypatch.setattr(pd, "triage", fake_triage)
+
+    sent = []
+    class FakeProducer:
+        async def start(self): pass
+        async def stop(self): pass
+        async def send_and_wait(self, topic, key, value): sent.append((topic, key, value))
+    import aiokafka
+    monkeypatch.setattr(aiokafka, "AIOKafkaProducer", lambda **kw: FakeProducer())
+
+    stats = await pd.run(fresh_days=30, limit=None, dry_run=False)
+    assert stats["sent"] == 0
+    assert sent == []
     assert list(conn.execute("SELECT poisoning_dispatched FROM articles"))[0][0] == 1
 
 
@@ -177,7 +227,7 @@ async def test_run_dry_run_no_side_effects(tmp_path, monkeypatch, capsys):
     async def fake_fetch(client, url): return "body"
     monkeypatch.setattr(pd, "fetch_body", fake_fetch)
 
-    stats = await pd.run(since_days=30, limit=None, dry_run=True)
+    stats = await pd.run(fresh_days=30, limit=None, dry_run=True)
     assert stats["dry_run"] is True
     assert stats["sent"] == 0
     # dry-run 不改库

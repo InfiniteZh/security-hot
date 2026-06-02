@@ -144,8 +144,17 @@ def test_murphy_items_normalize_into_vulns(tmp_path, monkeypatch):
                     {
                         "repository": "nuget",
                         "name": "Sicoob.Sdk",
-                        "affected": {"version_range": "[2.0.0,2.0.4]"},
+                        "affected": {
+                            "version_range": "[2.0.0,2.0.4]",
+                            "expression": {"fix_version": "2.0.5"},
+                            "upstream_fix_version": "2.0.6",
+                        },
                     }
+                ],
+                "ioc": [
+                    "o4511335034847232.ingest.de.sentry.io",
+                    "",
+                    "o4511335034847232.ingest.de.sentry.io",
                 ],
                 "tags": ["投毒", "隐私数据收集"],
                 "hazard_level": "高危",
@@ -190,6 +199,8 @@ def test_murphy_items_normalize_into_vulns(tmp_path, monkeypatch):
     assert malware.package == "Sicoob.Sdk"
     assert malware.ecosystem == "nuget"
     assert malware.affected_versions == ["[2.0.0,2.0.4]"]
+    assert malware.iocs == ["o4511335034847232.ingest.de.sentry.io"]
+    assert malware.fix_versions == ["2.0.5", "2.0.6"]
     assert malware.severity == "high"
     assert "MALWARE" in malware.tags
     assert malware.references[0].url == "https://www.oscs1024.com/hd/MPS-fthb-675x"

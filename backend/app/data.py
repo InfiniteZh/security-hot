@@ -523,6 +523,30 @@ def _murphy_affected_versions(item: dict, entries: list[dict]) -> list[str]:
     return []
 
 
+def _murphy_fix_versions(entries: list[dict]) -> list[str]:
+    values: list[str | None] = []
+    for entry in entries:
+        affected = entry.get("affected") or {}
+        if not isinstance(affected, dict):
+            continue
+        expression = affected.get("expression") or {}
+        if isinstance(expression, dict):
+            values.append(expression.get("fix_version"))
+        values.append(affected.get("upstream_fix_version"))
+    return _dedupe_nonempty(values)[:12]
+
+
+def _murphy_iocs(item: dict) -> list[str]:
+    raw = item.get("ioc") or item.get("iocs") or []
+    if isinstance(raw, str):
+        values = re.split(r"[,;\n]", raw)
+    elif isinstance(raw, list):
+        values = raw
+    else:
+        values = []
+    return _dedupe_nonempty(values)
+
+
 def _murphy_to_vulns() -> list[Vuln]:
     raw = _load_json("murphy.json", {"items": []})
     out: list[Vuln] = []
@@ -586,6 +610,8 @@ def _murphy_to_vulns() -> list[Vuln]:
             "last_updated_time", "lastUpdatedTime", "updated_at", "updated",
         )
         affected_versions = _murphy_affected_versions(item, affected_entries)
+        fix_versions = _murphy_fix_versions(affected_entries)
+        iocs = _murphy_iocs(item)
         out.append(Vuln(
             id=cve or ghsa or f"MURPHY-{key}",
             # MurphySec is a software-composition / dependency source → always
@@ -605,6 +631,8 @@ def _murphy_to_vulns() -> list[Vuln]:
             product=product,
             references=_murphy_references(item),
             affected_versions=affected_versions,
+            iocs=iocs,
+            fix_versions=fix_versions,
             tags=tags,
             source="murphysec",
             published=published or updated,
@@ -901,6 +929,16 @@ def all_vulns() -> list[Vuln]:
             existing.pocs = sorted(combined.values(), key=lambda x: -x.stars)[:12]
             if not existing.cvss and v.cvss:
                 existing.cvss = v.cvss
+            seen_iocs = set(existing.iocs)
+            for ioc in v.iocs:
+                if ioc and ioc not in seen_iocs:
+                    existing.iocs.append(ioc)
+                    seen_iocs.add(ioc)
+            seen_fix = set(existing.fix_versions)
+            for fix_version in v.fix_versions:
+                if fix_version and fix_version not in seen_fix:
+                    existing.fix_versions.append(fix_version)
+                    seen_fix.add(fix_version)
             # Reference merge: set-based dedupe by URL (was O(n²)).
             seen_urls = {x.url for x in existing.references if x.url}
             for r in v.references:

@@ -23,7 +23,7 @@ import subprocess
 import sys
 import threading
 import time as _time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import Literal
 
@@ -605,20 +605,24 @@ def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> 
             _refresh_in_flight = False
 
 
-def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
-    """Run a sequence of (label, script-args, ui_stage) subprocesses under the
-    shared refresh lock. Used by the in-process scheduler (backend/app/scheduler.py).
+@contextmanager
+def _pipeline_run():
+    """Own the shared refresh lock for one in-process pipeline run.
 
-    Sequential execution is deliberate: it serialises SQLite writers exactly the
-    way the staggered cron cadence does, avoiding WAL write contention between
-    fetch / embed / cluster / LLM. Taking `_refresh_lock` also means a scheduled
-    run and a manual /api/refresh never overlap — whichever starts second is
-    skipped rather than racing on the DB."""
+    Yields True if we acquired the run, False if another run is already in
+    flight (caller should no-op). On entry it resets the progress state and
+    clears the on-disk progress file; on an uncaught crash in the body it logs
+    and marks the stage `error`; it always releases the lock. The body is
+    responsible for driving `_set_stage` (including the final `done`).
+
+    Taking `_refresh_lock` means a scheduled run and a manual /api/refresh never
+    overlap — whichever starts second is skipped rather than racing on the DB."""
     global _refresh_in_flight, _refresh_started_at, _refresh_stage
     global _refresh_stage_started_at, _refresh_stage_history
     with _refresh_lock:
         if _refresh_in_flight:
             log.info("scheduler: skipped — refresh already in flight")
+            yield False
             return
         _refresh_in_flight = True
     try:
@@ -630,6 +634,28 @@ def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
             (ROOT / "backend" / "cache" / ".refresh_progress.json").unlink(missing_ok=True)
         except OSError:
             pass
+        yield True
+    except Exception:
+        log.exception("scheduler: pipeline run crashed")
+        try:
+            _set_stage("error")
+        except Exception:
+            log.exception("scheduler: failed to record error stage")
+    finally:
+        with _refresh_lock:
+            _refresh_in_flight = False
+
+
+def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
+    """Run a sequence of (label, script-args, ui_stage) subprocesses under the
+    shared refresh lock. Used by the in-process scheduler (backend/app/scheduler.py).
+
+    Sequential execution is deliberate: it serialises SQLite writers exactly the
+    way the staggered cron cadence does, avoiding WAL write contention between
+    fetch / embed / cluster / LLM."""
+    with _pipeline_run() as owned:
+        if not owned:
+            return
         for label, args, stage in steps:
             if stage and stage != _refresh_stage:
                 _set_stage(stage)
@@ -656,15 +682,6 @@ def _run_pipeline_steps(steps: list[tuple[str, list[str], str]]) -> None:
                 _record_step_status(args[0], step, False, _time.monotonic() - t0,
                                     "timed out after 3600s", None)
         _set_stage("done")
-    except Exception:
-        log.exception("scheduler: pipeline run crashed")
-        try:
-            _set_stage("error")
-        except Exception:
-            log.exception("scheduler: failed to record error stage")
-    finally:
-        with _refresh_lock:
-            _refresh_in_flight = False
 
 
 def _sched_fetch_news() -> None:
@@ -676,10 +693,59 @@ def _sched_fetch_news() -> None:
 def _sched_fetch_murphy() -> None:
     # Murphy is a time-sensitive vuln-warn feed → its own short-interval job
     # (default 5min) instead of the 4h "other" bucket. Incremental + idempotent.
-    _run_pipeline_steps([
-        ("fetch murphy", ["fetch_data.py", "--only", "murphy"], "fetching"),
-        ("vuln assess", ["llm_rank.py", "--task", "vuln_assess"], "assessing"),
-    ])
+    # Unlike the generic _run_pipeline_steps list, this job (a) aborts the rest
+    # of the pipeline if the fetch fails and (b) runs vuln_dispatch in-process,
+    # so it drives the steps explicitly rather than declaratively.
+    with _pipeline_run() as owned:
+        if not owned:
+            return
+
+        _set_stage("fetching")
+        fetch_cmd = [sys.executable, str(ROOT / "scripts" / "fetch_data.py"), "--only", "murphy"]
+        log.info("scheduler: fetch murphy -> %s", " ".join(fetch_cmd))
+        t0 = _time.monotonic()
+        proc = subprocess.run(fetch_cmd, check=False, capture_output=True, text=True, cwd=str(ROOT), timeout=3600)
+        _record_step_status("fetch_data.py", None, proc.returncode == 0, _time.monotonic() - t0, proc.stderr, proc.returncode)
+        if proc.returncode != 0:
+            log.warning("scheduler: fetch murphy exited %s: %s", proc.returncode, (proc.stderr or "")[:400])
+            _set_stage("error")
+            return
+
+        try:
+            from scripts import vuln_dispatch
+            stats = asyncio.run(vuln_dispatch.run())
+            ok = int(stats.get("errors", 0)) == 0
+            ps.upsert_step(
+                ps.step_name("vuln_dispatch.py", None),
+                ok=ok,
+                elapsed_s=0,
+                error=None if ok else _json.dumps(stats, ensure_ascii=False),
+                returncode=0 if ok else 1,
+            )
+            if ok:
+                log.info("scheduler: vuln dispatch ok: %s", stats)
+            else:
+                log.warning("scheduler: vuln dispatch errors: %s", stats)
+        except Exception:
+            log.exception("scheduler: vuln dispatch failed")
+
+        _set_stage("assessing")
+        assess_cmd = [sys.executable, str(ROOT / "scripts" / "llm_rank.py"), "--task", "vuln_assess"]
+        log.info("scheduler: vuln assess -> %s", " ".join(assess_cmd))
+        step = ps.step_name("llm_rank.py", "vuln_assess")
+        t0 = _time.monotonic()
+        try:
+            assess_proc = subprocess.run(
+                assess_cmd, check=False, capture_output=True, text=True, cwd=str(ROOT), timeout=3600,
+            )
+            _record_step_status(
+                "llm_rank.py", step, assess_proc.returncode == 0,
+                _time.monotonic() - t0, assess_proc.stderr, assess_proc.returncode,
+            )
+        except subprocess.TimeoutExpired:
+            log.warning("scheduler: vuln assess timed out after 3600s")
+            _record_step_status("llm_rank.py", step, False, _time.monotonic() - t0, "timed out after 3600s", None)
+        _set_stage("done")
 
 
 def _sched_heavy_pipeline() -> None:
