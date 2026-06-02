@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import db
+from .. import db
 
 # Even with the cross-source guard, alternating-source chains
 # A(X)→B(Y)→C(X)→D(Y) form transitive megaclusters at 0.85 because
@@ -147,7 +147,11 @@ def cluster_articles_in_db(
     """
     if now_iso is None:
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=window_hours)).isoformat().replace("+00:00", "Z")
+    # Derive the window cutoff from now_iso (the logical clock for this run), not
+    # the wall clock — otherwise a run/replay/test anchored to a past now_iso
+    # would still slice articles against the real current time.
+    _now_dt = datetime.fromisoformat(now_iso.replace("Z", "+00:00"))
+    cutoff = (_now_dt - timedelta(hours=window_hours)).isoformat().replace("+00:00", "Z")
     conn = db.connect(db_path)
     db.init_schema(conn)
     try:

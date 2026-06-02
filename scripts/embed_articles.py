@@ -7,8 +7,8 @@ _ROOT = _Path(__file__).resolve().parent.parent
 if str(_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ROOT))
 
-from backend.app.ingest.embed import *  # noqa: F401,F403,E402
-from backend.app.ingest import embed as _impl  # noqa: E402
+from backend.app.ingest.enrich.embed import *  # noqa: F401,F403,E402
+from backend.app.ingest.enrich import embed as _impl  # noqa: E402
 
 _sys.modules[__name__] = _impl
 

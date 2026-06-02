@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 import pytest
@@ -46,10 +47,15 @@ def test_union_find_path_compression():
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _insert_article_with_embedding(conn, url, title, lang, vec: np.ndarray):
+def _insert_article_with_embedding(conn, url, title, lang, vec: np.ndarray, source_slug=None):
+    # Derive a distinct source per URL by default: clustering's cross-source
+    # guard (cluster.py) only unions articles from DIFFERENT source_slugs, since
+    # a "mirror" means the same story reported by multiple outlets. Hardcoding a
+    # single source would (correctly) suppress all clustering.
+    slug = source_slug or urlparse(url).netloc or url
     rid = db.upsert_article(conn, {
         "canonical_url": url, "title": title, "summary": "",
-        "source_slug": "x", "source_title": "X", "lang": lang,
+        "source_slug": slug, "source_title": slug.upper(), "lang": lang,
         "published": None, "fetched_at": "2026-05-25T11:00:00Z",
         "first_seen_date": "2026-05-25",
     })

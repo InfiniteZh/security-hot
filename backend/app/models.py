@@ -26,7 +26,6 @@ class Article(BaseModel):
     llm_reason: str | None = None
     llm_category: NewsCategory | None = None
     llm_summary_zh: str | None = None
-    tags: list[str] = Field(default_factory=list)
     is_relevant: bool | None = None
     mirror_count: int = 0
     mirror_source_titles: list[str] = Field(default_factory=list)
@@ -78,6 +77,20 @@ class Vuln(BaseModel):
     heat: int = 0
     ai_severity: Severity | None = None
     ai_summary: str | None = None
+    sources: list[str] = Field(default_factory=list)
+
+    def model_post_init(self, __context) -> None:
+        # Normalize `sources` to a deduped list that always leads with `source`,
+        # so a freshly-built Vuln already carries its origin before any cross-CVE
+        # merge in all_vulns() accumulates additional sources.
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for src in [self.source, *self.sources]:
+            src = str(src or "").strip()
+            if src and src not in seen:
+                normalized.append(src)
+                seen.add(src)
+        self.sources = normalized
 
 
 class HeatEntry(BaseModel):
@@ -107,7 +120,6 @@ class SourceStatus(BaseModel):
     title: str
     url: str
     lang: Lang | Literal["mixed"]
-    category: str | None = None
     ok: bool
     count: int = 0
     error: str | None = None

@@ -7,8 +7,8 @@ _ROOT = _Path(__file__).resolve().parent.parent
 if str(_ROOT) not in _sys.path:
     _sys.path.insert(0, str(_ROOT))
 
-from backend.app.ingest.cluster import *  # noqa: F401,F403,E402
-from backend.app.ingest import cluster as _impl  # noqa: E402
+from backend.app.ingest.enrich.cluster import *  # noqa: F401,F403,E402
+from backend.app.ingest.enrich import cluster as _impl  # noqa: E402
 
 _sys.modules[__name__] = _impl
 

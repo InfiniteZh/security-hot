@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from backend.app import pipeline_status as ps
+from backend.app.runtime import pipeline_status as ps
 
 
 @pytest.fixture

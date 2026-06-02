@@ -207,6 +207,7 @@ def test_murphy_items_normalize_into_vulns(tmp_path, monkeypatch):
 
     cve = by_id["CVE-2026-1111"]
     assert cve.source == "murphysec"
+    assert cve.sources == ["murphysec"]
     assert cve.package == "axios"
     assert cve.ecosystem == "npm"
     assert cve.affected_versions == ["<0.30.0"]
@@ -214,3 +215,45 @@ def test_murphy_items_normalize_into_vulns(tmp_path, monkeypatch):
     assert cve.cve_id == "CVE-2026-1111"
     assert "MALWARE" not in cve.tags
     assert cve.references[0].url == "https://example.com/detail/CVE-2026-1111"
+
+
+def test_all_vulns_preserves_merged_sources(tmp_path, monkeypatch):
+    import backend.app.data as data_mod
+
+    monkeypatch.setattr(data_mod, "CACHE", tmp_path)
+    monkeypatch.setattr(data_mod, "_NEWS_DB", tmp_path / "missing-news.db")
+    data_mod._state.clear()
+    (tmp_path / "kev.json").write_text(json.dumps({
+        "items": [{
+            "cveID": "CVE-2026-1111",
+            "vendorProject": "Example",
+            "product": "Widget",
+            "vulnerabilityName": "Example Widget RCE",
+            "shortDescription": "Known exploited vulnerability.",
+            "dateAdded": "2026-05-27",
+        }]
+    }), encoding="utf-8")
+    (tmp_path / "murphy.json").write_text(json.dumps({
+        "items": [{
+            "mps_id": "MPS-axios-0001",
+            "cve_id": "CVE-2026-1111",
+            "title": "Axios 原型污染漏洞",
+            "description": "Axios 处理对象属性时存在原型污染问题。",
+            "severity": "中危",
+            "repository": "npm",
+            "affected_version": [{
+                "repository": "npm",
+                "name": "axios",
+                "affected": {"version_range": "<0.30.0"},
+            }],
+            "last_modify_time": "2026-05-27T10:05:00+08:00",
+        }]
+    }), encoding="utf-8")
+
+    vulns = data_mod.all_vulns()
+    merged = next(v for v in vulns if v.id == "CVE-2026-1111")
+
+    assert merged.source == "cisa-kev"
+    assert merged.kind == "itw"
+    assert merged.is_supply_chain is True
+    assert merged.sources == ["cisa-kev", "murphysec"]

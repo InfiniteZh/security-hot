@@ -2,7 +2,13 @@
 import json
 import sqlite3
 import pytest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# The bridge only considers articles published within the last 7 days
+# (`published >= date('now','-7 days')`). Anchor the seed data to "yesterday"
+# so the fixture stays inside that rolling window no matter when the test runs.
+_RECENT_DAY = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
 
 
 def _seed_db(db_path: Path) -> None:
@@ -33,19 +39,19 @@ def _seed_db(db_path: Path) -> None:
     articles = [
         ("https://vuldb.com/1", "CVE-2026-1111 | Apache HTTP Server path traversal",
          "A path traversal vulnerability...", "vuldb_com", "VulDB", "en",
-         "2026-05-25T10:00:00Z", "2026-05-25T10:00:00Z"),
+         f"{_RECENT_DAY}T10:00:00Z", f"{_RECENT_DAY}T10:00:00Z"),
         ("https://vulners.com/1", "CVE-2026-1111",
          "Apache HTTP Server vuln", "vulners_com", "Vulners", "en",
-         "2026-05-25T09:00:00Z", "2026-05-25T09:00:00Z"),
+         f"{_RECENT_DAY}T09:00:00Z", f"{_RECENT_DAY}T09:00:00Z"),
         ("https://vulners.com/2", "CVE-2026-2222",
          "Chrome RCE", "vulners_com", "Vulners", "en",
-         "2026-05-25T11:00:00Z", "2026-05-25T11:00:00Z"),
+         f"{_RECENT_DAY}T11:00:00Z", f"{_RECENT_DAY}T11:00:00Z"),
         ("https://sploitus.com/1", "Exploit for CVE-2026-2222",
          "PoC exploit for Chrome", "sploitus_com", "Sploitus", "en",
-         "2026-05-25T11:30:00Z", "2026-05-25T11:30:00Z"),
+         f"{_RECENT_DAY}T11:30:00Z", f"{_RECENT_DAY}T11:30:00Z"),
         ("https://bleeping.com/1", "CVE-2026-9999 exploited in wild",
          "Article about CVE", "bleeping_com", "BleepingComputer", "en",
-         "2026-05-25T12:00:00Z", "2026-05-25T12:00:00Z"),
+         f"{_RECENT_DAY}T12:00:00Z", f"{_RECENT_DAY}T12:00:00Z"),
     ]
     for url, title, summary, slug, stitle, lang, pub, fetched in articles:
         conn.execute(

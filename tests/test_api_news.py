@@ -38,8 +38,14 @@ def test_regenerate_brief_accepts_valid_token(client):
     assert "date" in body
 
 
-def test_hidden_endpoint_returns_off_topic_articles(client, tmp_db):
-    """Insert one off-topic + one relevant; /api/news/hidden returns only the off-topic."""
+def test_hidden_endpoint_returns_off_topic_and_uncategorized(client, tmp_db):
+    """/api/news/hidden surfaces two buckets for human audit of the LLM filter:
+      1. off-topic (is_relevant=0), date-filtered
+      2. relevant-but-uncategorized (llm_category IS NULL), NOT date-filtered —
+         these never land on any day's news view, so the audit view is their
+         only review home.
+    A relevant article that DID get a category is not hidden.
+    """
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
     import db as scripts_db
     c = scripts_db.connect(tmp_db)
@@ -55,16 +61,27 @@ def test_hidden_endpoint_returns_off_topic_articles(client, tmp_db):
         "published": None, "fetched_at": "2026-05-25T11:00:00Z",
         "first_seen_date": "2026-05-25",
     })
-    c.execute("UPDATE articles SET is_relevant=1 WHERE id=?", [on_id])
+    unc_id = scripts_db.upsert_article(c, {
+        "canonical_url": "https://x.com/pending", "title": "Pending classification", "summary": "",
+        "source_slug": "x", "source_title": "X", "lang": "en",
+        "published": None, "fetched_at": "2026-05-25T11:00:00Z",
+        "first_seen_date": "2026-05-25",
+    })
+    # relevant AND categorized → must NOT appear in hidden
+    c.execute("UPDATE articles SET is_relevant=1, llm_category='vuln' WHERE id=?", [on_id])
+    # off-topic → hidden (bucket 1)
     c.execute("UPDATE articles SET is_relevant=0, llm_reason='off topic' WHERE id=?", [off_id])
+    # relevant but uncategorized → hidden (bucket 2)
+    c.execute("UPDATE articles SET is_relevant=1, llm_category=NULL WHERE id=?", [unc_id])
     c.commit()
     c.close()
 
     r = client.get("/api/news/hidden?date=2026-05-25")
     assert r.status_code == 200
     body = r.json()
-    assert len(body) == 1
-    assert body[0]["title"] == "Cooking recipes"
+    titles = {a["title"] for a in body}
+    assert titles == {"Cooking recipes", "Pending classification"}
+    assert "Real CVE" not in titles
 
 
 def test_mirrors_endpoint_returns_cluster_members(client, tmp_db):

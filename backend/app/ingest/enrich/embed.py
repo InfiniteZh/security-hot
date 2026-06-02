@@ -15,7 +15,7 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from . import db
+from .. import db
 
 MODEL_NAME = "intfloat/multilingual-e5-small"
 EMBEDDING_DIM = 384  # for shape sanity check
