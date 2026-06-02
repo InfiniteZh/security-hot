@@ -1280,14 +1280,14 @@
         </div>
 
         <!-- SECONDARY CONTROLS: sort + lang + hidden — quieter visual weight, one row -->
-        <div class="controls-row mb-5">
+        <div id="controls-row" class="controls-row mb-5">
           <span class="label" data-i18n="controls.sort">排序</span>
           <div class="seg">
             <button data-sort="heat" class="sort-btn" data-on="true"><span data-i18n="sort.heat">AI 排序</span></button>
             <button data-sort="time" class="sort-btn" data-on="false"><span data-i18n="sort.time">时间</span></button>
           </div>
-          <span style="color:var(--paper-veil);">·</span>
-          <span class="label" data-i18n="controls.lang">语言</span>
+          <span id="controls-lang-sep" style="color:var(--paper-veil);">·</span>
+          <span id="controls-lang-label" class="label" data-i18n="controls.lang">语言</span>
           <div id="news-lang-filter" class="seg">
             <button data-news-lang="all" class="newslang-btn" data-on="true"><span data-i18n="lang.all">全</span></button>
             <button data-news-lang="zh" class="newslang-btn" data-on="false">中</button>
@@ -2702,6 +2702,11 @@ function setActiveTab(tab) {
   document.getElementById("news-catfilter").style.display    = tab === "news" ? "flex" : "none";
   document.getElementById("news-lang-filter").style.display  = tab === "news" ? "flex" : "none";
   document.getElementById("hidden-toggle").style.display     = tab === "news" ? "inline-flex" : "none";
+  // Secondary controls (sort + lang): sort applies to news + vuln; lang label/sep are news-only.
+  // Papers + dispatch render in server order, so hide the whole row there.
+  document.getElementById("controls-row").style.display          = (tab === "news" || tab === "vuln") ? "flex" : "none";
+  document.getElementById("controls-lang-sep").style.display     = tab === "news" ? "inline" : "none";
+  document.getElementById("controls-lang-label").style.display   = tab === "news" ? "inline" : "none";
   // Top-right refresh button: tooltip + aria reflect what it'll actually refresh.
   const rb = document.getElementById("refresh-all");
   if (rb) {
