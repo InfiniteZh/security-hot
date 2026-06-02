@@ -88,6 +88,7 @@ async def _lifespan(app: FastAPI):
         fetch_murphy=_sched_fetch_murphy,
         daily_brief=_sched_daily_brief,
         fetch_other=_sched_fetch_other,
+        enrich=_sched_enrich,
     )
     yield
     sched = getattr(app.state, "scheduler", None)
@@ -614,9 +615,6 @@ async def _run_news_pipeline(*, include_daily_brief: bool = False) -> dict:
     from .ingest.pipeline import generate_daily_brief, on_news_fetched
 
     results = await on_news_fetched(stage_cb=_set_stage)
-    for name in ("embed", "cluster"):
-        if name in results:
-            _record_pipeline_result(name, results[name])
     if "classify" in results:
         _record_pipeline_result("classify", results["classify"])
     if "summarize" in results:
@@ -639,6 +637,17 @@ async def _run_news_pipeline(*, include_daily_brief: bool = False) -> dict:
                 "elapsed_s": round(_time.monotonic() - t0, 2),
             }
         _record_pipeline_result("daily_brief", results["daily_brief"])
+    return results
+
+
+async def _run_enrich_pipeline() -> dict:
+    """Embedding + mirror clustering on its own cadence (default 2h)."""
+    from .ingest.pipeline import on_news_enrich
+
+    results = await on_news_enrich(stage_cb=_set_stage)
+    for name in ("embed", "cluster"):
+        if name in results:
+            _record_pipeline_result(name, results[name])
     return results
 
 
@@ -777,6 +786,20 @@ async def _sched_fetch_murphy_async() -> None:
 
 def _sched_fetch_murphy() -> None:
     _run_coro_blocking(_sched_fetch_murphy_async())
+
+
+async def _sched_enrich_async() -> None:
+    # Embedding + mirror clustering on its own long cadence (default 2h),
+    # decoupled from the 15-min news fetch and from manual /api/refresh.
+    async with _pipeline_run() as owned:
+        if not owned:
+            return
+        await _run_enrich_pipeline()
+        _set_stage("done")
+
+
+def _sched_enrich() -> None:
+    _run_coro_blocking(_sched_enrich_async())
 
 
 def _sched_daily_brief() -> None:
