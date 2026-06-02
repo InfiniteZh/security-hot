@@ -586,12 +586,17 @@ def _record_step_status(script: str, step: str | None, ok: bool, elapsed: float,
 
 
 def _record_pipeline_result(step: str, result: dict) -> None:
-    if step not in {"embed", "cluster", "classify", "summarize", "daily_brief"}:
+    if step not in {"embed", "cluster", "classify", "summarize", "daily_brief",
+                    "poisoning_dispatch", "vuln_dispatch"}:
         return
     ok = bool(result.get("ok"))
     error = result.get("error")
     if not ok and error is None and isinstance(result.get("result"), dict):
         error = _json.dumps(result["result"], ensure_ascii=False)
+    # Dispatch steps carry a "sent" count in their stats → surface it in the UI.
+    count = None
+    if step in {"poisoning_dispatch", "vuln_dispatch"} and isinstance(result.get("result"), dict):
+        count = result["result"].get("sent")
     try:
         ps.upsert_step(
             step,
@@ -599,6 +604,7 @@ def _record_pipeline_result(step: str, result: dict) -> None:
             elapsed_s=float(result.get("elapsed_s") or 0),
             error=error,
             returncode=0 if ok else 1,
+            count=count,
         )
     except Exception:
         log.exception("failed to record pipeline result for %s", step)
@@ -615,6 +621,8 @@ async def _run_news_pipeline(*, include_daily_brief: bool = False) -> dict:
         _record_pipeline_result("classify", results["classify"])
     if "summarize" in results:
         _record_pipeline_result("summarize", results["summarize"])
+    if "poisoning_dispatch" in results:
+        _record_pipeline_result("poisoning_dispatch", results["poisoning_dispatch"])
     if include_daily_brief:
         t0 = _time.monotonic()
         try:
@@ -637,7 +645,10 @@ async def _run_news_pipeline(*, include_daily_brief: bool = False) -> dict:
 async def _run_vuln_pipeline() -> dict:
     from .ingest.pipeline import on_vuln_fetched
 
-    return await on_vuln_fetched(stage_cb=_set_stage)
+    results = await on_vuln_fetched(stage_cb=_set_stage)
+    if "vuln_dispatch" in results:
+        _record_pipeline_result("vuln_dispatch", results["vuln_dispatch"])
+    return results
 
 
 def _fetcher_names_from_args(args: list[str]) -> list[str] | None:

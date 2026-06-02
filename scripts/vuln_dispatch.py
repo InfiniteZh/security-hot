@@ -26,6 +26,11 @@ from dispatch_common import (  # noqa: E402
     send,
 )
 
+try:  # best-effort：CLI 独立运行时缺失也不致命
+    import refresh_progress as _prog  # noqa: E402
+except Exception:  # pragma: no cover
+    _prog = None
+
 SCHEMA_VERSION = 2
 
 
@@ -233,8 +238,14 @@ async def run(
             stats["errors"] += 1
             return stats
 
+    _total = len(candidates)
+    if _prog is not None:
+        _prog.start("dispatching")
+        _prog.report("dispatching", _total, 0, label="vuln_dispatch")
     try:
-        for vuln in candidates:
+        for _i, vuln in enumerate(candidates, 1):
+            if _prog is not None:
+                _prog.report("dispatching", _total, _i, label="vuln_dispatch")
             related_news = find_related_news(vuln)
             msg = build_message(vuln, related_news)
             if dry_run:

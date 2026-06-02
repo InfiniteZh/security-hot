@@ -48,6 +48,9 @@ STEP_META: dict[str, tuple[str, str]] = {
     "cluster":     ("enrich", "heavy_pipeline"),
     "classify":    ("llm", "heavy_pipeline"),
     "summarize":   ("llm", "heavy_pipeline"),
+    # ── Kafka 投送（供应链投毒情报 → security_copilot disposal）──────
+    "poisoning_dispatch": ("dispatch", "heavy_pipeline"),
+    "vuln_dispatch":      ("dispatch", "fetch_murphy"),
     "daily_brief": ("llm", "daily_brief"),
 }
 
@@ -179,6 +182,7 @@ def upsert_step(
     elapsed_s: float = 0,
     error: str | None = None,
     returncode: int | None = None,
+    count: int | None = None,
 ) -> None:
     """Merge the outcome of one enrichment / LLM step into the durable store."""
     kind, job = STEP_META.get(name, ("llm", None))
@@ -189,7 +193,7 @@ def upsert_step(
         "job": job,
         "ok": ok,
         "status": "ok" if ok else "error",
-        "count": store.get(name, {}).get("count", 0),
+        "count": count if count is not None else store.get(name, {}).get("count", 0),
         "elapsed_s": round(elapsed_s, 2),
         "last_run": now_iso(),
         "error": _error_tail(error) if not ok else None,

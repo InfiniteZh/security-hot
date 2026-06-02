@@ -1925,8 +1925,12 @@ function renderDispatch() {
     return acc;
   }, {});
   const ecoCounts = items.reduce((acc, x) => {
-    const k = (x.ecosystem || "unknown").toLowerCase();
-    acc[k] = (acc[k] || 0) + 1;
+    // ecosystem 可能是多生态逗号串（如 "maven,debian:11,ubuntu:24.04"），按逗号拆开分别计数
+    (x.ecosystem || "unknown").toLowerCase().split(",").forEach((part) => {
+      const k = part.trim();
+      if (!k) return;
+      acc[k] = (acc[k] || 0) + 1;
+    });
     return acc;
   }, {});
   const ecoLine = Object.entries(ecoCounts)
@@ -1947,7 +1951,7 @@ function renderDispatch() {
       </div>
       <div style="background:var(--surface); border:1px solid var(--hairline); border-radius:8px; padding:14px 16px;">
         <div class="font-mono text-[10px] tracking-[0.18em] uppercase text-paper-faint">${t("dispatch.ecosystems")}</div>
-        <div class="font-mono text-[12px] text-paper-dim mt-2">${ecoLine || "—"}</div>
+        <div class="font-mono text-[12px] text-paper-dim mt-2" style="overflow-wrap:anywhere; word-break:break-word;">${ecoLine || "—"}</div>
       </div>
     </div>`;
 
@@ -2311,13 +2315,19 @@ function updateProgressBar(stage, healthData) {
   // pipeline from the live stage so the right steps show.
   if (stage === 'assessing') pipeline = 'vuln';
   else if (stage === 'classifying' || stage === 'summarizing') pipeline = 'news';
+  // 'dispatching' is shared by both pipelines — keep the scope we already know;
+  // only fall back to 'news' when the scope is unknown (observed refresh).
+  else if (stage === 'dispatching' && pipeline !== 'vuln') pipeline = 'news';
   let steps;
   if (pipeline === 'vuln') {
-    steps = [['fetching', 'refresh.progress.fetching'], ['assessing', 'refresh.progress.assessing']];
+    steps = [['fetching', 'refresh.progress.fetching'],
+             ['assessing', 'refresh.progress.assessing'],
+             ['dispatching', 'refresh.progress.dispatching']];
   } else if (pipeline === 'news' || pipeline === 'all') {
     steps = [['fetching', 'refresh.progress.fetching'],
              ['classifying', 'refresh.progress.classifying'],
-             ['summarizing', 'refresh.progress.summarizing']];
+             ['summarizing', 'refresh.progress.summarizing'],
+             ['dispatching', 'refresh.progress.dispatching']];
   } else {
     steps = [['fetching', 'refresh.progress.fetching']];
   }
@@ -2495,6 +2505,81 @@ async function triggerRefresh(only, llm) {
   await pollRefreshDone(only, startedAt);
 }
 
+// Single-source pull (pipeline modal ⟳). Self-contained: spins only that source's
+// button and polls ITS OWN step status — never the global staged progress bar.
+// This keeps it decoupled from the scheduler / active-tab refresh so a concurrent
+// run (e.g. scheduler fetching KEV) can't be mis-attributed as this source failing.
+function _plStepLastRun(name) {
+  const s = (_plData && _plData.steps || []).find(x => x.name === name);
+  return s ? (s.last_run || "") : "";
+}
+
+async function triggerSourceRefresh(only) {
+  if (!only) return;
+  let token = getRefreshToken();
+  if (!token) {
+    token = window.prompt(t("refresh.prompt"));
+    if (!token) return;
+    setRefreshToken(token.trim());
+    token = token.trim();
+  }
+  if (refreshState.inFlight.has(only)) {
+    showRefreshToast(t("refresh.already_running"), "warn");
+    return;
+  }
+  refreshState.inFlight.add(only);
+  updateRefreshButtonStates();
+  const beforeRun = _plStepLastRun(only);   // detect a fresh completion by last_run advancing
+
+  const done = (cls, msg, dur) => {
+    refreshState.inFlight.delete(only);
+    updateRefreshButtonStates();
+    showRefreshToast(msg, cls, dur);
+  };
+
+  let res;
+  try {
+    res = await fetch(`/api/refresh?only=${encodeURIComponent(only)}`, {
+      method: "POST", headers: { "X-Refresh-Token": token },
+    });
+  } catch (e) {
+    done("error", `${t("refresh.failed")} · ${only}: ${e.message}`); return;
+  }
+  if (res.status === 503) { done("error", t("refresh.disabled"), 6000); return; }
+  if (res.status === 401) { clearRefreshToken(); done("error", t("refresh.unauthorized")); return; }
+  if (res.status === 409) {
+    // Another refresh (often the scheduler) holds the lock — this source will still
+    // update via the modal's own 5s poll; don't claim failure.
+    done("warn", `${t("refresh.already_running")} · ${only}`); return;
+  }
+  if (!res.ok && res.status !== 202) {
+    done("error", `${t("refresh.failed")} · ${only}: HTTP ${res.status}`); return;
+  }
+
+  // 202 queued — poll this source's own step until its last_run advances.
+  showRefreshToast(`${t("refresh.starting")} · ${only}`, "ok", 2000);
+  for (let i = 0; i < 30; i++) {
+    await sleep(1000);
+    let d;
+    try { d = await fetch("/api/pipeline").then(r => r.json()); } catch (_) { continue; }
+    _plData = d;
+    updatePipelineDot(d);
+    const modal = document.getElementById("pipeline-modal");
+    if (modal && !modal.hidden) renderPipeline(d);   // re-render keeps this btn spinning (still in inFlight)
+    const step = (d.steps || []).find(s => s.name === only);
+    if (step && step.last_run && step.last_run !== beforeRun) {
+      if (step.status === "error") {
+        done("error", `${t("refresh.stage.error")} · ${only}`, 6000);
+      } else {
+        done("ok", `${t("refresh.done")} · ${only}`);
+      }
+      await fetchAll();
+      return;
+    }
+  }
+  done("warn", `${t("refresh.timeout")} · ${only}`, 5000);
+}
+
 // Vuln tab fetchers (everything except `news` itself; `news` feeds the news
 // tab and also CVE-bridge, but refreshing it here would duplicate news-tab work).
 const VULN_FETCHERS = "kev,ghsa,pocs,itw,heat,epss,osv,nuclei,hn,masto,murphy";
@@ -2514,7 +2599,7 @@ document.addEventListener("click", (e) => {
     return;
   }
   const only = btn.getAttribute("data-refresh-only") || "";
-  triggerRefresh(only);                         // per-source pipeline button: fetch only
+  triggerSourceRefresh(only);                   // per-source modal ⟳: self-contained, polls its own step
 });
 
 const CAT_LABELS = {

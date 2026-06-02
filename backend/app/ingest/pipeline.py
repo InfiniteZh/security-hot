@@ -788,6 +788,8 @@ async def on_news_fetched(stage_cb=None) -> dict:
 
     t0 = time.monotonic()
     try:
+        if stage_cb:
+            stage_cb("dispatching")
         stats = await poisoning_dispatch.run(fresh_days=3, limit=None, dry_run=False)
         results["poisoning_dispatch"] = {
             "ok": int(stats.get("errors", 0)) == 0,
@@ -825,6 +827,8 @@ async def on_vuln_fetched(stage_cb=None) -> dict:
 
     t0 = time.monotonic()
     try:
+        if stage_cb:
+            stage_cb("dispatching")
         stats = await vuln_dispatch.run()
         results["vuln_dispatch"] = {
             "ok": int(stats.get("errors", 0)) == 0,
