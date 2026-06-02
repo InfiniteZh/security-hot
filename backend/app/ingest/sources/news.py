@@ -149,7 +149,7 @@ def dump_ndjson_archive(*, db_path=None, date: str) -> Path:
 
 async def fetch_news_to_sqlite(
     *,
-    concurrency: int = 8,
+    concurrency: int = 24,
     now_iso: str | None = None,
     db_path=None,
 ) -> dict:

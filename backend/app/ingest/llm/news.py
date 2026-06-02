@@ -79,6 +79,9 @@ async def classify_news(
         batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         _classify_done = 0
+        classified = 0
+        failed_batches = 0
+        partial_batches = 0
 
         system_prompt = _CLASSIFY_SYSTEM_PROMPT
         sem = asyncio.Semaphore(cfg["concurrency"])
@@ -86,24 +89,30 @@ async def classify_news(
         _prog.report("classifying", len(rows), 0, label="news_classify")
 
         async def process(batch, batch_num, client):
-            nonlocal _classify_done
+            nonlocal _classify_done, classified, failed_batches, partial_batches
             user_msg = _build_classify_user_msg(batch)
             async with sem:
                 try:
                     result = await _llm_call(
                         client, system_prompt, user_msg,
                         cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                        max_concurrency=cfg["concurrency"],
                     )
                 except Exception as exc:
                     if verbose:
                         print(f"[phase1] batch {batch_num} failed: {exc}", file=sys.stderr)
+                    failed_batches += 1
                     _classify_done += len(batch)
                     _prog.report("classifying", len(rows), _classify_done, label="news_classify")
                     return
                 items = result.get("items", [])
+                batch_ids = {r["id"] for r in batch}
+                returned_ids = {item.get("id") for item in items if item.get("id") in batch_ids}
+                if len(returned_ids) < len(batch):
+                    partial_batches += 1
                 for item in items:
                     rowid = item.get("id")
-                    if not rowid:
+                    if rowid not in batch_ids:
                         continue
                     cat = item.get("category")
                     if cat not in {"incident", "vuln", "supply-chain", "research", "industry"}:
@@ -120,6 +129,7 @@ async def classify_news(
                         1 if item.get("is_relevant") else 0,
                         now_iso, rowid,
                     ])
+                    classified += 1
                 conn.commit()
                 _classify_done += len(batch)
                 _prog.report("classifying", len(rows), _classify_done, label="news_classify")
@@ -129,12 +139,18 @@ async def classify_news(
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
             await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
 
-        return {"classified": len(rows), "batches": len(batches)}
+        return {
+            "requested": len(rows),
+            "classified": classified,
+            "batches": len(batches),
+            "errors": failed_batches,
+            "partial_batches": partial_batches,
+        }
     finally:
         conn.close()
 
 
-# ── Phase 2: Targeted summarization for high-score English articles ──
+# ── Phase 2: Targeted summarization for high-score articles ──
 
 async def summarize_news(
     min_score: int = 5,
@@ -174,6 +190,9 @@ async def summarize_news(
         batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         _summ_done = 0
+        summarized = 0
+        failed_batches = 0
+        partial_batches = 0
 
         system_prompt = """你是安全资讯摘要助手。
 为每篇安全文章生成 3-5 句中文摘要（200-300 字），内容应覆盖：
@@ -190,7 +209,7 @@ async def summarize_news(
         _prog.report("summarizing", len(rows), 0, label="news_summarize")
 
         async def process(batch, batch_num, client):
-            nonlocal _summ_done
+            nonlocal _summ_done, summarized, failed_batches, partial_batches
             user_msg = "\n---\n".join(
                 f"id={r['id']}\ntitle: {r['title']}\nsummary: {(r['summary'] or '')[:500]}"
                 for r in batch
@@ -200,28 +219,47 @@ async def summarize_news(
                     result = await _llm_call(
                         client, system_prompt, user_msg,
                         cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                        max_concurrency=cfg["concurrency"],
                     )
                 except Exception as exc:
                     if verbose:
                         print(f"[phase2] batch {batch_num} failed: {exc}", file=sys.stderr)
+                    failed_batches += 1
                     _summ_done += len(batch)
                     _prog.report("summarizing", len(rows), _summ_done, label="news_summarize")
                     return
-                for item in result.get("items", []):
+                items = result.get("items", [])
+                batch_ids = {r["id"] for r in batch}
+                returned_ids = {item.get("id") for item in items if item.get("id") in batch_ids}
+                if len(returned_ids) < len(batch):
+                    partial_batches += 1
+                for item in items:
+                    if item.get("id") not in batch_ids:
+                        continue
+                    summary = (item.get("summary") or "")[:800]
+                    if not summary:
+                        continue
                     conn.execute(
                         "UPDATE articles SET llm_summary_zh = ?, llm_summarized_at = ? WHERE id = ?",
-                        [(item.get("summary") or "")[:800], now_iso, item.get("id")],
+                        [summary, now_iso, item.get("id")],
                     )
+                    summarized += 1
                 conn.commit()
                 _summ_done += len(batch)
                 _prog.report("summarizing", len(rows), _summ_done, label="news_summarize")
                 if verbose:
-                    print(f"[phase2] batch {batch_num}/{len(batches)}: +{len(result.get('items', []))}",
+                    print(f"[phase2] batch {batch_num}/{len(batches)}: +{len(items)}",
                           file=sys.stderr)
 
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
             await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
 
-        return {"summarized": len(rows), "batches": len(batches)}
+        return {
+            "requested": len(rows),
+            "summarized": summarized,
+            "batches": len(batches),
+            "errors": failed_batches,
+            "partial_batches": partial_batches,
+        }
     finally:
         conn.close()

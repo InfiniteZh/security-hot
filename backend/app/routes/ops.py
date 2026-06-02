@@ -26,7 +26,7 @@ from ..models import Manifest, SourceStatus, TodaySummary
 
 log = logging.getLogger("security-hot")
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 
 router = APIRouter()
 

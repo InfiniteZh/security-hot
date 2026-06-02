@@ -93,7 +93,11 @@ async def assess_vulns(days: int = 7, limit: int | None = None, verbose: bool = 
         parsed = None
         for attempt in range(3):
             try:
-                parsed = await _llm_call(client, VULN_SYSTEM_PROMPT, user_msg, cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"])
+                parsed = await _llm_call(
+                    client, VULN_SYSTEM_PROMPT, user_msg,
+                    cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                    max_concurrency=cfg["concurrency"],
+                )
                 break
             except Exception as exc:
                 if verbose:

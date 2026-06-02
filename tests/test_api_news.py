@@ -1,7 +1,9 @@
 """API endpoint tests using FastAPI TestClient."""
 from __future__ import annotations
 
+import json
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -36,6 +38,54 @@ def test_regenerate_brief_accepts_valid_token(client):
     body = r.json()
     assert body["status"] == "accepted"
     assert "date" in body
+
+
+def test_news_heat_endpoint_returns_empty_board(client):
+    r = client.get("/api/heat?kind=news")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+def test_ops_root_points_to_project_root():
+    import backend.app.routes.ops as ops_mod
+
+    assert ops_mod.ROOT == Path(__file__).resolve().parents[1]
+
+
+def test_healthz_exposes_refresh_progress(client, tmp_path, monkeypatch):
+    import backend.app.routes.ops as ops_mod
+    from backend.app.runtime import refresh_state
+
+    progress_dir = tmp_path / "backend" / "cache"
+    progress_dir.mkdir(parents=True)
+    (progress_dir / ".refresh_progress.json").write_text(json.dumps({
+        "stage": "fetching",
+        "label": "news_rss",
+        "total": 713,
+        "done": 380,
+        "rate": 3.33,
+        "eta_s": 99.9,
+        "elapsed_s": 114.0,
+        "ts": time.time(),
+    }), encoding="utf-8")
+    monkeypatch.setattr(ops_mod, "ROOT", tmp_path)
+    monkeypatch.setattr(refresh_state, "_refresh_in_flight", True)
+    monkeypatch.setattr(refresh_state, "_refresh_stage", "fetching")
+    monkeypatch.setattr(refresh_state, "_refresh_started_at", time.monotonic())
+
+    r = client.get("/api/healthz")
+
+    assert r.status_code == 200
+    assert r.json()["refresh_progress"] == {
+        "stage": "fetching",
+        "label": "news_rss",
+        "total": 713,
+        "done": 380,
+        "rate": 3.33,
+        "eta_s": 99.9,
+        "elapsed_s": 114.0,
+        "ts": r.json()["refresh_progress"]["ts"],
+    }
 
 
 def test_hidden_endpoint_returns_off_topic_and_uncategorized(client, tmp_db):

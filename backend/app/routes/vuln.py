@@ -68,6 +68,6 @@ def api_heat(
 ) -> list[HeatEntry]:
     target = _validate_date(date)
     if kind == "news":
-        from .data import news_heat_board
+        from ..data import news_heat_board
         return news_heat_board(limit, date=target)
     return heat_board(limit, date=target)

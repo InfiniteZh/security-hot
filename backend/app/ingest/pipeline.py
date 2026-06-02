@@ -23,7 +23,7 @@ Env config:
   LLM_API_KEY       required (unset → no-op)
   LLM_BASE_URL      default https://api.minimaxi.com/v1
   LLM_MODEL         default MiniMax-M2.7
-  LLM_CONCURRENCY   default 4
+  LLM_CONCURRENCY   default 8
   LLM_TIMEOUT       default 90
   LLM_MAX_BATCHES   default 200
 
@@ -128,7 +128,11 @@ def main() -> int:
     p.add_argument("--quiet", action="store_true")
     args = p.parse_args()
     results = asyncio.run(_run_all(args))
-    has_errors = any(r.get("errors") for r in results.values() if isinstance(r, dict))
+    has_errors = any(
+        r.get("error") or r.get("errors") or r.get("partial_batches")
+        for r in results.values()
+        if isinstance(r, dict)
+    )
     return 1 if has_errors else 0
 
 

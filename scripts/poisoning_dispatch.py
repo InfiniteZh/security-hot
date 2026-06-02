@@ -144,6 +144,7 @@ async def triage(client, cfg, row: sqlite3.Row, body: str = "") -> dict:
         result = await _llm_call(
             client, _TRIAGE_SYSTEM, user_msg,
             cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+            max_concurrency=cfg["concurrency"],
         )
     except Exception as e:
         return {"actionable": False, "reason": f"triage 调用失败: {e}",
@@ -260,7 +261,8 @@ async def run(fresh_days: int, limit: int | None, dry_run: bool) -> dict:
     migrate(conn)
     candidates = select_candidates(conn, fresh_days, limit)
     stats = {"candidates": len(candidates), "actionable": 0, "sent": 0,
-             "skipped_not_actionable": 0, "errors": 0, "dry_run": dry_run}
+             "skipped_not_actionable": 0, "errors": 0, "dry_run": dry_run,
+             "error_messages": []}
     print(f"[dispatch] L0 候选 {len(candidates)} 条 "
           f"(tier1 源={sorted(TIER1_SUPPLY_SOURCES)}, score>={TIER1_MIN_SCORE}, fresh={fresh_days}d)",
           file=sys.stderr)
@@ -274,7 +276,9 @@ async def run(fresh_days: int, limit: int | None, dry_run: bool) -> dict:
             producer = make_producer(bootstrap)
             await producer.start()
         except Exception as e:
-            print(f"[dispatch] 连接 Kafka 失败，退出: {e}", file=sys.stderr)
+            msg = f"连接 Kafka 失败: {e}"
+            stats["error_messages"].append(msg)
+            print(f"[dispatch] {msg}，退出", file=sys.stderr)
             conn.close()
             stats["errors"] += 1
             return stats
@@ -313,6 +317,7 @@ async def run(fresh_days: int, limit: int | None, dry_run: bool) -> dict:
                     print(f"[dispatch] 已投送 #{row['id']} {row['title'][:50]}", file=sys.stderr)
                 except Exception as e:
                     stats["errors"] += 1
+                    stats["error_messages"].append(f"投送失败 #{row['id']}: {e}")
                     print(f"[dispatch] 投送失败 #{row['id']}: {e}", file=sys.stderr)
     finally:
         if producer is not None:

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import httpx
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
@@ -39,7 +39,22 @@ except ImportError:
 
 VULN_AI_JSON = ROOT / "backend" / "cache" / "vuln_ai.json"
 
-_LLM_SEMAPHORE = asyncio.Semaphore(4)
+DEFAULT_LLM_CONCURRENCY = 8
+_LLM_SEMAPHORE = asyncio.Semaphore(DEFAULT_LLM_CONCURRENCY)
+_LLM_SEMAPHORES: dict[int, asyncio.Semaphore] = {
+    DEFAULT_LLM_CONCURRENCY: _LLM_SEMAPHORE,
+}
+
+
+def _llm_semaphore(limit: int | None = None) -> asyncio.Semaphore:
+    limit = limit or DEFAULT_LLM_CONCURRENCY
+    if limit <= 0:
+        limit = DEFAULT_LLM_CONCURRENCY
+    sem = _LLM_SEMAPHORES.get(limit)
+    if sem is None:
+        sem = asyncio.Semaphore(limit)
+        _LLM_SEMAPHORES[limit] = sem
+    return sem
 
 
 # ── Helpers ──
@@ -75,7 +90,7 @@ def _extract_json(content: str) -> dict:
 
 
 async def _llm_call(client, system_prompt, user_msg, base_url, api_key, model, timeout,
-                    max_retries: int = 3):
+                    max_retries: int = 3, max_concurrency: int | None = None):
     body = {
         "model": model,
         "messages": [
@@ -90,7 +105,7 @@ async def _llm_call(client, system_prompt, user_msg, base_url, api_key, model, t
     last_exc: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
-            async with _LLM_SEMAPHORE:
+            async with _llm_semaphore(max_concurrency):
                 r = await asyncio.wait_for(
                     client.post(url, json=body, headers=headers, timeout=timeout),
                     timeout=timeout,
@@ -123,7 +138,7 @@ def _get_config():
         "api_key": os.environ.get("LLM_API_KEY"),
         "base_url": os.environ.get("LLM_BASE_URL", "https://api.minimaxi.com/v1"),
         "model": os.environ.get("LLM_MODEL", "MiniMax-M2.7"),
-        "concurrency": int(os.environ.get("LLM_CONCURRENCY", "4")),
+        "concurrency": int(os.environ.get("LLM_CONCURRENCY", str(DEFAULT_LLM_CONCURRENCY))),
         "timeout": float(os.environ.get("LLM_TIMEOUT", "90")),
         "max_batches": int(os.environ.get("LLM_MAX_BATCHES", "200")),
     }

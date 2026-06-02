@@ -25,7 +25,7 @@ async def generate_daily_brief(
 ) -> dict:
     """Generate a daily brief for each of the 5 categories.
 
-    For each category, pull top N high-score relevant articles published on
+    For each category, pull all relevant primary articles published on
     target_date, summarize via LLM, INSERT OR REPLACE into daily_briefs.
     """
     cfg = _get_config()
@@ -58,9 +58,9 @@ async def generate_daily_brief(
 输出格式：仅输出一个 JSON 对象 `{"text": "..."}`，其中 text 的值是**纯 markdown 字符串**（不是再嵌套的 JSON）。markdown 中的换行用 `\\n`、引号用 `\\"` 转义即可。除该 JSON 外不要任何前后文字、不要 ```json 围栏。"""
 
         _brief_total = sum(
-            min(conn.execute(
+            conn.execute(
                 "SELECT COUNT(*) FROM articles WHERE substr(published,1,10)=? AND llm_category=? AND (is_relevant=1 OR is_relevant IS NULL) AND (cluster_id IS NULL OR is_cluster_primary=1)",
-                [target_date, c]).fetchone()[0], 12)
+                [target_date, c]).fetchone()[0]
             for c in ALL_CATEGORIES)
         _brief_articles_done = 0
         _prog.start("summarizing")
@@ -70,7 +70,8 @@ async def generate_daily_brief(
             for category in ALL_CATEGORIES:
                 # Filter by published date (not fetched_at) so counts match
                 # the frontend news view. is_relevant accepts NULL for
-                # cold-start before classify backlog finishes.
+                # cold-start before classify backlog finishes. Do not cap the
+                # row count: the daily brief should see the full category set.
                 rows = list(conn.execute("""
                     SELECT title, summary, source_title, llm_summary_zh
                     FROM articles
@@ -79,7 +80,6 @@ async def generate_daily_brief(
                       AND (is_relevant = 1 OR is_relevant IS NULL)
                       AND (cluster_id IS NULL OR is_cluster_primary = 1)
                     ORDER BY COALESCE(llm_score, 5) DESC
-                    LIMIT 12
                 """, [target_date, category]))
                 if not rows:
                     if verbose:
@@ -93,6 +93,7 @@ async def generate_daily_brief(
                     result = await _llm_call(
                         client, system_prompt, user_msg,
                         cfg["base_url"], cfg["api_key"], cfg["model"], cfg["timeout"],
+                        max_concurrency=cfg["concurrency"],
                     )
                     text = result.get("text") or ""
                     # Some models nest the JSON envelope inside the text field

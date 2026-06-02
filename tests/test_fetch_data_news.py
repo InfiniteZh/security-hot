@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import io
 import json
 import sys
@@ -13,6 +14,70 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import db  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_run_fetchers_defaults_to_24_concurrency(monkeypatch):
+    from backend.app.ingest import fetchers
+
+    seen = {}
+
+    async def fake_run(selected, concurrency, snapshot=True, incremental=False):
+        seen["selected"] = selected
+        seen["concurrency"] = concurrency
+        seen["snapshot"] = snapshot
+        seen["incremental"] = incremental
+        return 0
+
+    monkeypatch.setattr(fetchers, "run", fake_run)
+
+    result = await fetchers.run_fetchers(["news"])
+
+    assert result["ok"] is True
+    assert seen == {
+        "selected": ["news"],
+        "concurrency": 24,
+        "snapshot": True,
+        "incremental": False,
+    }
+
+
+def test_direct_news_fetcher_default_concurrency_is_24():
+    import fetch_data
+
+    sig = inspect.signature(fetch_data.fetch_news_to_sqlite)
+    assert sig.parameters["concurrency"].default == 24
+
+
+@pytest.mark.asyncio
+async def test_partial_fetch_exit_code_ignores_prior_manifest_failures(tmp_path, monkeypatch):
+    from backend.app.ingest import fetchers
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "manifest.json").write_text(json.dumps({
+        "fetched_at": "2026-06-02T00:00:00Z",
+        "results": [
+            {"name": "kev", "ok": False, "status": "error", "count": 0},
+            {"name": "news", "ok": True, "status": "ok", "count": 1},
+        ],
+    }), encoding="utf-8")
+
+    async def fake_news_fetcher(*, concurrency):
+        return {"name": "news", "count": 0}
+
+    monkeypatch.setattr(fetchers, "CACHE", cache)
+    monkeypatch.setattr(fetchers, "FETCHERS", {"news": fake_news_fetcher})
+    monkeypatch.setattr(fetchers, "snapshot_today", lambda only=None: {})
+
+    code = await fetchers.run(["news"], concurrency=1, snapshot=True)
+
+    assert code == 0
+    manifest = json.loads((cache / "manifest.json").read_text(encoding="utf-8"))
+    by_name = {r["name"]: r for r in manifest["results"]}
+    assert by_name["kev"]["ok"] is False
+    assert by_name["news"]["ok"] is True
+    assert by_name["news"]["status"] == "no_data"
 
 
 @pytest.mark.asyncio

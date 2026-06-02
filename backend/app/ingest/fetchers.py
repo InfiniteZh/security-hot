@@ -19,7 +19,7 @@ Outputs (all under backend/cache/):
 Usage:
   uv run python scripts/fetch_data.py
   uv run python scripts/fetch_data.py --only kev,news
-  uv run python scripts/fetch_data.py --concurrency 12
+  uv run python scripts/fetch_data.py --concurrency 24
 
 Module layout
 -------------
@@ -183,6 +183,8 @@ FETCHERS = {
     "masto": fetch_masto,
 }
 
+DEFAULT_FETCH_CONCURRENCY = 24
+
 
 async def run(selected: list[str], concurrency: int, snapshot: bool = True, incremental: bool = False) -> int:
     timeout = httpx.Timeout(30.0, connect=10.0)
@@ -278,7 +280,7 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
         except Exception as exc:  # noqa: BLE001
             print(f"[snap] failed: {exc}", file=sys.stderr)
 
-    failed = sum(1 for r in manifest["results"] if not r.get("ok"))
+    failed = sum(1 for name in selected if not results_by_name.get(name, {}).get("ok"))
     return 0 if failed == 0 else 1
 
 
@@ -293,7 +295,7 @@ async def run_fetchers(
     unknown = [name for name in selected if name not in FETCHERS]
     if unknown:
         raise ValueError(f"unknown fetcher(s): {unknown}; available: {list(FETCHERS)}")
-    code = await run(selected, concurrency or 8, snapshot=snapshot, incremental=incremental)
+    code = await run(selected, concurrency or DEFAULT_FETCH_CONCURRENCY, snapshot=snapshot, incremental=incremental)
     manifest_path = CACHE / "manifest.json"
     manifest = {}
     if manifest_path.exists():
@@ -312,7 +314,8 @@ async def run_fetchers(
 def main() -> int:
     p = argparse.ArgumentParser(description="Fetch security data into local JSON cache.")
     p.add_argument("--only", help="comma-separated subset of fetchers (default: all)")
-    p.add_argument("--concurrency", type=int, default=8, help="news-feed concurrency (default 8)")
+    p.add_argument("--concurrency", type=int, default=DEFAULT_FETCH_CONCURRENCY,
+                   help=f"news-feed concurrency (default {DEFAULT_FETCH_CONCURRENCY})")
     p.add_argument("--no-snapshot", action="store_true", help="skip history snapshot + first_seen annotation")
     p.add_argument("--incremental", action="store_true", help="merge new articles into existing cache instead of replacing")
     p.add_argument("--list", action="store_true", help="list available fetchers and exit")

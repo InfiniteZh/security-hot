@@ -625,14 +625,15 @@
   .pl-group-title { font:600 11px/1 ui-monospace,monospace; letter-spacing:.08em; text-transform:uppercase;
     color:var(--muted); margin:0 0 6px; display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
   .pl-next { color:var(--dim); font-weight:400; text-transform:none; letter-spacing:0; }
-  .pl-row { display:grid; grid-template-columns:16px 96px 1fr auto auto; gap:10px; align-items:baseline;
+  .pl-row { display:grid; grid-template-columns:16px minmax(132px,.8fr) minmax(128px,1fr) auto auto; gap:10px; align-items:start;
     padding:7px 0; border-bottom:1px solid var(--border); }
+  .pl-row > * { min-width:0; }
   .pl-row:last-child { border-bottom:none; }
-  .pl-ico { font-size:11px; }
+  .pl-ico { font-size:11px; line-height:1.7; }
   .pl-ico--ok{color:#10A37F} .pl-ico--error{color:#C73E3E} .pl-ico--pending{color:var(--dim)}
   .pl-ico--no_data{color:#C9A227} .pl-ico--disabled{color:var(--dim)}
-  .pl-name { font:600 13px/1.4 ui-monospace,monospace; color:var(--text); }
-  .pl-meta { font-size:12px; color:var(--muted); }
+  .pl-name { font:600 13px/1.4 ui-monospace,monospace; color:var(--text); overflow-wrap:anywhere; }
+  .pl-meta { font-size:12px; line-height:1.45; color:var(--muted); overflow-wrap:anywhere; }
   .pl-when { font:11px/1.4 ui-monospace,monospace; color:var(--dim); white-space:nowrap; text-align:right; }
   .pl-refresh { font-size:12px; line-height:1; padding:2px 5px; border-radius:5px; color:var(--dim);
     border:1px solid transparent; background:transparent; cursor:pointer; transition:.12s; }
@@ -3502,12 +3503,16 @@ function renderPipeline(d) {
     for (const s of g.items) {
       const cnt = s.status === "ok" && s.count ? `· ${s.count}` : "";
       const el = s.elapsed_s ? `· ${s.elapsed_s}s` : "";
-      // Only data fetchers (kind="fetch") can be pulled in isolation — give them a ⟳.
-      const canRefresh = s.kind === "fetch" && s.name;
-      const refreshBtn = canRefresh
-        ? `<button class="pl-refresh refresh-btn" data-refresh-only="${escapeHtml(s.name)}"
-                   title="${t('refresh.title')} · ${escapeHtml(s.name)}"
-                   aria-label="Refresh ${escapeHtml(s.name)}">⟳</button>`
+      // Data fetchers can be pulled in isolation. Dispatch failures are retried
+      // via the source pipeline that feeds them.
+      const retrySource = s.name === "poisoning_dispatch" ? "news"
+                        : s.name === "vuln_dispatch" ? "murphy"
+                        : "";
+      const refreshTarget = (s.kind === "fetch" && s.name) ? s.name : retrySource;
+      const refreshBtn = refreshTarget
+        ? `<button class="pl-refresh refresh-btn" data-refresh-only="${escapeHtml(refreshTarget)}"
+                   title="${t('refresh.title')} · ${escapeHtml(refreshTarget)}"
+                   aria-label="Refresh ${escapeHtml(refreshTarget)}">⟳</button>`
         : `<span></span>`;
       html += `<div class="pl-row">
         <span class="pl-ico pl-ico--${s.status}">${_plIco(s.status)}</span>

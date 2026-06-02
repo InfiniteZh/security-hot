@@ -104,7 +104,7 @@ CISA KEV、GHSA、nomi-sec PoC、OSSF malicious-packages 共四个源会跨 CVE-
 ```bash
 uv run python scripts/fetch_data.py                  # 全部
 uv run python scripts/fetch_data.py --only kev,news  # 子集
-uv run python scripts/fetch_data.py --concurrency 12 # 提升 news RSS 并发
+uv run python scripts/fetch_data.py --concurrency 24 # 提升 news RSS 并发
 ```
 
 各 fetcher（在 `scripts/fetch_data.py` 的 `FETCHERS` 字典注册，共 11 个）：
@@ -139,7 +139,7 @@ uv run python scripts/llm_rank.py --days 0 --rescore            # 处理所有�
 uv run python scripts/llm_rank.py --min-score 7                 # 仅 >=7 分的文章生成摘要
 ```
 
-- **Phase 1**（分类+打分）：batch=80，并发 4 路，仅输出 score+cat+reason，极快
+- **Phase 1**（分类+打分）：batch=80，并发 8 路，仅输出 score+cat+reason，极快
 - **Phase 2**（摘要）：仅处理 `llm_score >= min_score` 的英文文章，节省 ~60% token
 - **30 天限制**：默认只处理 30 天内文章，`--days 0` 解除限制
 - 新闻分类为 5 类：`incident / vuln / supply-chain / research / industry`

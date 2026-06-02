@@ -76,11 +76,19 @@ async def on_news_fetched(stage_cb=None) -> dict:
     try:
         if stage_cb:
             stage_cb("classifying")
+        classify_result = await classify_news(days=7, verbose=True)
+        classify_errors = int(classify_result.get("errors", 0))
+        partial_batches = int(classify_result.get("partial_batches", 0))
         results["classify"] = {
-            "ok": True,
-            "result": await classify_news(days=7, verbose=True),
+            "ok": classify_errors == 0 and partial_batches == 0,
+            "result": classify_result,
             "elapsed_s": round(time.monotonic() - t0, 2),
         }
+        if classify_errors or partial_batches:
+            results["classify"]["error"] = (
+                f"classify incomplete: errors={classify_errors}, "
+                f"partial_batches={partial_batches}"
+            )
     except Exception as exc:
         results["classify"] = {
             "ok": False,
@@ -92,11 +100,19 @@ async def on_news_fetched(stage_cb=None) -> dict:
     try:
         if stage_cb:
             stage_cb("summarizing")
+        summarize_result = await summarize_news(min_score=5, days=7, verbose=True)
+        summarize_errors = int(summarize_result.get("errors", 0))
+        partial_batches = int(summarize_result.get("partial_batches", 0))
         results["summarize"] = {
-            "ok": True,
-            "result": await summarize_news(min_score=5, days=7, verbose=True),
+            "ok": summarize_errors == 0 and partial_batches == 0,
+            "result": summarize_result,
             "elapsed_s": round(time.monotonic() - t0, 2),
         }
+        if summarize_errors or partial_batches:
+            results["summarize"]["error"] = (
+                f"summarize incomplete: errors={summarize_errors}, "
+                f"partial_batches={partial_batches}"
+            )
     except Exception as exc:
         results["summarize"] = {
             "ok": False,
