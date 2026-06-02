@@ -199,16 +199,19 @@ def test_due_sources_excludes_failing_sources(conn):
     assert all(s["slug"] != "broken" for s in due)
 
 
-def test_due_sources_excludes_ok_zero_sources(conn):
+def test_due_sources_retries_ok_zero_below_threshold(conn):
+    # A single failed fetch flips ok→0 but only increments consecutive_failures.
+    # Such a source must still be retried (it's the only way ok flips back to 1),
+    # so gating is on consecutive_failures, not the ok flag.
     db.init_schema(conn)
     db.upsert_source(conn, {
         "slug": "marked_down", "title": "x", "url": "https://x",
         "lang": "en", "tier": "tail", "interval_minutes": 30,
     })
-    conn.execute("UPDATE sources SET ok = 0 WHERE slug = 'marked_down'")
+    conn.execute("UPDATE sources SET ok = 0, consecutive_failures = 1 WHERE slug = 'marked_down'")
     conn.commit()
     due = db.due_sources(conn, "2026-05-25T12:00:00Z")
-    assert all(s["slug"] != "marked_down" for s in due)
+    assert any(s["slug"] == "marked_down" for s in due)
 
 
 def test_record_source_success_resets_failures(conn):

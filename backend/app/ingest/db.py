@@ -182,11 +182,17 @@ def upsert_source(conn: sqlite3.Connection, row: dict) -> None:
 
 def due_sources(conn: sqlite3.Connection, now_iso: str) -> list[sqlite3.Row]:
     """Return sources whose last_fetched + interval_minutes <= now, that are
-    not in a failed (>=5 consecutive failures) state."""
+    not benched (>=5 consecutive failures).
+
+    Gating is on `consecutive_failures`, NOT the `ok` flag: a single failed
+    fetch flips `ok` to 0, but the source must keep being retried (up to 5
+    times) so a transient error doesn't permanently remove it from rotation.
+    `ok` only flips back to 1 on a successful fetch, which can't happen if the
+    source is never selected — so requiring `ok = 1` here would bench a feed
+    forever after one bad run."""
     return list(conn.execute("""
         SELECT * FROM sources
-        WHERE ok = 1
-          AND consecutive_failures < 5
+        WHERE consecutive_failures < 5
           AND (last_fetched IS NULL
                OR datetime(last_fetched, '+' || interval_minutes || ' minutes') <= datetime(?))
         ORDER BY (last_fetched IS NULL) DESC, last_fetched ASC
