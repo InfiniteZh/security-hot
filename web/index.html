@@ -1354,10 +1354,7 @@
           <button class="pill filter-chip" data-dim="severity" data-val="low" data-on="false">LOW</button>
           <span style="border-left:1px solid var(--hairline); height:14px;"></span>
           <span class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mr-1" data-i18n="filter.source">来源</span>
-          <button class="pill filter-chip" data-dim="source" data-val="cisa-kev" data-on="false">KEV</button>
-          <button class="pill filter-chip" data-dim="source" data-val="github-advisory" data-on="false">GHSA</button>
-          <button class="pill filter-chip" data-dim="source" data-val="nomi-sec" data-on="false">PoC</button>
-          <button class="pill filter-chip" data-dim="source" data-val="ossf-malpkgs" data-on="false">OSSF</button>
+          <span id="vuln-source-filter" class="contents"></span>
           <button id="filter-clear" class="ml-auto font-mono text-[10.5px] text-paper-faint hover:text-paper uppercase tracking-widest" data-i18n="filter.clear">清空</button>
         </div>
 
@@ -1592,6 +1589,62 @@ const state = {
   detailPrevFocus: null,// element to restore focus to on drawer close
 };
 
+const VULN_SOURCE_LABELS = {
+  "cisa-kev": "KEV",
+  "github-advisory": "GHSA",
+  "nomi-sec": "PoC",
+  "murphysec": "Murphy",
+  "osv-malware": "OSV-MAL",
+  "ossf-malpkgs": "OSSF",
+  "news-bridge": "NEWS-CVE",
+};
+const VULN_SOURCE_ORDER = [
+  "cisa-kev",
+  "github-advisory",
+  "nomi-sec",
+  "murphysec",
+  "osv-malware",
+  "ossf-malpkgs",
+  "news-bridge",
+];
+
+function vulnSourceKeys(v) {
+  const values = Array.isArray(v.sources) && v.sources.length ? v.sources : [v.source];
+  return values.filter(Boolean);
+}
+
+function vulnSourceLabel(source) {
+  return VULN_SOURCE_LABELS[source] || source;
+}
+
+function renderVulnSourceFilters() {
+  const el = document.getElementById("vuln-source-filter");
+  if (!el) return;
+  const counts = new Map();
+  state.vuln.forEach(v => {
+    const seen = new Set(vulnSourceKeys(v));
+    seen.forEach(source => counts.set(source, (counts.get(source) || 0) + 1));
+  });
+  state.filters.source.forEach(source => {
+    if (!counts.has(source)) counts.set(source, 0);
+  });
+  const orderIndex = (source) => {
+    const idx = VULN_SOURCE_ORDER.indexOf(source);
+    return idx === -1 ? VULN_SOURCE_ORDER.length : idx;
+  };
+  const sources = [...counts.keys()].sort((a, b) => {
+    const ai = orderIndex(a), bi = orderIndex(b);
+    if (ai !== bi) return ai - bi;
+    const countDelta = (counts.get(b) || 0) - (counts.get(a) || 0);
+    return countDelta || vulnSourceLabel(a).localeCompare(vulnSourceLabel(b));
+  });
+  el.innerHTML = sources.map(source => `
+    <button class="pill filter-chip" data-dim="source" data-val="${escapeHtml(source)}" data-on="${state.filters.source.has(source) ? "true" : "false"}">
+      ${escapeHtml(vulnSourceLabel(source))} <span class="count">${counts.get(source) || 0}</span>
+    </button>
+  `).join("");
+}
+
 function todayUtc() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
@@ -1821,6 +1874,7 @@ function renderVulnCard(v) {
   const sev = v.severity || "unknown";
   const sevText = t("sev." + sev);
   const pkg = v.package ? `${(v.ecosystem||'').toUpperCase()}/${v.package}` : "";
+  const sourceLine = vulnSourceKeys(v).map(vulnSourceLabel).join(" / ");
   const pocCount = (v.pocs || []).length;
   const tagsHtml = (v.tags || []).slice(0, 4).map(x => `<span class="pill-tag">${escapeHtml(x)}</span>`).join("");
   const refsHtml = (v.references || []).slice(0, 3).map(r => `<a href="${escapeHtml(r.url)}" target="_blank" rel="noopener" class="lnk font-mono text-[11px] text-paper-dim hover:text-paper">${escapeHtml(r.label || new URL(r.url).hostname.replace(/^www\./,'').slice(0,18))} ↗</a>`).join('<span class="text-paper-faint mx-1">·</span>');
@@ -1861,7 +1915,7 @@ function renderVulnCard(v) {
         </div>
         <div>
           <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${pkg ? t("vuln.pkg") : t("vuln.src")}</div>
-          <div class="text-[12px] mt-0.5 text-paper-dim truncate">${pkg ? escapeHtml(pkg) : escapeHtml(v.source || "")}</div>
+          <div class="text-[12px] mt-0.5 text-paper-dim truncate">${pkg ? escapeHtml(pkg) : escapeHtml(sourceLine || v.source || "")}</div>
         </div>
       </div>
       ${v.ai_summary ? `
@@ -1880,7 +1934,7 @@ function renderVulnList() {
   const sevSet = state.filters.severity;
   const srcSet = state.filters.source;
   if (sevSet.size > 0) items = items.filter(v => sevSet.has(v.severity));
-  if (srcSet.size > 0) items = items.filter(v => srcSet.has(v.source));
+  if (srcSet.size > 0) items = items.filter(v => vulnSourceKeys(v).some(source => srcSet.has(source)));
   const q = state.q.toLowerCase();
   if (q) items = items.filter(v => (v.title||"").toLowerCase().includes(q) || (v.cve_id||"").toLowerCase().includes(q) || (v.summary||"").toLowerCase().includes(q) || (v.package||"").toLowerCase().includes(q));
   const sorted = [...items].sort((a, b) =>
@@ -2514,6 +2568,16 @@ function _plStepLastRun(name) {
   return s ? (s.last_run || "") : "";
 }
 
+// Map a single-source pull to the LLM pipeline scope it should chain (if any):
+//   news → "news" (classify+summarize+brief), murphy → "vuln" (assess).
+// Other sources are fetch-only and return "" (no downstream pipeline).
+function refreshScopeForSource(only) {
+  const name = (only || "").trim().toLowerCase();
+  if (name === "news") return "news";
+  if (name === "murphy") return "vuln";
+  return "";
+}
+
 async function triggerSourceRefresh(only) {
   if (!only) return;
   let token = getRefreshToken();
@@ -2530,6 +2594,7 @@ async function triggerSourceRefresh(only) {
   refreshState.inFlight.add(only);
   updateRefreshButtonStates();
   const beforeRun = _plStepLastRun(only);   // detect a fresh completion by last_run advancing
+  const scope = refreshScopeForSource(only);  // news/murphy chain a downstream LLM pipeline
 
   const done = (cls, msg, dur) => {
     refreshState.inFlight.delete(only);
@@ -2539,7 +2604,10 @@ async function triggerSourceRefresh(only) {
 
   let res;
   try {
-    res = await fetch(`/api/refresh?only=${encodeURIComponent(only)}`, {
+    const params = new URLSearchParams();
+    params.set("only", only);
+    if (scope) params.set("llm", scope);
+    res = await fetch(`/api/refresh?${params.toString()}`, {
       method: "POST", headers: { "X-Refresh-Token": token },
     });
   } catch (e) {
@@ -2558,6 +2626,18 @@ async function triggerSourceRefresh(only) {
 
   // 202 queued — poll this source's own step until its last_run advances.
   showRefreshToast(`${t("refresh.starting")} · ${only}`, "ok", 2000);
+  // news/murphy chain a downstream LLM pipeline — drive the staged progress bar
+  // (fetch→classify→summarize→dispatch / fetch→assess→dispatch) instead of the
+  // self-contained single-step poll below.
+  if (scope) {
+    _rpState.scope = scope;
+    _rpState._lastPollAt = Date.now();
+    _rpState.elapsedS = 0;
+    updateProgressBar('fetching', null);
+    await pollRefreshDone(only, new Date());
+    return;
+  }
+
   for (let i = 0; i < 30; i++) {
     await sleep(1000);
     let d;
@@ -2833,6 +2913,7 @@ function renderAll() {
   applyI18n();
   renderStats();
   renderDateStrip();
+  renderVulnSourceFilters();
   renderVulnList();
   renderNewsList();
   renderDispatch();
@@ -2891,26 +2972,29 @@ document.querySelectorAll("#vuln-subfilter .pill").forEach(b => {
   });
 });
 
-// multi-filter chips (severity + source)
-document.querySelectorAll(".filter-chip").forEach(b => {
-  b.addEventListener("click", () => {
-    const dim = b.dataset.dim;
-    const val = b.dataset.val;
-    const set = state.filters[dim];
-    if (set.has(val)) {
-      set.delete(val);
-      b.setAttribute("data-on", "false");
-    } else {
-      set.add(val);
-      b.setAttribute("data-on", "true");
-    }
-    renderVulnList();
-  });
+// multi-filter chips (severity + dynamically rendered sources)
+document.getElementById("vuln-multifilter").addEventListener("click", (e) => {
+  const b = e.target.closest(".filter-chip");
+  if (!b) return;
+  const dim = b.dataset.dim;
+  const val = b.dataset.val;
+  const set = state.filters[dim];
+  if (!set) return;
+  if (set.has(val)) {
+    set.delete(val);
+    b.setAttribute("data-on", "false");
+  } else {
+    set.add(val);
+    b.setAttribute("data-on", "true");
+  }
+  renderVulnSourceFilters();
+  renderVulnList();
 });
 document.getElementById("filter-clear").addEventListener("click", () => {
   state.filters.severity.clear();
   state.filters.source.clear();
   document.querySelectorAll(".filter-chip").forEach(b => b.setAttribute("data-on", "false"));
+  renderVulnSourceFilters();
   renderVulnList();
 });
 
@@ -3127,6 +3211,7 @@ document.getElementById("detail-drawer").setAttribute("tabindex", "-1");
 
 function renderDetail(v) {
   const sev = v.severity || "unknown";
+  const sourceLine = vulnSourceKeys(v).map(vulnSourceLabel).join(" / ") || v.source || "";
   const epss = v.epss_score != null ? `${(v.epss_score * 100).toFixed(1)}%` : "—";
   const epssP = v.epss_percentile != null ? `p${(v.epss_percentile * 100).toFixed(0)}` : "";
   const hasPocs = (v.pocs || []).length > 0;
@@ -3156,7 +3241,7 @@ function renderDetail(v) {
     <div class="p-6 lg:p-8">
       <div class="flex items-center justify-between mb-5">
         <button onclick="closeDetailDrawer()" class="font-mono text-[11px] uppercase tracking-widest text-paper-dim hover:text-paper transition-colors">← ${t("detail.close")}</button>
-        <span class="font-mono text-[10.5px] text-paper-faint">${escapeHtml(v.source)}</span>
+        <span class="font-mono text-[10.5px] text-paper-faint">${escapeHtml(sourceLine)}</span>
       </div>
 
       <div class="flex items-center gap-2 flex-wrap mb-3">
