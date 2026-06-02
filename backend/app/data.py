@@ -11,6 +11,7 @@ from typing import Any
 
 from .models import (
     Article,
+    DispatchEntry,
     FetcherStatus,
     HeatEntry,
     Manifest,
@@ -29,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CACHE = ROOT / "backend" / "cache"
 
 _NEWS_DB = ROOT / "backend" / "cache" / "news.db"
+_DEFAULT_DISPATCH_TOPIC = "schedule_task_normal"
 
 _RELOAD_TTL = 30  # seconds
 _VALID_CATEGORIES: set[str] = {"incident", "vuln", "supply-chain", "research", "industry"}
@@ -72,7 +74,7 @@ def _row_to_article(row, mirror_titles_by_cluster: dict) -> Article:
     )
 
 
-_state: dict[str, tuple[float, Any]] = {}
+_state: dict[str, tuple[Any, ...]] = {}
 
 
 # ─────────── cache loaders ───────────
@@ -91,6 +93,41 @@ def _load_json(name: str, default):
         data = default
     _state[name] = (mtime, data)
     return data
+
+
+def _json_obj(raw: str | None) -> dict | None:
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _json_list(raw: str | None) -> list[dict] | None:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, list):
+        return None
+    return [x for x in data if isinstance(x, dict)]
+
+
+def _normalize_iocs(raw: Any) -> list[dict]:
+    out: list[dict] = []
+    for item in raw or []:
+        if isinstance(item, dict):
+            value = item.get("value")
+            typ = item.get("type")
+            if value:
+                out.append({"value": str(value), "type": str(typ or "unknown")})
+        elif isinstance(item, str) and item:
+            out.append({"value": item, "type": "unknown"})
+    return out
 
 
 def manifest() -> Manifest:
@@ -885,6 +922,104 @@ def _news_cve_to_vulns(*, db_path: Path | None = None) -> list[Vuln]:
 
 
 # ─────────── public loaders ───────────
+
+def _load_dispatch_cache() -> list[DispatchEntry]:
+    if not _NEWS_DB.exists():
+        return []
+    mtime = _NEWS_DB.stat().st_mtime
+    now = time.time()
+    cached = _state.get("__dispatches_sqlite__")
+    if cached and cached[0] == mtime and (now - float(cached[1])) < _RELOAD_TTL:
+        return cached[2]
+
+    items: list[DispatchEntry] = []
+    conn = _news_conn()
+    try:
+        rows = list(conn.execute("""
+            SELECT vuln_id, origin, related_news_json, message_json, dispatched_at
+            FROM vuln_dispatches
+            ORDER BY dispatched_at DESC
+        """))
+    except _sqlite3.Error:
+        rows = []
+
+    for row in rows:
+        msg = _json_obj(row["message_json"])
+        related = _json_list(row["related_news_json"])
+        if msg is None or related is None:
+            continue
+        ref_id = str(msg.get("ref_id") or row["vuln_id"] or "").strip()
+        dispatched_at = str(row["dispatched_at"] or "").strip()
+        origin = str(row["origin"] or msg.get("origin") or "vuln").strip()
+        if not ref_id or not dispatched_at or origin not in ("vuln", "news"):
+            continue
+        try:
+            items.append(DispatchEntry(
+                ref_id=ref_id,
+                origin=origin,  # type: ignore[arg-type]
+                package=(msg.get("package") or None),
+                ecosystem=(msg.get("ecosystem") or None),
+                iocs=_normalize_iocs(msg.get("iocs")),
+                title=(msg.get("title") or None),
+                related_news=related,
+                dispatched_at=dispatched_at,
+                topic=(msg.get("topic") or _DEFAULT_DISPATCH_TOPIC),
+            ))
+        except (TypeError, ValueError):
+            continue
+
+    try:
+        news_rows = list(conn.execute("""
+            SELECT id, title, canonical_url, llm_score, poisoning_triage_json,
+                   poisoning_dispatched_at
+            FROM articles
+            WHERE COALESCE(poisoning_dispatched, 0) = 1
+              AND poisoning_dispatched_at IS NOT NULL
+            ORDER BY poisoning_dispatched_at DESC
+        """))
+    except _sqlite3.Error:
+        news_rows = []
+    finally:
+        conn.close()
+
+    for row in news_rows:
+        triage = _json_obj(row["poisoning_triage_json"])
+        if triage is None:
+            continue
+        dispatched_at = str(row["poisoning_dispatched_at"] or "").strip()
+        if not dispatched_at:
+            continue
+        related_news = [{
+            "title": row["title"] or "",
+            "url": row["canonical_url"] or "",
+            "llm_score": row["llm_score"],
+        }]
+        try:
+            items.append(DispatchEntry(
+                ref_id=str(row["id"]),
+                origin="news",
+                package=(triage.get("package") or None),
+                ecosystem=(triage.get("ecosystem") or None),
+                iocs=_normalize_iocs(triage.get("iocs")),
+                title=(row["title"] or None),
+                related_news=related_news,
+                dispatched_at=dispatched_at,
+                topic=_DEFAULT_DISPATCH_TOPIC,
+            ))
+        except (TypeError, ValueError):
+            continue
+
+    items.sort(key=lambda x: x.dispatched_at or "", reverse=True)
+    _state["__dispatches_sqlite__"] = (mtime, now, items)
+    return items
+
+
+def load_dispatches(limit: int = 100, origin: str = "all") -> list[DispatchEntry]:
+    items = _load_dispatch_cache()
+    if origin in ("vuln", "news"):
+        items = [x for x in items if x.origin == origin]
+    return items[:limit]
+
 
 def all_vulns() -> list[Vuln]:
     vulns = (

@@ -90,6 +90,18 @@ class HeatEntry(BaseModel):
     link: str | None = None  # for news heat: clicking opens the article URL
 
 
+class DispatchEntry(BaseModel):
+    ref_id: str
+    origin: Literal["vuln", "news"]
+    package: str | None = None
+    ecosystem: str | None = None
+    iocs: list[dict] = Field(default_factory=list)
+    title: str | None = None
+    related_news: list[dict] = Field(default_factory=list)
+    dispatched_at: str
+    topic: str | None = None
+
+
 class SourceStatus(BaseModel):
     slug: str
     title: str

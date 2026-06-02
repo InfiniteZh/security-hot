@@ -51,6 +51,7 @@ from .data import (
     all_sources,
     all_vulns,
     heat_board,
+    load_dispatches,
     manifest as manifest_fn,
     search_aggregated,
     search_articles,
@@ -58,6 +59,7 @@ from .data import (
 )
 from .models import (
     Article,
+    DispatchEntry,
     HeatEntry,
     Manifest,
     SearchResult,
@@ -196,6 +198,14 @@ def api_news(
             reverse=True,
         )
     return items[:limit]
+
+
+@app.get("/api/dispatches", response_model=list[DispatchEntry], tags=["vulnerability"])
+def api_dispatches(
+    limit: int = Query(default=100, ge=1, le=1000),
+    origin: str = Query(default="all", description="all | vuln | news"),
+) -> list[DispatchEntry]:
+    return load_dispatches(limit=limit, origin=origin)
 
 
 @app.get("/api/search", response_model=SearchResult, tags=["search"])

@@ -1252,6 +1252,10 @@
             <span data-i18n="tab.papers">安全论文</span>
             <span class="tab-count">·</span>
           </button>
+          <button class="tab-btn" role="tab" data-tab="dispatch" aria-selected="false">
+            <span data-i18n="tab.dispatch">供应链投送</span>
+            <span class="tab-count" id="tab-dispatch-count">—</span>
+          </button>
         </nav>
 
         <!-- PRIMARY FILTER ROW: category pills (high visual weight) -->
@@ -1338,6 +1342,10 @@
               <span><span class="text-paper-faint">○</span> NDSS</span>
             </div>
           </div>
+        </section>
+
+        <section class="panel" data-panel="dispatch" hidden>
+          <div id="dispatch-list"></div>
         </section>
       </main>
 
@@ -1494,6 +1502,7 @@ const state = {
   today: null,
   news: [],
   vuln: [],
+  dispatch: [],
   heat: [],
   sources: [],
   activeTab: "news",
@@ -1826,6 +1835,102 @@ function renderVulnList() {
     const c = k === "all" ? state.vuln.length : state.vuln.filter(v => v.kind === k).length;
     document.querySelectorAll(`#vuln-subfilter [data-count="${k}"]`).forEach(n => n.textContent = c);
   });
+}
+
+function renderDispatch() {
+  const el = document.getElementById("dispatch-list");
+  if (!el) return;
+  const items = state.dispatch || [];
+  const tabCount = document.getElementById("tab-dispatch-count");
+  if (tabCount) tabCount.textContent = `· ${items.length}`;
+
+  if (items.length === 0) {
+    el.innerHTML = `<div class="py-20 px-8 text-center" style="border:1px solid var(--hairline); border-radius:8px; background:var(--surface);">
+      <div class="font-display text-[26px] text-paper-dim mb-2" style="font-variation-settings:'opsz' 36;">${t("dispatch.empty_title")}</div>
+      <p class="font-mono text-[11.5px] tracking-[0.06em] text-paper-faint">${t("dispatch.empty_sub")}</p>
+    </div>`;
+    return;
+  }
+
+  const originCounts = items.reduce((acc, x) => {
+    acc[x.origin] = (acc[x.origin] || 0) + 1;
+    return acc;
+  }, {});
+  const ecoCounts = items.reduce((acc, x) => {
+    const k = (x.ecosystem || "unknown").toLowerCase();
+    acc[k] = (acc[k] || 0) + 1;
+    return acc;
+  }, {});
+  const ecoLine = Object.entries(ecoCounts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 8)
+    .map(([k, v]) => `${escapeHtml(k)} ${v}`)
+    .join(" · ");
+
+  const stats = `
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+      <div style="background:var(--surface); border:1px solid var(--hairline); border-radius:8px; padding:14px 16px;">
+        <div class="font-mono text-[10px] tracking-[0.18em] uppercase text-paper-faint">${t("dispatch.total")}</div>
+        <div class="font-mono text-[24px] text-paper mt-1">${items.length}</div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--hairline); border-radius:8px; padding:14px 16px;">
+        <div class="font-mono text-[10px] tracking-[0.18em] uppercase text-paper-faint">${t("dispatch.origins")}</div>
+        <div class="font-mono text-[13px] text-paper mt-2">vuln ${originCounts.vuln || 0} · news ${originCounts.news || 0}</div>
+      </div>
+      <div style="background:var(--surface); border:1px solid var(--hairline); border-radius:8px; padding:14px 16px;">
+        <div class="font-mono text-[10px] tracking-[0.18em] uppercase text-paper-faint">${t("dispatch.ecosystems")}</div>
+        <div class="font-mono text-[12px] text-paper-dim mt-2">${ecoLine || "—"}</div>
+      </div>
+    </div>`;
+
+  const cards = items.map((d) => {
+    const pkgLine = `${d.package || t("dispatch.unknown_pkg")}@${d.ecosystem || "unknown"}`;
+    const originClass = d.origin === "news" ? "poc" : "supply";
+    const iocs = (d.iocs || []).slice(0, 12).map(i => {
+      const value = i && i.value ? String(i.value) : "";
+      if (!value) return "";
+      const typ = i.type ? String(i.type) : "unknown";
+      return `<span class="pill-tag">${escapeHtml(typ)} · ${escapeHtml(value)}</span>`;
+    }).filter(Boolean).join("");
+    const related = (d.related_news || []).filter(n => n && (n.url || n.title)).slice(0, 4);
+    const relatedHtml = related.length ? `
+      <div class="mt-3">
+        <div class="font-mono text-[9.5px] tracking-[0.18em] uppercase text-paper-faint mb-1">${t("dispatch.related")}</div>
+        <div class="space-y-1">
+          ${related.map(n => `
+            <a href="${escapeHtml(n.url || "#")}" target="_blank" rel="noopener" class="block text-[12.5px] text-paper-dim hover:text-ok">
+              ${escapeHtml(n.title || n.url || "")}${n.llm_score != null ? ` <span class="font-mono text-paper-faint">AI ${escapeHtml(String(n.llm_score))}</span>` : ""}
+            </a>
+          `).join("")}
+        </div>
+      </div>` : "";
+    return `
+      <article class="mb-3" style="background:var(--surface); border:1px solid var(--hairline); border-radius:8px; padding:16px 18px;">
+        <div class="article-eyebrow">
+          <span class="pill-tag ${originClass}">${escapeHtml(d.origin)}</span>
+          <span title="${escapeHtml(d.dispatched_at || "")}">${escapeHtml(relTime(d.dispatched_at) || fmtTime(d.dispatched_at))}</span>
+          ${d.topic ? `<span style="color:var(--paper-veil);">·</span><span>${t("dispatch.topic")} ${escapeHtml(d.topic)}</span>` : ""}
+        </div>
+        <h3 class="article-title clamp-2">${escapeHtml(d.title || d.ref_id)}</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 font-mono mt-2">
+          <div>
+            <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${t("dispatch.package")}</div>
+            <div class="text-[12.5px] text-paper mt-0.5 break-all">${escapeHtml(pkgLine)}</div>
+          </div>
+          <div>
+            <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${t("dispatch.ref")}</div>
+            <div class="text-[12.5px] text-paper mt-0.5 break-all">${escapeHtml(d.ref_id)}</div>
+          </div>
+        </div>
+        <div class="mt-3">
+          <div class="font-mono text-[9.5px] tracking-[0.18em] uppercase text-paper-faint mb-1">${t("dispatch.iocs")}</div>
+          <div class="flex flex-wrap gap-1.5">${iocs || `<span class="text-paper-faint font-mono text-[12px]">—</span>`}</div>
+        </div>
+        ${relatedHtml}
+      </article>`;
+  }).join("");
+
+  el.innerHTML = stats + cards;
 }
 
 function newsCatPill(cat) {
@@ -2575,6 +2680,7 @@ function renderAll() {
   renderDateStrip();
   renderVulnList();
   renderNewsList();
+  renderDispatch();
   renderHeat();
   renderBrief();
 }
@@ -2606,6 +2712,7 @@ function setActiveTab(tab) {
   }
   // Heat board switches data source per-tab
   if (typeof fetchOne === "function") fetchOne("heat").then(() => renderHeat());
+  if (tab === "dispatch" && typeof fetchOne === "function") fetchOne("dispatch").then(() => renderDispatch());
 }
 document.querySelectorAll(".tab-btn").forEach(b => {
   b.addEventListener("click", () => setActiveTab(b.dataset.tab));
@@ -2714,6 +2821,7 @@ const ENDPOINTS = [
   { key: "today",    url: () => "/api/today",                                              dateAware: false },
   { key: "news",     url: () => `/api/news?limit=500${dateQuery()}`,                       dateAware: true },
   { key: "vuln",     url: () => `/api/vuln?limit=500&sort=heat${dateQuery()}`,             dateAware: true },
+  { key: "dispatch", url: () => "/api/dispatches?limit=200",                               dateAware: false },
   { key: "heat",     url: () => {
       const kind = state.activeTab === "news" ? "news" : "vuln";
       const datePart = state.selectedDate ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
@@ -2738,6 +2846,7 @@ async function fetchOne(key) {
     if (key === "today") state.today = data;
     else if (key === "news") state.news = data || [];
     else if (key === "vuln") state.vuln = data || [];
+    else if (key === "dispatch") state.dispatch = data || [];
     else if (key === "heat") state.heat = data || [];
     else if (key === "sources") state.sources = data || [];
   } catch (exc) {
