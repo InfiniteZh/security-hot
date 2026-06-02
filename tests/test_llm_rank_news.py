@@ -123,25 +123,29 @@ async def test_classify_news_updates_only_unscored(db_with_unscored_articles, mo
     c.close()
 
 
+def _classify_ids_in_msg(user_msg):
+    ids = []
+    for line in user_msg.split("\n"):
+        if line.startswith("id="):
+            ids.append(int(line.split("|")[0].replace("id=", "").strip()))
+    return ids
+
+
 @pytest.mark.asyncio
-async def test_classify_reports_partial_llm_batches(db_with_unscored_articles, monkeypatch):
+async def test_classify_reports_residual_after_retries(db_with_unscored_articles, monkeypatch):
+    # A model that PERSISTENTLY drops one id (the max) from every response —
+    # retries can't heal it, so it surfaces as a residual `partial_batches`.
     tmp_db_path = db_with_unscored_articles
 
     import llm_rank
 
     async def fake_llm_call(client, system_prompt, user_msg, *args, **kwargs):
-        first_id = None
-        for line in user_msg.split("\n"):
-            if line.startswith("id="):
-                first_id = int(line.split("|")[0].replace("id=", "").strip())
-                break
+        ids = _classify_ids_in_msg(user_msg)
+        drop = max(ids) if ids else None
         return {"items": [{
-            "id": first_id,
-            "score": 7,
-            "category": "vuln",
-            "is_relevant": True,
-            "reason": "test reason",
-        }]}
+            "id": i, "score": 7, "category": "vuln",
+            "is_relevant": True, "reason": "test reason",
+        } for i in ids if i != drop]}
 
     monkeypatch.setattr(llm_rank, "_llm_call", fake_llm_call)
     monkeypatch.setattr(db, "DEFAULT_DB_PATH", tmp_db_path)
@@ -151,15 +155,56 @@ async def test_classify_reports_partial_llm_batches(db_with_unscored_articles, m
     result = await llm_rank.classify_news(days=30, verbose=False)
 
     assert result["requested"] == 3
-    assert result["classified"] == 1
+    assert result["classified"] == 2          # only the persistently-dropped id stays unscored
     assert result["errors"] == 0
-    assert result["partial_batches"] == 1
+    assert result["partial_batches"] == 1      # one residual after retries
+
+    c = db.connect(tmp_db_path)
+    rows = list(c.execute("SELECT id, llm_score FROM articles ORDER BY id"))
+    max_id = max(r["id"] for r in rows)
+    for r in rows:
+        if r["id"] == max_id:
+            assert r["llm_score"] is None
+        else:
+            assert r["llm_score"] == 7
+    c.close()
+
+
+@pytest.mark.asyncio
+async def test_classify_retries_heal_transient_drops(db_with_unscored_articles, monkeypatch):
+    # A model that drops items only on the FIRST call but returns everything on
+    # the retry pass → the missed rows get re-classified, residual is 0.
+    tmp_db_path = db_with_unscored_articles
+
+    import llm_rank
+
+    calls = {"n": 0}
+
+    async def fake_llm_call(client, system_prompt, user_msg, *args, **kwargs):
+        calls["n"] += 1
+        ids = _classify_ids_in_msg(user_msg)
+        if calls["n"] == 1:
+            ids = ids[:1]   # first call drops all but one
+        return {"items": [{
+            "id": i, "score": 7, "category": "vuln",
+            "is_relevant": True, "reason": "test reason",
+        } for i in ids]}
+
+    monkeypatch.setattr(llm_rank, "_llm_call", fake_llm_call)
+    monkeypatch.setattr(db, "DEFAULT_DB_PATH", tmp_db_path)
+    monkeypatch.setenv("LLM_API_KEY", "fake")
+    monkeypatch.setenv("LLM_BATCH_SIZE", "80")
+
+    result = await llm_rank.classify_news(days=30, verbose=False)
+
+    assert result["requested"] == 3
+    assert result["classified"] == 3
+    assert result["errors"] == 0
+    assert result["partial_batches"] == 0      # retries drained the drops
 
     c = db.connect(tmp_db_path)
     rows = list(c.execute("SELECT llm_score FROM articles ORDER BY id"))
-    assert rows[0]["llm_score"] == 7
-    assert rows[1]["llm_score"] is None
-    assert rows[2]["llm_score"] is None
+    assert all(r["llm_score"] == 7 for r in rows)
     c.close()
 
 

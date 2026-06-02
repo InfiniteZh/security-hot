@@ -78,22 +78,25 @@ async def classify_news(
         if verbose:
             print(f"[phase1] {len(rows)} articles to classify, batch={batch_size}", file=sys.stderr)
 
-        # Build batches
-        batches = [rows[i:i+batch_size] for i in range(0, len(rows), batch_size)]
         now_iso = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        _classify_done = 0
         classified = 0
-        failed_batches = 0
-        partial_batches = 0
 
         system_prompt = _CLASSIFY_SYSTEM_PROMPT
         sem = asyncio.Semaphore(cfg["concurrency"])
+        # LLMs occasionally omit a few items from a large batch's JSON response
+        # (not truncation — the model simply drops them). Those rows stay NULL,
+        # so we re-classify the misses in shrinking batches for a few extra
+        # rounds; this converges partials toward 0 within a single run instead
+        # of leaning on the next scheduled pass. Tune via LLM_CLASSIFY_RETRY_ROUNDS.
+        retry_rounds = int(os.environ.get("LLM_CLASSIFY_RETRY_ROUNDS", "2"))
         _prog.start("classifying")
         _prog.report("classifying", len(rows), 0, label="news_classify")
 
-        async def process(batch, batch_num, client):
-            nonlocal _classify_done, classified, failed_batches, partial_batches
+        async def classify_batch(batch, client):
+            """Classify one batch; return (ids_written, threw)."""
+            nonlocal classified
             user_msg = _build_classify_user_msg(batch)
+            batch_ids = {r["id"] for r in batch}
             async with sem:
                 try:
                     result = await _llm_call(
@@ -103,17 +106,10 @@ async def classify_news(
                     )
                 except Exception as exc:
                     if verbose:
-                        print(f"[phase1] batch {batch_num} failed: {exc}", file=sys.stderr)
-                    failed_batches += 1
-                    _classify_done += len(batch)
-                    _prog.report("classifying", len(rows), _classify_done, label="news_classify")
-                    return
-                items = result.get("items", [])
-                batch_ids = {r["id"] for r in batch}
-                returned_ids = {item.get("id") for item in items if item.get("id") in batch_ids}
-                if len(returned_ids) < len(batch):
-                    partial_batches += 1
-                for item in items:
+                        print(f"[phase1] batch failed: {exc}", file=sys.stderr)
+                    return set(), True
+                done: set = set()
+                for item in result.get("items", []):
                     rowid = item.get("id")
                     if rowid not in batch_ids:
                         continue
@@ -132,22 +128,40 @@ async def classify_news(
                         1 if item.get("is_relevant") else 0,
                         now_iso, rowid,
                     ])
-                    classified += 1
+                    done.add(rowid)
                 conn.commit()
-                _classify_done += len(batch)
-                _prog.report("classifying", len(rows), _classify_done, label="news_classify")
-                if verbose:
-                    print(f"[phase1] batch {batch_num}/{len(batches)}: +{len(items)}", file=sys.stderr)
+                classified += len(done)
+                return done, False
 
+        total = len(rows)
+        pending = list(rows)
+        final_errors = 0
         async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-            await asyncio.gather(*[process(b, i+1, client) for i, b in enumerate(batches)])
+            for round_no in range(retry_rounds + 1):
+                if not pending:
+                    break
+                bs = max(10, batch_size // (2 ** round_no))
+                batches = [pending[i:i+bs] for i in range(0, len(pending), bs)]
+                outcomes = await asyncio.gather(*[classify_batch(b, client) for b in batches])
+                done_ids: set = set()
+                threw = 0
+                for ids, did_throw in outcomes:
+                    done_ids |= ids
+                    threw += 1 if did_throw else 0
+                final_errors = threw  # persistent API failures on the last round
+                pending = [r for r in pending if r["id"] not in done_ids]
+                _prog.report("classifying", total, total - len(pending), label="news_classify")
+                if verbose:
+                    print(f"[phase1] round {round_no + 1}/{retry_rounds + 1}: "
+                          f"+{len(done_ids)}, {len(pending)} pending", file=sys.stderr)
 
         return {
-            "requested": len(rows),
+            "requested": total,
             "classified": classified,
-            "batches": len(batches),
-            "errors": failed_batches,
-            "partial_batches": partial_batches,
+            "errors": final_errors,
+            # Residual items still unclassified after all retry rounds (model
+            # kept dropping them, or persistent API errors). Normally 0.
+            "partial_batches": len(pending),
         }
     finally:
         conn.close()
