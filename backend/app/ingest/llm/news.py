@@ -51,7 +51,10 @@ async def classify_news(
     cfg = _get_config()
     if not cfg["api_key"]:
         return {"error": "LLM_API_KEY not set"}
-    batch_size = int(os.environ.get("LLM_BATCH_SIZE", "80"))
+    # Per-task batch knob (independent so tuning classify never moves summarize):
+    # LLM_CLASSIFY_BATCH_SIZE → LLM_BATCH_SIZE (shared, back-compat) → 80.
+    batch_size = int(os.environ.get("LLM_CLASSIFY_BATCH_SIZE")
+                     or os.environ.get("LLM_BATCH_SIZE") or "80")
 
     conn = _db.connect()
     try:
@@ -167,7 +170,9 @@ async def summarize_news(
     cfg = _get_config()
     if not cfg["api_key"]:
         return {"error": "LLM_API_KEY not set"}
-    batch_size = int(os.environ.get("LLM_BATCH_SIZE", "30"))
+    # See classify_news: LLM_SUMMARIZE_BATCH_SIZE → LLM_BATCH_SIZE → 30.
+    batch_size = int(os.environ.get("LLM_SUMMARIZE_BATCH_SIZE")
+                     or os.environ.get("LLM_BATCH_SIZE") or "30")
 
     conn = _db.connect()
     try:

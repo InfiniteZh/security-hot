@@ -98,6 +98,13 @@ async def _llm_call(client, system_prompt, user_msg, base_url, api_key, model, t
             {"role": "user", "content": user_msg},
         ],
         "temperature": 0,
+        # Cap the completion length. Without this the provider's (low) default
+        # truncates large batch responses mid-JSON → parse failure (error) or
+        # dropped trailing items (partial_batches). 32k comfortably fits an
+        # 80-item classify batch (~16k); raise LLM_MAX_TOKENS only if a batch's
+        # output genuinely needs more (this is the per-response OUTPUT cap, not
+        # the model's total context window).
+        "max_tokens": int(os.environ.get("LLM_MAX_TOKENS", "32000")),
         "response_format": {"type": "json_object"},
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
