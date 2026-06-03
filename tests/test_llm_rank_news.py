@@ -123,6 +123,64 @@ async def test_classify_news_updates_only_unscored(db_with_unscored_articles, mo
     c.close()
 
 
+@pytest.mark.asyncio
+async def test_classify_reports_progress_per_batch(tmp_db, monkeypatch):
+    """The progress bar freezes unless classify reports incrementally.
+
+    Round 0 gathers every batch concurrently, so a per-round-only report
+    leaves done=0 for the whole (longest) phase and then jumps to total.
+    With multiple batches, classify must emit at least one update where
+    0 < done < total — i.e. the bar moves *during* the run.
+    """
+    db.init_schema(db.connect(tmp_db))
+    c = db.connect(tmp_db)
+    # >10 articles so the bs=max(10, …) floor still yields multiple batches.
+    n = 25
+    for i in range(n):
+        db.upsert_article(c, {
+            "canonical_url": f"https://x.com/{i}", "title": f"Article {i}",
+            "summary": "Security disclosure", "source_slug": "x",
+            "source_title": "X", "lang": "en", "published": "2026-05-25T10:00:00Z",
+            "fetched_at": "2026-05-25T11:00:00Z", "first_seen_date": "2026-05-25",
+        })
+    c.commit()
+    c.close()
+
+    import llm_rank
+    from backend.app.ingest.llm import news as news_mod
+
+    async def fake_llm_call(client, system_prompt, user_msg, *args, **kwargs):
+        ids = _classify_ids_in_msg(user_msg)
+        return {"items": [{
+            "id": i, "score": 7, "category": "vuln",
+            "is_relevant": True, "reason": "test reason",
+        } for i in ids]}
+
+    classifying_done = []
+    real_report = news_mod._prog.report
+
+    def spy_report(stage, total, done, **kwargs):
+        if stage == "classifying":
+            classifying_done.append((total, done))
+        return real_report(stage, total, done, **kwargs)
+
+    monkeypatch.setattr(llm_rank, "_llm_call", fake_llm_call)
+    monkeypatch.setattr(news_mod._prog, "report", spy_report)
+    monkeypatch.setattr(db, "DEFAULT_DB_PATH", tmp_db)
+    monkeypatch.setenv("LLM_API_KEY", "fake")
+    monkeypatch.setenv("LLM_CLASSIFY_BATCH_SIZE", "10")  # 25 articles → 3 batches
+
+    await llm_rank.classify_news(days=30, verbose=False)
+
+    totals = {t for t, _ in classifying_done}
+    assert totals == {n}, f"total should be constant at {n}, got {totals}"
+    intermediate = [d for _, d in classifying_done if 0 < d < n]
+    assert intermediate, (
+        "classify must report intermediate progress (0 < done < total) so the "
+        f"bar moves mid-run; got done values {[d for _, d in classifying_done]}"
+    )
+
+
 def _classify_ids_in_msg(user_msg):
     ids = []
     for line in user_msg.split("\n"):

@@ -131,6 +131,10 @@ async def classify_news(
                     done.add(rowid)
                 conn.commit()
                 classified += len(done)
+                # Report as each batch lands, not just per-round: round 0 gathers
+                # every batch at once, so a per-round report would leave the bar
+                # frozen at done=0 for the whole (longest) phase, then jump.
+                _prog.report("classifying", len(rows), classified, label="news_classify")
                 return done, False
 
         total = len(rows)
