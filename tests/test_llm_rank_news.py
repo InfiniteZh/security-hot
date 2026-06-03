@@ -181,6 +181,78 @@ async def test_classify_reports_progress_per_batch(tmp_db, monkeypatch):
     )
 
 
+@pytest.mark.asyncio
+async def test_classify_accepts_string_ids(db_with_unscored_articles, monkeypatch):
+    """Reasoning models (e.g. MiniMax-M2) return item ids as JSON strings.
+
+    SQLite article ids are integers, so a strict `id in batch_ids` check skips
+    every returned item → 0 rows written, classify silently does nothing. The
+    matcher must coerce string ids to int (as vuln assess already does).
+    """
+    tmp_db_path = db_with_unscored_articles
+
+    import llm_rank
+
+    async def fake_llm_call(client, system_prompt, user_msg, *args, **kwargs):
+        ids = _classify_ids_in_msg(user_msg)
+        # Echo ids back as STRINGS, like the real model does.
+        return {"items": [{
+            "id": str(i), "score": 7, "category": "vuln",
+            "is_relevant": True, "reason": "test reason",
+        } for i in ids]}
+
+    monkeypatch.setattr(llm_rank, "_llm_call", fake_llm_call)
+    monkeypatch.setattr(db, "DEFAULT_DB_PATH", tmp_db_path)
+    monkeypatch.setenv("LLM_API_KEY", "fake")
+
+    result = await llm_rank.classify_news(days=30, verbose=False)
+
+    assert result["classified"] == 3, "all 3 articles must be scored despite string ids"
+    assert result["partial_batches"] == 0
+    c = db.connect(tmp_db_path)
+    scores = [r["llm_score"] for r in c.execute("SELECT llm_score FROM articles ORDER BY id")]
+    c.close()
+    assert all(s == 7 for s in scores), f"every article must be scored, got {scores}"
+
+
+@pytest.mark.asyncio
+async def test_summarize_accepts_string_ids(tmp_db, monkeypatch):
+    """summarize_news has the same string-id matching path as classify."""
+    db.init_schema(db.connect(tmp_db))
+    c = db.connect(tmp_db)
+    ids = []
+    for i in range(2):
+        rid = db.upsert_article(c, {
+            "canonical_url": f"https://x.com/s{i}", "title": f"High score {i}",
+            "summary": "Security disclosure", "source_slug": "x",
+            "source_title": "X", "lang": "en", "published": "2026-05-25T10:00:00Z",
+            "fetched_at": "2026-05-25T11:00:00Z", "first_seen_date": "2026-05-25",
+        })
+        c.execute("UPDATE articles SET llm_score=8, is_relevant=1 WHERE id=?", [rid])
+        ids.append(rid)
+    c.commit()
+    c.close()
+
+    import llm_rank
+
+    async def fake_llm(client, system, user, *args, **kwargs):
+        # String ids, like the real reasoning model.
+        return {"items": [{"id": str(i), "summary": f"中文摘要 {i}"} for i in ids]}
+
+    monkeypatch.setattr(llm_rank, "_llm_call", fake_llm)
+    monkeypatch.setattr(db, "DEFAULT_DB_PATH", tmp_db)
+    monkeypatch.setenv("LLM_API_KEY", "fake")
+
+    result = await llm_rank.summarize_news(min_score=5, days=30, verbose=False)
+
+    assert result["summarized"] == 2, "both articles must be summarized despite string ids"
+    assert result["partial_batches"] == 0
+    c = db.connect(tmp_db)
+    summaries = [r["llm_summary_zh"] for r in c.execute("SELECT llm_summary_zh FROM articles ORDER BY id")]
+    c.close()
+    assert all(s for s in summaries), f"every article must have a summary, got {summaries}"
+
+
 def _classify_ids_in_msg(user_msg):
     ids = []
     for line in user_msg.split("\n"):

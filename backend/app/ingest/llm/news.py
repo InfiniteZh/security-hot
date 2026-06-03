@@ -21,6 +21,17 @@ from .client import _get_config, _prog, _llm_call_via_facade as _llm_call
 from .prompts import _CLASSIFY_SYSTEM_PROMPT
 
 
+def _coerce_id(v) -> int | None:
+    """Reasoning models (MiniMax-M2 etc.) return item ids as JSON strings.
+    Article ids are SQLite integers, so coerce before matching/writing —
+    otherwise a strict `id in batch_ids` skips every item and nothing gets
+    written. Mirrors vuln.assess_vulns' `int(item["id"])`."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
 # ── Phase 1: Fast classification + scoring ──
 
 def _build_classify_user_msg(batch: list) -> str:
@@ -110,7 +121,7 @@ async def classify_news(
                     return set(), True
                 done: set = set()
                 for item in result.get("items", []):
-                    rowid = item.get("id")
+                    rowid = _coerce_id(item.get("id"))
                     if rowid not in batch_ids:
                         continue
                     cat = item.get("category")
@@ -253,18 +264,20 @@ async def summarize_news(
                     return
                 items = result.get("items", [])
                 batch_ids = {r["id"] for r in batch}
-                returned_ids = {item.get("id") for item in items if item.get("id") in batch_ids}
+                returned_ids = {rid for item in items
+                                if (rid := _coerce_id(item.get("id"))) in batch_ids}
                 if len(returned_ids) < len(batch):
                     partial_batches += 1
                 for item in items:
-                    if item.get("id") not in batch_ids:
+                    rowid = _coerce_id(item.get("id"))
+                    if rowid not in batch_ids:
                         continue
                     summary = (item.get("summary") or "")[:800]
                     if not summary:
                         continue
                     conn.execute(
                         "UPDATE articles SET llm_summary_zh = ?, llm_summarized_at = ? WHERE id = ?",
-                        [summary, now_iso, item.get("id")],
+                        [summary, now_iso, rowid],
                     )
                     summarized += 1
                 conn.commit()
