@@ -7,7 +7,7 @@ import secrets
 import threading
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 
 from ..data import (
@@ -56,12 +56,13 @@ def _contains(needle: str, *haystacks: str | None) -> bool:
 
 @router.get("/api/news", response_model=list[Article], tags=["news"])
 def api_news(
+    response: Response,
     lang: Literal["all", "zh", "en"] = "all",
     category: Literal["all", "incident", "vuln", "supply-chain", "research", "industry"] = "all",
     q: str = "",
     source: str | None = Query(default=None, description="comma-separated source slugs"),
     date: str | None = Query(default=None, description="filter by published date (YYYY-MM-DD)"),
-    limit: int = Query(default=80, ge=1, le=500),
+    limit: int = Query(default=80, ge=1, le=2000),
     sort: str = Query(default="heat", description="'heat' = LLM priority desc then time desc; 'time' = pure chronological."),
 ) -> list[Article]:
     target_date = _validate_date(date)
@@ -97,6 +98,8 @@ def api_news(
             ),
             reverse=True,
         )
+    # Full filtered count for the client's "showing N of M" overflow hint.
+    response.headers["X-Total-Count"] = str(len(items))
     return items[:limit]
 
 

@@ -40,6 +40,27 @@ def _matches_date(timestamp: str | None, target: str) -> bool:
     return timestamp[:10] == target
 
 
+def _within_window(timestamp: str | None, end: str, days: int) -> bool:
+    """True if ``timestamp``'s calendar day falls in the inclusive window
+    ``[end - (days-1), end]``. ``days <= 1`` collapses to a single-day match.
+
+    Used by the vuln view, whose publish dates are sparse across the calendar:
+    a single-day filter on "today" is almost always empty, so the UI defaults
+    to a rolling N-day window instead. News keeps strict single-day semantics.
+    """
+    if not timestamp:
+        return False
+    day = timestamp[:10]
+    if days <= 1:
+        return day == end
+    from datetime import datetime as _dt, timedelta as _td
+    try:
+        start = (_dt.strptime(end, "%Y-%m-%d") - _td(days=days - 1)).strftime("%Y-%m-%d")
+    except ValueError:
+        return day == end
+    return start <= day <= end
+
+
 def _validate_date(value: str | None) -> str | None:
     if value is None:
         return None
