@@ -214,6 +214,11 @@ def test_murphy_items_normalize_into_vulns(tmp_path, monkeypatch):
     assert cve.severity == "medium"
     assert cve.cve_id == "CVE-2026-1111"
     assert "MALWARE" not in cve.tags
+    # Non-malicious dependency CVE → NOT supply-chain poisoning, must not dispatch.
+    assert cve.kind == "cve"
+    assert cve.is_supply_chain is False
+    # ...while the genuinely poisoned package stays supply-chain.
+    assert malware.is_supply_chain is True
     assert cve.references[0].url == "https://example.com/detail/CVE-2026-1111"
 
 
@@ -255,5 +260,7 @@ def test_all_vulns_preserves_merged_sources(tmp_path, monkeypatch):
 
     assert merged.source == "cisa-kev"
     assert merged.kind == "itw"
-    assert merged.is_supply_chain is True
+    # Axios prototype-pollution is an ordinary dependency CVE, not a poisoned
+    # package — MurphySec no longer flags non-malicious items as supply-chain.
+    assert merged.is_supply_chain is False
     assert merged.sources == ["cisa-kev", "murphysec"]

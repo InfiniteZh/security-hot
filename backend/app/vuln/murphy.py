@@ -343,17 +343,19 @@ def _murphy_to_vulns() -> list[Vuln]:
         iocs = _murphy_iocs(item)
         out.append(Vuln(
             id=cve or ghsa or f"MURPHY-{key}",
-            # MurphySec is a software-composition / dependency source → always
-            # categorize as supply-chain risk (final kind is recomputed by
-            # classify_kind, where KEV/ITW still outranks supply for overlaps).
-            kind="supply",
+            # MurphySec is a software-composition / dependency source that reports
+            # BOTH ordinary vulnerabilities in legit packages AND genuinely poisoned
+            # (malicious) packages. Only the latter is supply-chain *poisoning* — gate
+            # is_supply_chain on the malicious flag so plain dependency CVEs stay 'cve'.
+            # Final kind is recomputed by classify_kind (KEV/ITW still outrank supply).
+            kind="supply" if malicious else "cve",
             cve_id=cve,
             ghsa_id=ghsa,
             title=title[:220],
             summary=summary,
             severity=severity,
             cvss=cvss,
-            is_supply_chain=True,
+            is_supply_chain=malicious,
             ecosystem=ecosystem,
             package=package,
             vendor=vendor,
