@@ -1,0 +1,600 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>security-hot · 重设计稿</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#FAF9F5; --paper-2:#F2F1EA; --card:#FFFFFF; --card-tint:#FCFBF8;
+  --ink:#17160F; --ink-2:#3C3A30; --dim:#6E6B5E; --faint:#9C988A; --veil:#C8C4B6;
+  --hair:#E8E5DA; --hair-2:#DCD8CB;
+  --signal:#B23A1E; --signal-wash:#FBEDE7;
+  --crit:#B23A1E; --crit-wash:#FBEDE7;
+  --high:#BC6516; --high-wash:#FBF0E2;
+  --med:#9A7A12; --med-wash:#F8F2DC;
+  --low:#5C7048; --low-wash:#EEF2E6;
+  --ok:#2C6E49; --ok-wash:#EDF4EF;
+  --r:13px;
+  --shadow:0 1px 2px rgba(23,22,15,.04), 0 8px 24px -16px rgba(23,22,15,.18);
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+html{scroll-behavior:smooth;}
+body{
+  background:var(--paper); color:var(--ink-2);
+  font-family:"Geist","SF Pro Text",-apple-system,system-ui,"PingFang SC",sans-serif;
+  font-size:14.5px; line-height:1.55; -webkit-font-smoothing:antialiased;
+  position:relative; min-height:100vh;
+}
+body::before{
+  content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  mix-blend-mode:multiply;
+}
+.mono{font-family:"Geist Mono",ui-monospace,monospace;}
+.serif{font-family:"Newsreader",Georgia,serif;}
+.wrap{max-width:1220px; margin:0 auto; padding:0 30px; position:relative; z-index:1;}
+
+/* ── top chrome ── */
+.topbar{
+  position:sticky; top:0; z-index:40;
+  background:color-mix(in srgb, var(--paper) 86%, transparent);
+  backdrop-filter:blur(14px) saturate(1.1);
+  border-bottom:1px solid var(--hair);
+}
+.topbar .row{display:flex; align-items:center; gap:22px; height:62px;}
+.brand{font-family:"Newsreader",serif; font-size:21px; font-weight:500; letter-spacing:-.01em; color:var(--ink); display:flex; align-items:baseline; gap:9px; cursor:pointer;}
+.brand .mk{width:9px; height:9px; border-radius:2px; background:var(--signal); display:inline-block; transform:translateY(-1px);}
+.brand small{font-family:"Geist Mono",monospace; font-size:10px; letter-spacing:.18em; text-transform:uppercase; color:var(--faint); font-weight:500;}
+.searchbox{
+  flex:1; max-width:430px; margin-left:8px; display:flex; align-items:center; gap:10px;
+  background:var(--card); border:1px solid var(--hair-2); border-radius:10px;
+  padding:8px 13px; color:var(--faint); cursor:text; transition:.18s;
+}
+.searchbox:hover{border-color:var(--veil);}
+.searchbox svg{flex-shrink:0;}
+.searchbox .ph{font-size:13px; flex:1;}
+.searchbox kbd{font-family:"Geist Mono",monospace; font-size:10.5px; border:1px solid var(--hair-2); border-radius:5px; padding:2px 6px; color:var(--dim); background:var(--paper);}
+.top-right{margin-left:auto; display:flex; align-items:center; gap:7px;}
+.ghost{
+  font-family:"Geist Mono",monospace; font-size:11.5px; color:var(--dim);
+  border:1px solid var(--hair-2); background:transparent; border-radius:8px;
+  padding:6px 11px; cursor:pointer; transition:.18s; display:inline-flex; align-items:center; gap:7px;
+}
+.ghost:hover{border-color:var(--veil); color:var(--ink); background:var(--card);}
+.ghost.on{background:var(--ink); color:#fff; border-color:var(--ink);}
+.lang{display:inline-flex; border:1px solid var(--hair-2); border-radius:8px; overflow:hidden;}
+.lang button{font-family:"Geist Mono",monospace; font-size:11.5px; padding:6px 11px; border:none; background:transparent; color:var(--dim); cursor:pointer; transition:.15s;}
+.lang button.on{background:var(--ink); color:#fff;}
+.live{display:inline-flex; align-items:center; gap:7px; font-family:"Geist Mono",monospace; font-size:11px; color:var(--dim); padding-left:5px;}
+.live .dot{width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 0 rgba(44,110,73,.5); animation:pulse 2.6s infinite;}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(44,110,73,.45);}70%{box-shadow:0 0 0 7px rgba(44,110,73,0);}100%{box-shadow:0 0 0 0 rgba(44,110,73,0);}}
+
+/* ── tabs : pure input feeds only ── */
+.tabs{display:flex; gap:34px; border-bottom:1px solid var(--hair); margin-top:2px;}
+.tab{
+  font-family:"Newsreader",serif; font-size:17px; color:var(--faint); padding:14px 1px 12px; cursor:pointer;
+  border-bottom:2px solid transparent; display:flex; align-items:baseline; gap:8px; transition:.18s; text-decoration:none; background:none; border-top:none; border-left:none; border-right:none;
+}
+.tab .ct{font-family:"Geist Mono",monospace; font-size:11px; color:var(--veil);}
+.tab:hover{color:var(--ink-2);}
+.tab.on{color:var(--ink); font-weight:500; border-bottom-color:var(--signal);}
+.tab.on .ct{color:var(--signal);}
+.tab[disabled]{cursor:not-allowed; opacity:.6;}
+
+/* ── per-view editorial hero ── */
+.hero{display:flex; align-items:flex-end; gap:28px; padding:36px 0 22px; flex-wrap:wrap;}
+.hero h1{
+  font-family:"Newsreader",serif; font-weight:400; color:var(--ink);
+  font-size:48px; line-height:.98; letter-spacing:-.02em; font-optical-sizing:auto;
+}
+.hero h1 em{font-style:italic; color:var(--signal);}
+.hero .sub{font-family:"Newsreader",serif; font-style:italic; font-size:16px; color:var(--dim); margin-top:8px;}
+.ledger{margin-left:auto; display:flex; gap:0; border:1px solid var(--hair); border-radius:var(--r); overflow:hidden; background:var(--card); box-shadow:var(--shadow);}
+.ledger .cell{padding:13px 19px; border-right:1px solid var(--hair); text-align:left;}
+.ledger .cell:last-child{border-right:none;}
+.ledger .k{font-family:"Geist Mono",monospace; font-size:9px; letter-spacing:.15em; text-transform:uppercase; color:var(--faint);}
+.ledger .v{font-family:"Geist Mono",monospace; font-size:25px; font-weight:500; color:var(--ink); line-height:1.15; margin-top:3px;}
+.ledger .v.sig{color:var(--signal);}
+.ledger .v small{font-size:12px; color:var(--faint); margin-left:1px;}
+
+/* ── contextual controls : sit WITH the content, not floating at top ── */
+.controls{display:flex; align-items:center; gap:16px; padding:4px 0 20px; flex-wrap:wrap;}
+.seg-label{font-family:"Geist Mono",monospace; font-size:9.5px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint);}
+.seg{position:relative; display:inline-flex; background:var(--paper-2); border:1px solid var(--hair-2); border-radius:11px; padding:4px;}
+.seg .ind{position:absolute; top:4px; bottom:4px; border-radius:8px; background:var(--ink); box-shadow:0 1px 3px rgba(23,22,15,.22); transition:left .34s cubic-bezier(.5,1.3,.4,1), width .34s cubic-bezier(.5,1.3,.4,1);}
+.seg button{position:relative; z-index:1; font-family:"Geist Mono",monospace; font-size:12.5px; color:var(--dim); background:none; border:none; cursor:pointer; padding:7px 16px; transition:color .2s; white-space:nowrap;}
+.seg button.on{color:#fff;}
+.win-note{margin-left:auto; font-family:"Geist Mono",monospace; font-size:11px; color:var(--faint);}
+.win-note b{color:var(--dim); font-weight:500;}
+/* news day strip variant */
+.daystrip{display:flex; align-items:center; gap:4px;}
+.daystrip .arrow{font-family:"Geist Mono",monospace; color:var(--veil); cursor:pointer; padding:6px 8px; font-size:14px; border-radius:8px;}
+.daystrip .arrow:hover{color:var(--ink); background:var(--card);}
+.day{font-family:"Geist Mono",monospace; font-size:12px; cursor:pointer; padding:7px 13px; border-radius:9px; border:1px solid transparent; color:var(--dim); display:flex; flex-direction:column; align-items:center; gap:1px; line-height:1;}
+.day .wd{font-size:9px; color:var(--faint); letter-spacing:.05em;}
+.day:hover{background:var(--card); border-color:var(--hair-2);}
+.day.on{background:var(--ink); color:#fff;}
+.day.on .wd{color:rgba(255,255,255,.6);}
+
+/* ── kind / cat sub-filter ── */
+.kinds{display:flex; gap:9px; flex-wrap:wrap; padding-bottom:20px; border-bottom:1px solid var(--hair); margin-bottom:24px; align-items:center;}
+.pill{
+  font-size:13px; padding:7px 14px; border-radius:999px; border:1px solid var(--hair-2);
+  background:var(--card); color:var(--dim); cursor:pointer; display:inline-flex; gap:8px; align-items:center; transition:.16s;
+}
+.pill:hover{border-color:var(--veil); color:var(--ink);}
+.pill .n{font-family:"Geist Mono",monospace; font-size:10.5px; color:var(--veil);}
+.pill.on{background:var(--ink); color:#fff; border-color:var(--ink);}
+.pill.on .n{color:rgba(255,255,255,.6);}
+.kinds .minor{margin-left:auto; display:flex; gap:9px; align-items:center;}
+.kinds .sortseg{display:inline-flex; border:1px solid var(--hair-2); border-radius:9px; overflow:hidden;}
+.kinds .sortseg button{font-family:"Geist Mono",monospace; font-size:11px; padding:6px 11px; border:none; background:transparent; color:var(--dim); cursor:pointer;}
+.kinds .sortseg button.on{background:var(--ink); color:#fff;}
+
+/* ── layout ── */
+.grid{display:grid; grid-template-columns:1fr 320px; gap:42px; padding-bottom:90px;}
+@media(max-width:920px){.grid{grid-template-columns:1fr;}}
+
+/* ── cards ── */
+.card{
+  position:relative; background:var(--card); border:1px solid var(--hair);
+  border-radius:var(--r); padding:20px 22px 19px 26px; margin-bottom:14px;
+  box-shadow:var(--shadow); transition:transform .2s, box-shadow .2s, border-color .2s;
+  opacity:0; transform:translateY(10px); animation:rise .55s cubic-bezier(.2,.7,.3,1) forwards;
+}
+@keyframes rise{to{opacity:1; transform:none;}}
+.card:hover{transform:translateY(-2px); box-shadow:0 2px 4px rgba(23,22,15,.05), 0 18px 40px -22px rgba(23,22,15,.28); border-color:var(--hair-2);}
+.card::before{content:""; position:absolute; left:0; top:14px; bottom:14px; width:3px; border-radius:3px; background:var(--veil);}
+.card.crit::before{background:var(--crit);} .card.high::before{background:var(--high);}
+.card.med::before{background:var(--med);} .card.low::before{background:var(--low);}
+.card .head{display:flex; align-items:flex-start; gap:14px;}
+.cve{font-family:"Geist Mono",monospace; font-size:12px; color:var(--dim); letter-spacing:.01em;}
+.ti{font-family:"Newsreader",serif; font-size:20px; font-weight:500; line-height:1.28; color:var(--ink); margin-top:2px; letter-spacing:-.01em;}
+.sev{margin-left:auto; flex-shrink:0; font-family:"Geist Mono",monospace; font-size:10px; letter-spacing:.1em; text-transform:uppercase; padding:4px 10px; border-radius:7px; font-weight:500; height:fit-content;}
+.sev.crit{background:var(--crit-wash); color:var(--crit);}
+.sev.high{background:var(--high-wash); color:var(--high);}
+.sev.med{background:var(--med-wash); color:var(--med);}
+.sev.low{background:var(--low-wash); color:var(--low);}
+.datarow{display:flex; gap:28px; margin-top:16px; flex-wrap:wrap;}
+.dat .k{font-family:"Geist Mono",monospace; font-size:9px; letter-spacing:.13em; text-transform:uppercase; color:var(--faint);}
+.dat .v{font-family:"Geist Mono",monospace; font-size:15px; color:var(--ink); margin-top:2px; font-weight:500;}
+.dat .v.muted{color:var(--veil);}
+.dat .v small{font-size:10px; color:var(--faint);}
+.epss-bar{width:62px; height:3px; border-radius:2px; background:var(--hair-2); margin-top:6px; overflow:hidden;}
+.epss-bar i{display:block; height:100%; background:var(--signal); border-radius:2px;}
+.ai{margin-top:16px; padding:13px 16px; border-radius:10px; background:var(--card-tint); border:1px solid var(--hair); border-left:2px solid var(--signal);}
+.ai .lbl{font-family:"Geist Mono",monospace; font-size:9px; letter-spacing:.15em; text-transform:uppercase; color:var(--signal); margin-bottom:5px; display:flex; align-items:center; gap:7px;}
+.ai .lbl::after{content:""; flex:1; height:1px; background:linear-gradient(90deg,var(--hair-2),transparent);}
+.ai p{font-size:13.5px; color:var(--ink-2); line-height:1.6;}
+.tags{display:flex; gap:7px; flex-wrap:wrap; margin-top:14px;}
+.tag{font-family:"Geist Mono",monospace; font-size:10.5px; color:var(--dim); border:1px solid var(--hair-2); border-radius:6px; padding:3px 9px; background:var(--paper);}
+.tag.kev{color:var(--signal); border-color:#E6CBC0; background:var(--signal-wash);}
+.tag.disp{color:var(--ok); border-color:#BFD8C8; background:var(--ok-wash);}
+
+/* news card variant */
+.card.news{padding-left:22px;}
+.card.news::before{display:none;}
+.card.news .ti{font-size:21px; margin-top:0;}
+.card.news .lead{font-size:13.5px; color:var(--dim); margin-top:8px; line-height:1.6;}
+.card.news .nmeta{display:flex; gap:16px; margin-top:13px; font-family:"Geist Mono",monospace; font-size:11px; color:var(--faint); align-items:center; flex-wrap:wrap;}
+.card.news .nmeta .src{color:var(--ink-2);}
+.card.news .nmeta .score{color:var(--signal);}
+.catdot{display:inline-flex; align-items:center; gap:5px; font-family:"Geist Mono",monospace; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim);}
+.catdot i{width:6px; height:6px; border-radius:50%; background:var(--veil);}
+.catdot.incident i{background:var(--crit);} .catdot.vuln i{background:var(--high);}
+.catdot.supply i{background:var(--med);} .catdot.research i{background:var(--ok);} .catdot.industry i{background:var(--dim);}
+
+/* ── overflow ── */
+.overflow{margin-top:20px; display:flex; align-items:center; gap:18px; padding:18px 22px; border:1px solid var(--hair-2); border-radius:var(--r); background:linear-gradient(180deg,var(--card) 0%, var(--card-tint) 100%); position:relative; overflow:hidden;}
+.overflow::before{content:""; position:absolute; left:0; right:0; top:0; height:1px; background:linear-gradient(90deg,transparent,var(--signal),transparent); opacity:.5;}
+.overflow .meter{flex:1;}
+.overflow .meter .lab{font-family:"Geist Mono",monospace; font-size:11px; color:var(--dim);}
+.overflow .meter .lab b{color:var(--ink); font-weight:500;}
+.overflow .bar{height:4px; border-radius:3px; background:var(--hair-2); margin-top:9px; overflow:hidden;}
+.overflow .bar i{display:block; height:100%; width:82%; background:linear-gradient(90deg,var(--ink),var(--signal)); border-radius:3px;}
+.more{font-family:"Geist Mono",monospace; font-size:12.5px; cursor:pointer; white-space:nowrap; background:var(--ink); color:#fff; border:none; border-radius:9px; padding:10px 18px; transition:.18s; display:inline-flex; align-items:center; gap:8px;}
+.more:hover{background:var(--signal); transform:translateX(2px);}
+
+/* ── aside ── */
+aside{position:sticky; top:84px; align-self:start;}
+.panel{margin-bottom:30px;}
+.panel h3{font-family:"Geist Mono",monospace; font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--faint); margin-bottom:13px; display:flex; align-items:center; gap:9px;}
+.panel h3::after{content:""; flex:1; height:1px; background:var(--hair);}
+.panel h3 .out{color:var(--ok); letter-spacing:.1em;}
+.heat{display:flex; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid var(--hair); cursor:pointer; transition:.15s;}
+.heat:hover{padding-left:4px;}
+.heat .rk{font-family:"Newsreader",serif; font-size:17px; font-style:italic; color:var(--veil); width:20px; text-align:center;}
+.heat:nth-child(2) .rk,.heat:nth-child(3) .rk,.heat:nth-child(4) .rk{color:var(--signal);}
+.heat .bd{flex:1; min-width:0;}
+.heat .id{font-family:"Geist Mono",monospace; font-size:12px; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.heat .bar{height:3px; border-radius:2px; background:var(--hair-2); margin-top:5px; overflow:hidden;}
+.heat .bar i{display:block; height:100%; background:var(--signal); border-radius:2px;}
+.heat .hv{font-family:"Geist Mono",monospace; font-size:11px; color:var(--dim);}
+.kw{display:inline-flex; align-items:center; gap:6px; font-family:"Geist Mono",monospace; font-size:11.5px; color:var(--dim); border:1px solid var(--hair-2); border-radius:7px; padding:5px 10px; margin:0 6px 7px 0; background:var(--card); cursor:pointer; transition:.15s;}
+.kw:hover{border-color:var(--signal); color:var(--signal);}
+.kw .ct{color:var(--veil); font-size:10px;}
+
+/* ── DISPATCH panel : the OUTPUT, lives in the rail, not the tab row ── */
+.dispatch{
+  border:1px solid var(--hair-2); border-radius:var(--r); overflow:hidden;
+  background:linear-gradient(180deg, var(--ok-wash) 0%, var(--card) 38%);
+}
+.dispatch .dh{padding:14px 16px 12px; border-bottom:1px solid var(--hair);}
+.dispatch .dh .top{display:flex; align-items:center; gap:9px;}
+.dispatch .dh .label{font-family:"Geist Mono",monospace; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--ok);}
+.dispatch .dh .arrow-out{margin-left:auto; font-family:"Geist Mono",monospace; font-size:11px; color:var(--ok);}
+.dispatch .dh .count{font-family:"Newsreader",serif; font-size:30px; color:var(--ink); line-height:1; margin-top:9px; display:flex; align-items:baseline; gap:8px;}
+.dispatch .dh .count em{font-style:italic; color:var(--ok);}
+.dispatch .dh .count small{font-family:"Geist Mono",monospace; font-size:11px; color:var(--dim); font-weight:400;}
+.dispatch .flow{padding:6px 16px 14px;}
+.drow{display:flex; align-items:center; gap:10px; padding:9px 0; border-bottom:1px solid var(--hair); cursor:pointer; transition:.15s;}
+.drow:last-child{border-bottom:none;}
+.drow:hover{padding-left:3px;}
+.drow .st{width:7px; height:7px; border-radius:50%; flex-shrink:0; background:var(--ok);}
+.drow .st.queued{background:var(--med); box-shadow:0 0 0 0 rgba(154,122,18,.5); animation:pulse2 2.4s infinite;}
+@keyframes pulse2{0%{box-shadow:0 0 0 0 rgba(154,122,18,.4);}70%{box-shadow:0 0 0 6px rgba(154,122,18,0);}100%{box-shadow:0 0 0 0 rgba(154,122,18,0);}}
+.drow .pkg{font-family:"Geist Mono",monospace; font-size:12px; color:var(--ink); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.drow .eco{font-family:"Geist Mono",monospace; font-size:10px; color:var(--dim); border:1px solid var(--hair-2); border-radius:5px; padding:1px 6px; background:var(--paper);}
+.dispatch .dfoot{padding:11px 16px; border-top:1px solid var(--hair); background:var(--card-tint); display:flex; align-items:center; gap:8px;}
+.dispatch .dfoot .topic{font-family:"Geist Mono",monospace; font-size:10.5px; color:var(--dim);}
+.dispatch .dfoot .topic b{color:var(--ok); font-weight:500;}
+.dispatch .dfoot a{margin-left:auto; font-family:"Geist Mono",monospace; font-size:11px; color:var(--ink); text-decoration:none; border-bottom:1px solid var(--veil);}
+
+.pl{display:flex; align-items:center; gap:10px; font-family:"Geist Mono",monospace; font-size:11.5px; color:var(--dim); padding:7px 0;}
+.pl .st{width:7px; height:7px; border-radius:50%; background:var(--ok); flex-shrink:0;}
+.pl .st.warn{background:var(--med);}
+.pl .tm{margin-left:auto; color:var(--veil); font-size:10.5px;}
+
+.foot{padding:28px 0 60px; border-top:1px solid var(--hair); font-family:"Geist Mono",monospace; font-size:10.5px; color:var(--faint); display:flex; gap:18px; flex-wrap:wrap;}
+
+.hide{display:none !important;}
+
+/* annotation callouts explaining what changed */
+.note{font-family:"Geist Mono",monospace; font-size:11px; color:#8a5a14; background:#FBF3DF; border:1px solid #ECD9A8; border-left:3px solid var(--high); border-radius:9px; padding:11px 15px; margin:16px 0 0; line-height:1.7;}
+.note b{color:#6b4310;}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap">
+    <div class="row">
+      <div class="brand"><span class="mk"></span>security·hot <small>每日安全情报</small></div>
+      <div class="searchbox">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        <span class="ph">搜索 CVE / 厂商 / 来源…</span>
+        <kbd>⌘K</kbd>
+      </div>
+      <div class="top-right">
+        <span class="live"><span class="dot"></span> 实时</span>
+        <div class="lang"><button class="on">中</button><button>EN</button></div>
+        <button class="ghost" title="流水线状态">◴</button>
+        <button class="ghost" title="刷新">↻</button>
+      </div>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button class="tab on" data-tab="news">行业资讯 <span class="ct">42</span></button>
+      <button class="tab" data-tab="vuln">漏洞情报 <span class="ct">172</span></button>
+      <button class="tab" data-tab="papers" disabled>安全论文 <span class="ct">·</span></button>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- ════════════ NEWS VIEW ════════════ -->
+  <section id="view-news">
+    <section class="hero">
+      <div>
+        <h1>行业<em>资讯</em></h1>
+        <div class="sub">42 篇 · 跨 696 个活跃 RSS 源 · AI 分类 + 中文摘要 + 跨源镜像聚合</div>
+      </div>
+      <div class="ledger">
+        <div class="cell"><div class="k">今日</div><div class="v">42</div></div>
+        <div class="cell"><div class="k">安全事件</div><div class="v sig">6</div></div>
+        <div class="cell"><div class="k">高分</div><div class="v">11</div></div>
+        <div class="cell"><div class="k">镜像簇</div><div class="v">8</div></div>
+      </div>
+    </section>
+
+    <!-- contextual control : per-day calendar strip, sits WITH news -->
+    <section class="controls">
+      <span class="seg-label">日期</span>
+      <div class="daystrip">
+        <span class="arrow">‹</span>
+        <span class="day"><span class="wd">四</span>05.28</span>
+        <span class="day"><span class="wd">五</span>05.29</span>
+        <span class="day"><span class="wd">六</span>05.30</span>
+        <span class="day"><span class="wd">日</span>05.31</span>
+        <span class="day"><span class="wd">一</span>06.01</span>
+        <span class="day"><span class="wd">二</span>06.02</span>
+        <span class="day on"><span class="wd">三</span>06.03</span>
+        <span class="arrow">›</span>
+      </div>
+      <span class="win-note">按天快照 · <b>今日</b></span>
+    </section>
+
+    <div class="kinds">
+      <span class="pill on">全部 <span class="n">42</span></span>
+      <span class="pill">安全事件 <span class="n">6</span></span>
+      <span class="pill">漏洞 <span class="n">9</span></span>
+      <span class="pill">供应链 <span class="n">4</span></span>
+      <span class="pill">研究 <span class="n">12</span></span>
+      <span class="pill">行业动态 <span class="n">11</span></span>
+      <div class="minor">
+        <div class="sortseg"><button class="on">AI 排序</button><button>时间</button></div>
+        <div class="sortseg"><button class="on">全部</button><button>中</button><button>EN</button></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <main>
+        <article class="card news" style="animation-delay:.04s">
+          <div class="catdot incident"><i></i>安全事件</div>
+          <h2 class="ti">微软修补 Outlook 零点击 RCE，攻击者已在野利用</h2>
+          <p class="lead">该漏洞允许攻击者通过特制邮件在预览窗格无交互触发代码执行。微软已紧急推送带外补丁，CISA 同步纳入 KEV。</p>
+          <div class="nmeta"><span class="src">BleepingComputer</span><span>· 2 小时前</span><span class="score">AI 8.6</span><span>· 已译中文摘要</span></div>
+        </article>
+        <article class="card news" style="animation-delay:.1s">
+          <div class="catdot supply"><i></i>供应链</div>
+          <h2 class="ti">npm 恶意包 colors-fix 投毒事件溯源：窃取 .npmrc 凭据</h2>
+          <p class="lead">typosquatting 目标为热门包 colors，postinstall 钩子外带凭据。研究者还原了攻击者基础设施与 C2 域名。</p>
+          <div class="nmeta"><span class="src">The Record</span><span>· 5 小时前</span><span class="score">AI 8.1</span><span>· 关联 1 条投送 ↗</span></div>
+        </article>
+        <article class="card news" style="animation-delay:.16s">
+          <div class="catdot research"><i></i>研究</div>
+          <h2 class="ti">Project Zero 公布新型 V8 类型混淆利用链技术细节</h2>
+          <p class="lead">文章拆解了从类型混淆到任意读写的完整原语构造，并讨论了对现代缓解措施的绕过。</p>
+          <div class="nmeta"><span class="src">Google P0</span><span>· 8 小时前</span><span class="score">AI 7.4</span></div>
+        </article>
+        <div class="overflow">
+          <div class="meter">
+            <div class="lab">已展示 <b>32</b> 篇 · 今日共 <b>42</b> 篇（已隐藏 10 篇低质 llm_score≤2）</div>
+            <div class="bar"><i style="width:76%"></i></div>
+          </div>
+          <button class="more">查看更多 →</button>
+        </div>
+        <p class="note"><b>改动 1 · 时间控件归位</b>：日期 strip 不再悬浮在 hero 上方的全局位置，而是作为「资讯视图」自己的控件，紧贴它控制的列表。切到漏洞 tab，这一行会自动换成「滚动窗口」语义。</p>
+      </main>
+      <aside id="aside-news">
+        <div class="panel">
+          <h3>今日热读</h3>
+          <div class="heat"><span class="rk">1</span><div class="bd"><div class="id">Outlook 0-click RCE</div><div class="bar"><i style="width:100%"></i></div></div><span class="hv">8.6</span></div>
+          <div class="heat"><span class="rk">2</span><div class="bd"><div class="id">colors-fix 投毒溯源</div><div class="bar"><i style="width:88%"></i></div></div><span class="hv">8.1</span></div>
+          <div class="heat"><span class="rk">3</span><div class="bd"><div class="id">V8 类型混淆利用链</div><div class="bar"><i style="width:74%"></i></div></div><span class="hv">7.4</span></div>
+        </div>
+        <div class="panel">
+          <h3>趋势关键词</h3>
+          <span class="kw">Outlook <span class="ct">7</span></span>
+          <span class="kw">npm 投毒 <span class="ct">5</span></span>
+          <span class="kw">勒索 <span class="ct">4</span></span>
+          <span class="kw">V8 <span class="ct">3</span></span>
+        </div>
+        <!-- DISPATCH lives here as OUTPUT, shared across views -->
+        <div class="panel" id="dispatch-panel">
+          <h3>处置流 <span class="out">↗ 输出</span></h3>
+          <div class="dispatch">
+            <div class="dh">
+              <div class="top"><span class="label">→ Kafka 处置队列</span><span class="arrow-out">今日 ↗</span></div>
+              <div class="count"><em>14</em><small>条供应链投毒已投送</small></div>
+            </div>
+            <div class="flow">
+              <div class="drow"><span class="st queued"></span><span class="pkg">sicoob-auth-helper</span><span class="eco">maven</span></div>
+              <div class="drow"><span class="st queued"></span><span class="pkg">colors-fix</span><span class="eco">npm</span></div>
+              <div class="drow"><span class="st"></span><span class="pkg">jqwik-core-patch</span><span class="eco">maven</span></div>
+              <div class="drow"><span class="st"></span><span class="pkg">pyyaml-utils</span><span class="eco">pypi</span></div>
+            </div>
+            <div class="dfoot">
+              <span class="topic">topic <b>vuln.supply.poison</b></span>
+              <a href="#">全部 14 →</a>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>流水线</h3>
+          <div class="pl"><span class="st"></span> fetch · news <span class="tm">06-03 08:12</span></div>
+          <div class="pl"><span class="st"></span> llm · classify ✓ <span class="tm">42 / 42</span></div>
+          <div class="pl"><span class="st warn"></span> dispatch <span class="tm">14 queued</span></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- ════════════ VULN VIEW ════════════ -->
+  <section id="view-vuln" class="hide">
+    <section class="hero">
+      <div>
+        <h1>漏洞<em>情报</em></h1>
+        <div class="sub">cross-source vulnerability intelligence · KEV · GHSA · PoC · OSV · MurphySec</div>
+      </div>
+      <div class="ledger">
+        <div class="cell"><div class="k">窗口内</div><div class="v">172</div></div>
+        <div class="cell"><div class="k">严重</div><div class="v sig">38</div></div>
+        <div class="cell"><div class="k">在野</div><div class="v">3</div></div>
+        <div class="cell"><div class="k">已投送</div><div class="v">14<small>↗</small></div></div>
+      </div>
+    </section>
+
+    <!-- contextual control : rolling window, sits WITH vuln -->
+    <section class="controls">
+      <span class="seg-label">时间窗口</span>
+      <div class="seg" id="seg">
+        <span class="ind" id="ind"></span>
+        <button class="on" data-d="3">近 3 天</button>
+        <button data-d="7">近 7 天</button>
+        <button data-d="30">近 30 天</button>
+      </div>
+      <span class="win-note">滚动窗口 · 截至 <b>06-03</b> · 非单日快照</span>
+    </section>
+
+    <div class="kinds">
+      <span class="pill on">全部 <span class="n">172</span></span>
+      <span class="pill">CVE · 0day <span class="n">141</span></span>
+      <span class="pill">供应链投毒 <span class="n">14</span></span>
+      <span class="pill">PoC 首发 <span class="n">31</span></span>
+      <span class="pill">在野利用 <span class="n">3</span></span>
+      <div class="minor">
+        <div class="sortseg"><button class="on">AI 排序</button><button>时间</button></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <main>
+        <article class="card crit" style="animation-delay:.04s">
+          <div class="head">
+            <div>
+              <div class="cve">CVE-2026-31188 · GHSA-7f4q-9m2x</div>
+              <h2 class="ti">Apache Commons Collections 反序列化远程代码执行</h2>
+            </div>
+            <span class="sev crit">critical</span>
+          </div>
+          <div class="datarow">
+            <div class="dat"><div class="k">CVSS</div><div class="v">9.8</div></div>
+            <div class="dat"><div class="k">EPSS</div><div class="v">94<small>%</small></div><div class="epss-bar"><i style="width:94%"></i></div></div>
+            <div class="dat"><div class="k">PoC</div><div class="v" style="color:var(--ok)">6</div></div>
+            <div class="dat"><div class="k">Heat</div><div class="v sig">98</div></div>
+            <div class="dat"><div class="k">Package</div><div class="v" style="font-size:13px">commons-collections</div></div>
+          </div>
+          <div class="ai">
+            <div class="lbl">AI 研判 · 严重</div>
+            <p>该 gadget 链在存在不可信反序列化入口的服务中可直接 RCE，已有公开 exploit 与 Metasploit 模块。建议立即升级至 4.5.0 并审计所有 readObject 调用面。</p>
+          </div>
+          <div class="tags"><span class="tag kev">KEV</span><span class="tag">java</span><span class="tag">deserialization</span><span class="tag">metasploit</span></div>
+        </article>
+
+        <article class="card crit" style="animation-delay:.1s">
+          <div class="head">
+            <div>
+              <div class="cve">GHSA-xq3w-4p8d-2z9k · OSV-MAL</div>
+              <h2 class="ti">npm 恶意包 <span style="font-style:italic">colors-fix</span> 投毒：窃取 .npmrc 凭据</h2>
+            </div>
+            <span class="sev crit">critical</span>
+          </div>
+          <div class="datarow">
+            <div class="dat"><div class="k">来源</div><div class="v" style="font-size:13px">OSV-malware</div></div>
+            <div class="dat"><div class="k">生态</div><div class="v" style="font-size:13px">npm</div></div>
+            <div class="dat"><div class="k">Heat</div><div class="v sig">77</div></div>
+            <div class="dat"><div class="k">IoC</div><div class="v">3</div></div>
+          </div>
+          <div class="ai">
+            <div class="lbl">AI 研判 · 供应链投毒</div>
+            <p>包在 postinstall 钩子中读取 ~/.npmrc 与环境变量并外带至 hxxps://collect[.]bad。typosquatting 目标为 colors。已自动投送至处置队列。</p>
+          </div>
+          <div class="tags"><span class="tag disp">已投送 Kafka ↗</span><span class="tag">typosquat</span><span class="tag">credential-theft</span></div>
+        </article>
+
+        <article class="card high" style="animation-delay:.16s">
+          <div class="head">
+            <div>
+              <div class="cve">CVE-2026-30021</div>
+              <h2 class="ti">lodash 原型链污染可升级为远程代码执行</h2>
+            </div>
+            <span class="sev high">high</span>
+          </div>
+          <div class="datarow">
+            <div class="dat"><div class="k">CVSS</div><div class="v">8.1</div></div>
+            <div class="dat"><div class="k">EPSS</div><div class="v">71<small>%</small></div><div class="epss-bar"><i style="width:71%"></i></div></div>
+            <div class="dat"><div class="k">PoC</div><div class="v" style="color:var(--ok)">2</div></div>
+            <div class="dat"><div class="k">Heat</div><div class="v">83</div></div>
+            <div class="dat"><div class="k">Package</div><div class="v" style="font-size:13px">lodash</div></div>
+          </div>
+          <div class="tags"><span class="tag">npm</span><span class="tag">prototype-pollution</span><span class="tag">nuclei↗</span></div>
+        </article>
+
+        <div class="overflow">
+          <div class="meter">
+            <div class="lab">已展示 <b>50</b> 条 · 窗口内共 <b>172</b> 条（近 3 天）</div>
+            <div class="bar"><i></i></div>
+          </div>
+          <button class="more">查看更多 →</button>
+        </div>
+        <p class="note"><b>改动 2 · 一家人</b>：漏洞视图和资讯视图共用同一套外壳 / 顶栏 / 右栏 / ⌘K，只是 hero 文案、控件语义、卡片样式按内容自洽切换 —— 不再是两个 display:none 互相打架的拼块。</p>
+      </main>
+      <aside id="aside-vuln">
+        <div class="panel">
+          <h3>漏洞热榜</h3>
+          <div class="heat"><span class="rk">1</span><div class="bd"><div class="id">CVE-2026-31188</div><div class="bar"><i style="width:100%"></i></div></div><span class="hv">98</span></div>
+          <div class="heat"><span class="rk">2</span><div class="bd"><div class="id">CVE-2026-30021</div><div class="bar"><i style="width:85%"></i></div></div><span class="hv">83</span></div>
+          <div class="heat"><span class="rk">3</span><div class="bd"><div class="id">GHSA · colors-fix</div><div class="bar"><i style="width:79%"></i></div></div><span class="hv">77</span></div>
+          <div class="heat"><span class="rk">4</span><div class="bd"><div class="id">CVE-2026-28840</div><div class="bar"><i style="width:64%"></i></div></div><span class="hv">62</span></div>
+          <div class="heat"><span class="rk">5</span><div class="bd"><div class="id">CVE-2026-29977</div><div class="bar"><i style="width:42%"></i></div></div><span class="hv">41</span></div>
+        </div>
+        <div class="panel">
+          <h3>趋势关键词</h3>
+          <span class="kw">反序列化 <span class="ct">12</span></span>
+          <span class="kw">npm 投毒 <span class="ct">9</span></span>
+          <span class="kw">原型链 <span class="ct">7</span></span>
+          <span class="kw">KEV <span class="ct">6</span></span>
+        </div>
+        <!-- same dispatch panel, shared -->
+        <div class="panel">
+          <h3>处置流 <span class="out">↗ 输出</span></h3>
+          <div class="dispatch">
+            <div class="dh">
+              <div class="top"><span class="label">→ Kafka 处置队列</span><span class="arrow-out">今日 ↗</span></div>
+              <div class="count"><em>14</em><small>条供应链投毒已投送</small></div>
+            </div>
+            <div class="flow">
+              <div class="drow"><span class="st queued"></span><span class="pkg">sicoob-auth-helper</span><span class="eco">maven</span></div>
+              <div class="drow"><span class="st queued"></span><span class="pkg">colors-fix</span><span class="eco">npm</span></div>
+              <div class="drow"><span class="st"></span><span class="pkg">jqwik-core-patch</span><span class="eco">maven</span></div>
+              <div class="drow"><span class="st"></span><span class="pkg">pyyaml-utils</span><span class="eco">pypi</span></div>
+            </div>
+            <div class="dfoot">
+              <span class="topic">topic <b>vuln.supply.poison</b></span>
+              <a href="#">全部 14 →</a>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <div class="foot">
+    <span>security·hot · 重设计稿</span>
+    <span>暖纸 · Newsreader × Geist Mono · 单朱红信号色</span>
+    <span>改动：时间控件归位 / 资讯×漏洞统一外壳 / 投送移出 tab 改右栏输出面板</span>
+  </div>
+</div>
+
+<script>
+  // ── tab switching: shared shell, swap view ──
+  const tabs = document.querySelectorAll('#tabs .tab[data-tab]');
+  const views = { news: document.getElementById('view-news'), vuln: document.getElementById('view-vuln') };
+  tabs.forEach(t => t.addEventListener('click', () => {
+    if (t.disabled) return;
+    tabs.forEach(x => x.classList.remove('on'));
+    t.classList.add('on');
+    Object.values(views).forEach(v => v.classList.add('hide'));
+    views[t.dataset.tab].classList.remove('hide');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (t.dataset.tab === 'vuln') requestAnimationFrame(moveInd);
+    // re-trigger card rise animation
+    views[t.dataset.tab].querySelectorAll('.card').forEach((c,i)=>{
+      c.style.animation='none'; void c.offsetWidth;
+      c.style.animation=''; c.style.animationDelay=(0.04+i*0.06)+'s';
+    });
+  }));
+
+  // ── window selector sliding indicator ──
+  const seg = document.getElementById('seg');
+  const ind = document.getElementById('ind');
+  const segBtns = seg ? [...seg.querySelectorAll('button')] : [];
+  function moveInd(){ const b = seg.querySelector('.on'); ind.style.left = b.offsetLeft+'px'; ind.style.width = b.offsetWidth+'px'; }
+  segBtns.forEach(b => b.addEventListener('click', () => { segBtns.forEach(x=>x.classList.remove('on')); b.classList.add('on'); moveInd(); }));
+  window.addEventListener('resize', () => { if(!views.vuln.classList.contains('hide')) moveInd(); });
+
+  // ── pill / sort toggles (local) ──
+  document.querySelectorAll('.kinds').forEach(k=>{
+    k.querySelectorAll('.pill').forEach(p=>p.addEventListener('click',()=>{ k.querySelectorAll('.pill').forEach(x=>x.classList.remove('on')); p.classList.add('on'); }));
+    k.querySelectorAll('.sortseg').forEach(s=>s.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ s.querySelectorAll('button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); })));
+  });
+  document.querySelectorAll('.lang button').forEach(b=>b.addEventListener('click',()=>{ document.querySelectorAll('.lang button').forEach(x=>x.classList.remove('on')); b.classList.add('on'); }));
+  document.querySelectorAll('.daystrip .day').forEach(d=>d.addEventListener('click',()=>{ document.querySelectorAll('.daystrip .day').forEach(x=>x.classList.remove('on')); d.classList.add('on'); }));
+</script>
+</body>
+</html>

@@ -59,7 +59,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link
-  href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
+  href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap"
   rel="stylesheet"
 />
 <script src="https://cdn.tailwindcss.com"></script>
@@ -68,26 +68,27 @@
     theme: {
       extend: {
         fontFamily: {
-          display: ['"Geist"', "ui-sans-serif", "system-ui", "-apple-system"],
+          display: ['"Newsreader"', "Georgia", "ui-serif", "serif"],
+          serif:   ['"Newsreader"', "Georgia", "ui-serif", "serif"],
           sans:    ['"Geist"', "ui-sans-serif", "system-ui", "-apple-system"],
           mono:    ['"Geist Mono"', "ui-monospace", "SFMono-Regular"],
         },
         colors: {
-          // ── OpenAI-style warm light palette ──
-          ink: "#0A0A0A",                 // primary text
+          // ── editorial warm-paper palette · single vermillion signal ──
+          ink: "#17160F",                 // primary text (warm near-black)
           surface: "#FFFFFF",             // card / elevated
-          "surface-2": "#F4F4EE",         // hover / subtle fill
-          hairline: "#E8E5DD",
-          "hairline-2": "#D8D4C7",
-          paper: "#0A0A0A",               // alias kept so old refs resolve
-          "paper-dim": "#3D3D3D",
-          "paper-faint": "#6B6B6B",
-          "paper-veil": "#9A9A9A",
-          signal: "#DC2626",              // KEV / critical / live
-          warn:   "#D97706",
-          ok:     "#10A37F",              // OpenAI green — used sparingly
-          info:   "#2563EB",
-          accent: "#10A37F",
+          "surface-2": "#F2F1EA",         // hover / subtle fill
+          hairline: "#E8E5DA",
+          "hairline-2": "#DCD8CB",
+          paper: "#17160F",               // alias kept so old refs resolve
+          "paper-dim": "#3C3A30",
+          "paper-faint": "#6E6B5E",
+          "paper-veil": "#C8C4B6",
+          signal: "#B23A1E",              // KEV / critical / live — the one signal color
+          warn:   "#BC6516",
+          ok:     "#2C6E49",              // dispatch / success — used sparingly
+          info:   "#5C7048",
+          accent: "#B23A1E",
         },
         letterSpacing: { tightest: "-0.04em" },
       },
@@ -97,23 +98,30 @@
 <style>
   :root {
     color-scheme: light;
-    /* — OpenAI-style warm light: refined hairlines, restrained accents — */
-    --ink: #0A0A0A;
+    /* — editorial warm paper · Newsreader headlines · single vermillion signal — */
+    --ink: #17160F;
     --ink-deep: #000000;
-    --bg: #FAFAF7;
+    --bg: #FAF9F5;
     --surface: #FFFFFF;
-    --surface-2: #F4F4EE;
-    --hairline: #E8E5DD;
-    --hairline-2: #D8D4C7;
-    --paper: #0A0A0A;        /* alias for ink for legacy code refs */
-    --paper-dim: #3D3D3D;
-    --paper-faint: #6B6B6B;
-    --paper-veil: #9A9A9A;
-    --signal: #DC2626;
-    --warn:   #D97706;
-    --ok:     #10A37F;
-    --info:   #2563EB;
-    --accent: #10A37F;
+    --surface-2: #F2F1EA;
+    --card-tint: #FCFBF8;
+    --hairline: #E8E5DA;
+    --hairline-2: #DCD8CB;
+    --paper: #17160F;        /* alias for ink for legacy code refs */
+    --paper-dim: #3C3A30;
+    --paper-faint: #6E6B5E;
+    --paper-veil: #C8C4B6;
+    --signal: #B23A1E;
+    --warn:   #BC6516;
+    --ok:     #2C6E49;
+    --info:   #5C7048;
+    --accent: #B23A1E;
+    /* severity washes — warmed to sit on paper */
+    --crit: #B23A1E; --crit-wash: #FBEDE7;
+    --high: #BC6516; --high-wash: #FBF0E2;
+    --med:  #9A7A12; --med-wash:  #F8F2DC;
+    --low:  #5C7048; --low-wash:  #EEF2E6;
+    --ok-wash: #EDF4EF;
   }
 
   html, body {
@@ -128,13 +136,23 @@
     font-feature-settings: "ss01" on, "ss03" on, "cv11" on, "calt", "kern";
   }
 
-  ::selection { background: rgba(16,163,127,0.18); color: var(--ink); }
+  ::selection { background: rgba(178,58,30,0.16); color: var(--ink); }
 
-  /* No grain on light — it muddies the warm white. Keep a clean canvas. */
-  body::before { display: none; }
+  /* Faint paper grain — gives the warm canvas an editorial, printed feel. */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; opacity: 0.5;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+    mix-blend-mode: multiply; display: block;
+  }
+  .above-grain { position: relative; z-index: 1; }
+  /* keep positioned elements' own scheme (sticky header / sticky rail) intact */
+  header.above-grain { position: sticky; }
+  @media (min-width: 1024px) { aside.above-grain { position: sticky; } }
 
   /* — Typography helpers — */
-  .font-display { font-family: "Geist", ui-sans-serif, system-ui; letter-spacing: -0.018em; }
+  /* font-display is now the Newsreader editorial serif (hero, tab, card, empty states). */
+  .font-display { font-family: "Newsreader", Georgia, ui-serif, serif; letter-spacing: -0.01em; font-optical-sizing: auto; }
+  .serif        { font-family: "Newsreader", Georgia, ui-serif, serif; font-optical-sizing: auto; }
   .font-mono    { font-family: "Geist Mono", ui-monospace, SFMono-Regular, monospace; }
   .hairline     { border-color: var(--hairline); }
   .hairline-2   { border-color: var(--hairline-2); }
@@ -184,6 +202,56 @@
     100% { box-shadow: 0 0 0 0 rgba(16,163,127,0); }
   }
 
+  /* — Vuln rolling-window selector (signature segmented control) — */
+  .vw-label {
+    font-family: "Geist Mono", monospace; font-size: 9.5px;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--paper-faint);
+    flex-shrink: 0;
+  }
+  .vw-seg {
+    position: relative; display: inline-flex; flex-shrink: 0;
+    background: var(--surface-2); border: 1px solid var(--hairline);
+    border-radius: 11px; padding: 4px;
+  }
+  .vw-ind {
+    position: absolute; top: 4px; bottom: 4px; border-radius: 8px;
+    background: var(--ink); box-shadow: 0 1px 3px rgba(23,22,15,.22);
+    transition: left .34s cubic-bezier(.5,1.3,.4,1), width .34s cubic-bezier(.5,1.3,.4,1);
+  }
+  .vw-chip {
+    position: relative; z-index: 1; font-family: "Geist Mono", monospace;
+    font-size: 12.5px; color: var(--paper-dim); background: none; border: none;
+    cursor: pointer; padding: 6px 16px; transition: color .2s; white-space: nowrap;
+  }
+  .vw-chip[data-on="true"] { color: #fff; }
+  .vw-note {
+    font-family: "Geist Mono", monospace; font-size: 11px; color: var(--paper-faint);
+    text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .vw-note b { color: var(--paper-dim); font-weight: 500; }
+
+  /* — Overflow hint (server-truncated result "meter") — */
+  .overflow-hint {
+    margin-top: 20px; display: flex; align-items: center; gap: 18px;
+    padding: 16px 20px; border: 1px solid var(--hairline-2); border-radius: 12px;
+    background: var(--surface); position: relative; overflow: hidden;
+  }
+  .overflow-hint::before {
+    content: ""; position: absolute; left: 0; right: 0; top: 0; height: 1px;
+    background: linear-gradient(90deg, transparent, var(--signal), transparent); opacity: .5;
+  }
+  .overflow-hint .meter { flex: 1; min-width: 0; }
+  .overflow-hint .lab { font-family: "Geist Mono", monospace; font-size: 11px; color: var(--paper-dim); }
+  .overflow-hint .lab b { color: var(--ink); font-weight: 500; }
+  .overflow-hint .obar { height: 4px; border-radius: 3px; background: var(--hairline-2); margin-top: 9px; overflow: hidden; }
+  .overflow-hint .obar i { display: block; height: 100%; background: linear-gradient(90deg, var(--ink), var(--signal)); border-radius: 3px; }
+  .overflow-more {
+    font-family: "Geist Mono", monospace; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+    background: var(--ink); color: #fff; border: none; border-radius: 9px; padding: 9px 17px;
+    transition: background .18s, transform .18s; display: inline-flex; align-items: center; gap: 7px;
+  }
+  .overflow-more:hover { background: var(--signal); transform: translateX(2px); }
+
   /* — Date timeline — */
   .date-strip {
     display: flex; align-items: center; gap: 4px;
@@ -229,7 +297,7 @@
     position: absolute;
     right: -120px; top: -120px;
     width: 360px; height: 360px;
-    background: radial-gradient(circle, rgba(16,163,127,0.08), transparent 70%);
+    background: radial-gradient(circle, rgba(178,58,30,0.07), transparent 70%);
     pointer-events: none;
   }
   .hero-eyebrow {
@@ -240,14 +308,16 @@
     color: var(--ok);
   }
   .hero-title {
-    font-family: "Geist", sans-serif;
-    font-weight: 600;
-    font-size: clamp(26px, 4vw, 38px);
-    line-height: 1.1;
-    letter-spacing: -0.025em;
+    font-family: "Newsreader", Georgia, ui-serif, serif;
+    font-weight: 400;
+    font-optical-sizing: auto;
+    font-size: clamp(30px, 4.4vw, 46px);
+    line-height: 1.02;
+    letter-spacing: -0.02em;
     color: var(--ink);
     margin-top: 12px;
   }
+  .hero-title em { font-style: italic; color: var(--signal); }
   .hero-cta {
     margin-top: 4px;
     display: inline-flex; align-items: center; gap: 10px;
@@ -270,11 +340,12 @@
   /* — Tab nav — */
   .tab-bar { display: flex; align-items: baseline; gap: 32px; border-bottom: 1px solid var(--hairline); padding-bottom: 14px; }
   .tab-btn {
-    font-family: "Geist", sans-serif;
-    font-weight: 600;
-    font-size: 19px;
-    letter-spacing: -0.015em;
-    color: var(--paper-veil);
+    font-family: "Newsreader", Georgia, ui-serif, serif;
+    font-weight: 500;
+    font-optical-sizing: auto;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    color: var(--paper-faint);
     background: transparent; border: none; padding: 0 0 6px;
     cursor: pointer;
     position: relative;
@@ -285,7 +356,7 @@
   .tab-btn[aria-selected="true"]::after {
     content: ""; position: absolute;
     left: 0; right: 0; bottom: -15px;
-    height: 2px; background: var(--ink);
+    height: 2px; background: var(--signal);
     border-radius: 1px;
   }
   .tab-count {
@@ -403,23 +474,24 @@
     font-weight: 500;
     text-transform: capitalize;
   }
-  .article-cat.cat-incident      { background: #FEF2F2; color: #DC2626; }
-  .article-cat.cat-vuln          { background: #FEF3C7; color: #D97706; }
-  .article-cat.cat-supply-chain  { background: #FFEDD5; color: #C2410C; }
-  .article-cat.cat-research      { background: #F0F4FD; color: #2563EB; }
-  .article-cat.cat-industry      { background: #F4F4EE; color: #6B6B6B; }
+  .article-cat.cat-incident      { background: var(--crit-wash); color: var(--crit); }
+  .article-cat.cat-vuln          { background: var(--high-wash); color: var(--high); }
+  .article-cat.cat-supply-chain  { background: var(--med-wash);  color: var(--med); }
+  .article-cat.cat-research      { background: var(--low-wash);  color: var(--low); }
+  .article-cat.cat-industry      { background: var(--surface-2); color: var(--paper-faint); }
   .article-byline { color: var(--paper-faint); }
   .article-byline .byline-by { color: var(--paper-veil); }
   .article-title {
-    font-family: "Geist", sans-serif;
-    font-weight: 600;
-    font-size: 17px;
-    line-height: 1.32;
-    letter-spacing: -0.018em;
+    font-family: "Newsreader", Georgia, ui-serif, serif;
+    font-weight: 500;
+    font-optical-sizing: auto;
+    font-size: 20px;
+    line-height: 1.26;
+    letter-spacing: -0.01em;
     color: var(--ink);
     margin-bottom: 6px;
   }
-  .article:hover .article-title { color: var(--ok); }
+  .article:hover .article-title { color: var(--signal); }
   .article-summary {
     font-family: "Geist", sans-serif;
     font-size: 13.5px;
@@ -505,16 +577,17 @@
     transition: padding 160ms;
   }
   .heat-row:hover { padding-left: 4px; }
-  .heat-row:hover .heat-label { color: var(--ok); }
+  .heat-row:hover .heat-label { color: var(--signal); }
   .heat-row:last-child { border-bottom: none; }
   .heat-rank {
-    font-family: "Geist Mono", monospace;
-    font-size: 13px;
-    font-weight: 500;
+    font-family: "Newsreader", Georgia, ui-serif, serif;
+    font-style: italic;
+    font-size: 17px;
+    font-weight: 400;
     color: var(--paper-veil);
     line-height: 1;
   }
-  .heat-row:nth-child(-n+3) .heat-rank { color: var(--ink); font-weight: 600; }
+  .heat-row:nth-child(-n+3) .heat-rank { color: var(--signal); font-weight: 500; }
   .heat-label {
     font-family: "Geist", sans-serif;
     font-size: 13.5px;
@@ -537,6 +610,58 @@
   }
   .heat-meta .score { color: var(--paper-dim); }
 
+  /* — Contextual time control row (sits with the list) — */
+  .view-controls { display: flex; align-items: center; min-height: 38px; }
+
+  /* — Dispatch rail panel : the OUTPUT surface (→ Kafka), distinct green key — */
+  .dispatch-rail { cursor: pointer; outline: none; }
+  .dispatch-rail .heat-section-title .text-ok { color: var(--ok); }
+  .dispatch-card {
+    border: 1px solid var(--hairline-2); border-radius: 12px; overflow: hidden;
+    background: linear-gradient(180deg, var(--ok-wash) 0%, var(--surface) 42%);
+    transition: border-color 160ms, box-shadow 160ms, transform 160ms;
+  }
+  .dispatch-rail:hover .dispatch-card,
+  .dispatch-rail:focus-visible .dispatch-card {
+    border-color: #BFD8C8; box-shadow: 0 10px 30px -20px rgba(44,110,73,0.5); transform: translateY(-1px);
+  }
+  .dispatch-head { padding: 13px 15px 11px; border-bottom: 1px solid var(--hairline); }
+  .dispatch-route {
+    display: block; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ok); margin-bottom: 7px;
+  }
+  .dispatch-count {
+    font-family: "Newsreader", Georgia, serif; font-style: italic;
+    font-size: 30px; line-height: 1; color: var(--ok); margin-right: 8px; vertical-align: baseline;
+  }
+  .dispatch-count-sub { font-family: "Geist Mono", monospace; font-size: 11px; color: var(--paper-dim); }
+  .dispatch-flow { padding: 4px 15px 8px; list-style: none; margin: 0; }
+  .dispatch-flow li {
+    display: flex; align-items: center; gap: 9px; padding: 8px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .dispatch-flow li:last-child { border-bottom: none; }
+  .dispatch-flow .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--ok); }
+  .dispatch-flow .dot.queued {
+    background: var(--med);
+    box-shadow: 0 0 0 0 rgba(154,122,18,0.5); animation: dpulse 2.4s infinite;
+  }
+  @keyframes dpulse { 0%{box-shadow:0 0 0 0 rgba(154,122,18,0.4);} 70%{box-shadow:0 0 0 6px rgba(154,122,18,0);} 100%{box-shadow:0 0 0 0 rgba(154,122,18,0);} }
+  .dispatch-flow .pkg {
+    font-family: "Geist Mono", monospace; font-size: 12px; color: var(--ink);
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .dispatch-flow .eco {
+    font-family: "Geist Mono", monospace; font-size: 10px; color: var(--paper-dim);
+    border: 1px solid var(--hairline-2); border-radius: 5px; padding: 1px 6px; background: var(--bg);
+  }
+  .dispatch-foot {
+    display: flex; align-items: center; gap: 8px; padding: 10px 15px;
+    border-top: 1px solid var(--hairline); background: var(--card-tint);
+    font-size: 10.5px; color: var(--paper-dim);
+  }
+  .dispatch-foot .dispatch-viewall { margin-left: auto; color: var(--ink); }
+  .dispatch-rail:hover .dispatch-viewall { color: var(--ok); }
+
   /* — Vuln-specific bits — */
   .pill-tag {
     display: inline-block;
@@ -551,12 +676,13 @@
     margin-right: 4px;
     margin-bottom: 2px;
   }
-  .pill-tag.itw     { color: #DC2626; background: #FEF2F2; }
-  .pill-tag.kev     { color: #7C3AED; background: #F5F3FF; }
-  .pill-tag.supply  { color: #C2410C; background: #FFEDD5; }
-  .pill-tag.poc     { color: #10A37F; background: #ECFDF5; }
-  .pill-tag.ransom  { color: #DC2626; background: #FEF2F2; }
-  .pill-tag.nuclei  { color: #2563EB; background: #F0F4FD; }
+  .pill-tag.itw     { color: var(--crit); background: var(--crit-wash); }
+  .pill-tag.kev     { color: var(--signal); background: var(--signal-wash, #FBEDE7); }
+  .pill-tag.supply  { color: var(--high); background: var(--high-wash); }
+  .pill-tag.poc     { color: var(--ok); background: var(--ok-wash); }
+  .pill-tag.ransom  { color: var(--crit); background: var(--crit-wash); }
+  .pill-tag.nuclei  { color: var(--info); background: var(--low-wash); }
+  .pill-tag.disp    { color: var(--ok); background: var(--ok-wash); border:1px solid #BFD8C8; }
   .sev {
     font-family: "Geist Mono", monospace;
     font-size: 10px;
@@ -566,10 +692,10 @@
     border-radius: 4px;
     font-weight: 500;
   }
-  .sev-critical { background: #FEF2F2; color: #DC2626; }
-  .sev-high     { background: #FEF3C7; color: #D97706; }
-  .sev-medium   { background: #FFFBEB; color: #B45309; }
-  .sev-low      { background: #F0F4FD; color: #2563EB; }
+  .sev-critical { background: var(--crit-wash); color: var(--crit); }
+  .sev-high     { background: var(--high-wash); color: var(--high); }
+  .sev-medium   { background: var(--med-wash);  color: var(--med); }
+  .sev-low      { background: var(--low-wash);  color: var(--low); }
   .sev-unknown  { background: var(--surface-2); color: var(--paper-faint); }
 
   /* — Search bar — */
@@ -1243,20 +1369,6 @@
 
   <div class="max-w-[1340px] mx-auto px-6 lg:px-10">
 
-    <!-- ─────────── DATE TIMELINE ─────────── -->
-    <nav class="pt-6 pb-2 above-grain" aria-label="date">
-      <div class="flex items-center gap-3">
-        <button id="date-prev" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
-        </button>
-        <ol id="date-strip" class="date-strip flex-1"></ol>
-        <button id="date-next" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
-        </button>
-        <button id="date-today" class="shrink-0 font-mono text-[11px] px-2.5 py-1 rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);" data-i18n="date.today">今日</button>
-      </div>
-    </nav>
-
     <!-- ─────────── HERO: TODAY'S BRIEFING (CTA → modal) ─────────── -->
     <section class="pt-8 pb-10 above-grain">
       <div class="hero-card">
@@ -1286,8 +1398,8 @@
     <div class="grid grid-cols-1 lg:grid-cols-12 gap-x-10 gap-y-6 pb-16">
       <main class="lg:col-span-8 min-w-0 above-grain">
 
-        <!-- TAB BAR — serif headlines, no pills -->
-        <nav class="tab-bar mb-6" role="tablist">
+        <!-- TAB BAR — input feeds only (供应链投送 is an OUTPUT → lives in the rail) -->
+        <nav class="tab-bar mb-5" role="tablist">
           <button class="tab-btn" role="tab" data-tab="news" aria-selected="true">
             <span data-i18n="tab.news">行业资讯</span>
             <span class="tab-count" id="tab-news-count">—</span>
@@ -1300,11 +1412,33 @@
             <span data-i18n="tab.papers">安全论文</span>
             <span class="tab-count">·</span>
           </button>
-          <button class="tab-btn" role="tab" data-tab="dispatch" aria-selected="false">
-            <span data-i18n="tab.dispatch">供应链投送</span>
-            <span class="tab-count" id="tab-dispatch-count">—</span>
-          </button>
         </nav>
+
+        <!-- ── CONTEXTUAL TIME CONTROL — sits WITH the list it drives, not floating at top ── -->
+        <div id="time-controls" class="view-controls mb-4" aria-label="date">
+          <!-- News: per-day calendar strip -->
+          <div id="date-rail" class="flex items-center gap-3">
+            <button id="date-prev" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <ol id="date-strip" class="date-strip flex-1"></ol>
+            <button id="date-next" class="shrink-0 w-7 h-7 flex items-center justify-center rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="9 18 15 12 9 6"/></svg>
+            </button>
+            <button id="date-today" class="shrink-0 font-mono text-[11px] px-2.5 py-1 rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);" data-i18n="date.today">今日</button>
+          </div>
+          <!-- Vuln: rolling-window selector (vuln publish dates are sparse) -->
+          <div id="vuln-window" class="items-center gap-3" style="display:none">
+            <span class="vw-label" data-i18n="win.label">时间窗口</span>
+            <div class="vw-seg" id="vw-seg">
+              <span class="vw-ind" id="vw-ind"></span>
+              <button class="vw-chip" data-days="3" data-on="true" data-i18n="win.3d">近 3 天</button>
+              <button class="vw-chip" data-days="7" data-i18n="win.7d">近 7 天</button>
+              <button class="vw-chip" data-days="30" data-i18n="win.30d">近 30 天</button>
+            </div>
+            <span class="vw-note flex-1" id="vw-note"></span>
+          </div>
+        </div>
 
         <!-- PRIMARY FILTER ROW: category pills (high visual weight) -->
         <div class="mb-3">
@@ -1390,6 +1524,11 @@
         </section>
 
         <section class="panel" data-panel="dispatch" hidden>
+          <div class="flex items-center gap-3 mb-5">
+            <button onclick="setActiveTab('news')" class="shrink-0 font-mono text-[11px] px-3 py-1.5 rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);">← <span data-i18n="dispatch.back">返回</span></button>
+            <h2 class="font-display text-[30px]" style="font-weight:400;"><span data-i18n="dispatch.view_title">处置流</span> <span class="text-ok">↗</span></h2>
+            <span class="font-mono text-[11px] text-paper-faint" data-i18n="dispatch.view_sub">供应链投毒 · 已投送 Kafka 处置队列</span>
+          </div>
           <div id="dispatch-list"></div>
         </section>
       </main>
@@ -1403,6 +1542,28 @@
             <span class="text-paper-veil">01—10</span>
           </div>
           <ol id="heat-list"></ol>
+        </section>
+
+        <!-- ── DISPATCH (OUTPUT) — supply-chain poison pushed to Kafka. NOT an input feed. ── -->
+        <section class="dispatch-rail" id="dispatch-rail" role="button" tabindex="0"
+                 onclick="setActiveTab('dispatch')"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();setActiveTab('dispatch');}">
+          <div class="heat-section-title" style="border-bottom:none; margin-bottom:6px;">
+            <span><span data-i18n="rail.dispatch.title">处置流</span> <span class="text-ok" style="letter-spacing:0.1em;">↗ <span data-i18n="rail.dispatch.out">输出</span></span></span>
+            <span class="text-paper-veil" id="dispatch-rail-all">→</span>
+          </div>
+          <div class="dispatch-card">
+            <div class="dispatch-head">
+              <span class="dispatch-route mono" data-i18n="rail.dispatch.route">→ Kafka 处置队列</span>
+              <span class="dispatch-count" id="dispatch-rail-count">—</span>
+              <span class="dispatch-count-sub" data-i18n="rail.dispatch.unit">条供应链投毒已投送</span>
+            </div>
+            <ol class="dispatch-flow" id="dispatch-rail-flow"></ol>
+            <div class="dispatch-foot">
+              <span class="mono" id="dispatch-rail-topic"></span>
+              <span class="dispatch-viewall mono"><span data-i18n="rail.dispatch.viewall">全部</span> <span id="dispatch-rail-total">—</span> →</span>
+            </div>
+          </div>
         </section>
 
       </aside>
@@ -1563,6 +1724,16 @@ const api = async (path) => {
   return r.json();
 };
 
+// Like api() but also surfaces the X-Total-Count header (full filtered count,
+// before the server's `limit` truncation) so callers can show "showing N of M".
+const apiFull = async (path) => {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const total = parseInt(r.headers.get("X-Total-Count") || "0", 10) || 0;
+  const data = await r.json();
+  return { data, total };
+};
+
 // ───────────────────── state ─────────────────────
 const state = {
   today: null,
@@ -1584,8 +1755,13 @@ const state = {
   selectedDate: null,   // YYYY-MM-DD; null = "today"
   windowEnd: null,      // YYYY-MM-DD of right-most date cell
   filters: { severity: new Set(), source: new Set() },
-  vulnLimit: 40,        // pagination window for vuln list
-  newsLimit: 40,        // pagination window for news list
+  vulnLimit: 40,        // client render window for vuln list (infinite scroll)
+  newsLimit: 40,        // client render window for news list (infinite scroll)
+  vulnWindow: 3,        // vuln rolling window in days (3 / 7 / 30) — NOT single-day
+  vulnFetchLimit: 500,  // server fetch cap for vuln; "查看更多" bumps it
+  newsFetchLimit: 500,  // server fetch cap for news; "查看更多" bumps it
+  vulnTotal: 0,         // full filtered count from X-Total-Count header
+  newsTotal: 0,         // full filtered count from X-Total-Count header
   openDetailId: null,   // CVE-* id currently shown in the side drawer
   detailPrevFocus: null,// element to restore focus to on drawer close
 };
@@ -1944,23 +2120,88 @@ function renderVulnList() {
   state._vulnSorted = sorted;  // for infinite scroll sentinel
   const limited = sorted.slice(0, state.vulnLimit);
   const el = document.getElementById("vuln-list");
-  if (limited.length === 0) {
-    el.innerHTML = `<div class="py-20 text-center" style="border:1px solid var(--hairline);">
-      <div class="font-display text-[26px] text-paper-dim" style="font-variation-settings:'opsz' 36;">${t("no_data")}</div>
-    </div>`;
-    return;
-  }
-  el.innerHTML = limited.map(renderVulnCard).join("");
+  // Counts must update UNCONDITIONALLY — before any empty-list early return —
+  // otherwise switching to a date with no vulns leaves the tab/sub-pill badges
+  // showing the previous date's stale numbers (parity with renderNewsList).
   const tabCount = document.getElementById("tab-vuln-count");
   if (tabCount) tabCount.textContent = `· ${state.vuln.length}`;
-  // sub-pill counts
   ["all","cve","supply","poc","itw"].forEach(k => {
     const c = k === "all" ? state.vuln.length : state.vuln.filter(v => v.kind === k).length;
     document.querySelectorAll(`#vuln-subfilter [data-count="${k}"]`).forEach(n => n.textContent = c);
   });
+  if (limited.length === 0) {
+    el.innerHTML = `<div class="py-16 text-center" style="border:1px solid var(--hairline); border-radius:13px; background:repeating-linear-gradient(45deg,var(--surface),var(--surface) 11px,var(--surface-2) 11px,var(--surface-2) 22px);">
+      <div class="font-display text-[28px] text-paper" style="font-variation-settings:'opsz' 36; font-style:italic;">${t("vuln.empty")}</div>
+      <div class="font-mono text-[11.5px] text-paper-faint mt-2.5">${t("vuln.empty.hint", state.vulnWindow)}</div>
+    </div>`;
+    return;
+  }
+  // Overflow hint: the server capped the fetch at vulnFetchLimit but more rows
+  // match. Show it once the user has scrolled through everything loaded.
+  const displayedAll = state.vulnLimit >= sorted.length;
+  const serverHasMore = state.vulnTotal > state.vuln.length;
+  let html = limited.map(renderVulnCard).join("");
+  if (displayedAll && serverHasMore) html += overflowHintHtml(state.vuln.length, state.vulnTotal, "vuln");
+  el.innerHTML = html;
+}
+
+// Shared "showing N of M · 查看更多" affordance for server-truncated lists.
+function overflowHintHtml(loaded, total, kind) {
+  const pct = total > 0 ? Math.min(100, Math.round(loaded / total * 100)) : 100;
+  return `<div class="overflow-hint">
+    <div class="meter">
+      <div class="lab">${t("overflow.showing", loaded, total)}</div>
+      <div class="obar"><i style="width:${pct}%"></i></div>
+    </div>
+    <button class="overflow-more" onclick="loadMore('${kind}')">${t("overflow.more")}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><polyline points="9 6 15 12 9 18"/></svg>
+    </button>
+  </div>`;
+}
+
+// "查看更多" → raise the server fetch cap (toward the route's le=2000) and refetch.
+async function loadMore(kind) {
+  if (kind === "vuln") {
+    state.vulnFetchLimit = Math.min(2000, Math.max(state.vulnTotal, state.vulnFetchLimit + 500));
+    await fetchOne("vuln");
+    renderVulnList();
+  } else if (kind === "news") {
+    state.newsFetchLimit = Math.min(2000, Math.max(state.newsTotal, state.newsFetchLimit + 500));
+    await fetchOne("news");
+    renderNewsList();
+  }
+}
+
+// Compact rail summary — the OUTPUT surface. Clicking opens the full view.
+function renderDispatchRail() {
+  const items = state.dispatch || [];
+  const total = items.length;
+  const countEl = document.getElementById("dispatch-rail-count");
+  const totalEl = document.getElementById("dispatch-rail-total");
+  const flowEl = document.getElementById("dispatch-rail-flow");
+  const topicEl = document.getElementById("dispatch-rail-topic");
+  if (countEl) countEl.textContent = total;
+  if (totalEl) totalEl.textContent = total;
+  if (topicEl) {
+    const topic = (items.find(x => x.topic) || {}).topic || "";
+    topicEl.innerHTML = topic ? `topic <b style="color:var(--ok);font-weight:500;">${escapeHtml(topic)}</b>` : "";
+  }
+  if (flowEl) {
+    if (total === 0) {
+      flowEl.innerHTML = `<li><span class="dot" style="background:var(--paper-veil);"></span><span class="pkg" style="color:var(--paper-faint);">${t("dispatch.empty_title")}</span></li>`;
+    } else {
+      flowEl.innerHTML = items.slice(0, 4).map((d, i) => {
+        const pkg = d.package || (d.title || d.ref_id || t("dispatch.unknown_pkg"));
+        const eco = (d.ecosystem || "").split(",")[0].trim();
+        const queued = i < 2 ? " queued" : "";
+        return `<li><span class="dot${queued}"></span><span class="pkg" title="${escapeHtml(pkg)}">${escapeHtml(pkg)}</span>${eco ? `<span class="eco">${escapeHtml(eco)}</span>` : ""}</li>`;
+      }).join("");
+    }
+  }
 }
 
 function renderDispatch() {
+  renderDispatchRail();
   const el = document.getElementById("dispatch-list");
   if (!el) return;
   const items = state.dispatch || [];
@@ -2145,7 +2386,12 @@ function renderNewsList() {
       <div class="font-display text-[26px] text-paper-dim" style="font-variation-settings:'opsz' 36;">${t("no_data")}</div>
     </div>`;
   } else {
-    el.innerHTML = banner + limited.map(renderNewsCard).join("");
+    let html = banner + limited.map(renderNewsCard).join("");
+    // Overflow hint when the server capped the fetch but more articles match.
+    const displayedAll = state.newsLimit >= sorted.length;
+    const serverHasMore = !state.showHidden && state.newsTotal > state.news.length;
+    if (displayedAll && serverHasMore) html += overflowHintHtml(state.news.length, state.newsTotal, "news");
+    el.innerHTML = html;
   }
 
   // tab counts
@@ -2914,6 +3160,7 @@ function renderAll() {
   applyI18n();
   renderStats();
   renderDateStrip();
+  renderVulnWindowNote();   // keep window note in sync with language
   renderVulnSourceFilters();
   renderVulnList();
   renderNewsList();
@@ -2933,6 +3180,16 @@ function setActiveTab(tab) {
     if (p.dataset.panel === tab) p.removeAttribute("hidden");
     else p.setAttribute("hidden", "");
   });
+  // Date control swaps semantics per tab: vuln = rolling-window selector,
+  // everything else = per-day calendar strip.
+  const isVulnTab = tab === "vuln";
+  // Time control is contextual: news = per-day strip, vuln = rolling window,
+  // papers/dispatch = none (hide the whole row to avoid an empty gap).
+  document.getElementById("date-rail").style.display    = tab === "news" ? "flex" : "none";
+  document.getElementById("vuln-window").style.display  = isVulnTab ? "flex" : "none";
+  const tc = document.getElementById("time-controls");
+  if (tc) tc.style.display = (tab === "news" || tab === "vuln") ? "flex" : "none";
+  if (isVulnTab) { renderVulnWindowNote(); requestAnimationFrame(moveVulnWindowIndicator); }
   // Contextual filter rows: only news shows category pills; vuln shows kind + severity
   document.getElementById("vuln-subfilter").style.display    = tab === "vuln" ? "flex" : "none";
   document.getElementById("vuln-multifilter").style.display  = tab === "vuln" ? "flex" : "none";
@@ -2971,6 +3228,39 @@ document.querySelectorAll("#vuln-subfilter .pill").forEach(b => {
     state.kind = b.dataset.kind;
     renderVulnList();
   });
+});
+
+// ── vuln rolling-window selector ──────────────────────────────────────────
+function moveVulnWindowIndicator() {
+  const seg = document.getElementById("vw-seg");
+  const ind = document.getElementById("vw-ind");
+  if (!seg || !ind) return;
+  const active = seg.querySelector('.vw-chip[data-on="true"]');
+  if (!active) return;
+  ind.style.left = active.offsetLeft + "px";
+  ind.style.width = active.offsetWidth + "px";
+}
+function renderVulnWindowNote() {
+  const note = document.getElementById("vw-note");
+  if (!note) return;
+  note.innerHTML = t("win.note", state.vulnWindow, todayUtc());
+}
+document.querySelectorAll("#vw-seg .vw-chip").forEach(b => {
+  b.addEventListener("click", async () => {
+    document.querySelectorAll("#vw-seg .vw-chip").forEach(x => x.setAttribute("data-on", "false"));
+    b.setAttribute("data-on", "true");
+    state.vulnWindow = parseInt(b.dataset.days, 10) || 3;
+    state.vulnFetchLimit = 500;   // reset the server fetch cap on window change
+    state.vulnLimit = 40;          // reset client render window
+    moveVulnWindowIndicator();
+    renderVulnWindowNote();
+    await fetchOne("vuln");
+    renderVulnList();
+    fetchOne("heat").then(() => renderHeat());
+  });
+});
+window.addEventListener("resize", () => {
+  if (state.activeTab === "vuln") moveVulnWindowIndicator();
 });
 
 // multi-filter chips (severity + dynamically rendered sources)
@@ -3064,12 +3354,16 @@ window.addEventListener("keydown", (e) => {
 // ───────────────────── boot + fetch ─────────────────────
 const ENDPOINTS = [
   { key: "today",    url: () => "/api/today",                                              dateAware: false },
-  { key: "news",     url: () => `/api/news?limit=500${dateQuery()}`,                       dateAware: true },
-  { key: "vuln",     url: () => `/api/vuln?limit=500&sort=heat${dateQuery()}`,             dateAware: true },
+  { key: "news",     url: () => `/api/news?limit=${state.newsFetchLimit}${dateQuery()}`,    dateAware: true },
+  // Vuln uses a rolling N-day window (not a single date), so it sends `days`
+  // instead of dateQuery(). The window end is "today" (server default).
+  { key: "vuln",     url: () => `/api/vuln?limit=${state.vulnFetchLimit}&sort=heat&days=${state.vulnWindow}`, dateAware: false },
   { key: "dispatch", url: () => "/api/dispatches?limit=200",                               dateAware: false },
   { key: "heat",     url: () => {
       const kind = state.activeTab === "news" ? "news" : "vuln";
-      const datePart = state.selectedDate ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
+      // Vuln heat reflects the rolling window (no single-date filter) to match
+      // the list; news heat stays day-scoped to the picked date.
+      const datePart = (kind === "news" && state.selectedDate) ? `&date=${encodeURIComponent(state.selectedDate)}` : "";
       return `/api/heat?limit=10&kind=${kind}${datePart}`;
     }, dateAware: true },
   { key: "sources",  url: () => "/api/sources",                                            dateAware: false },
@@ -3086,14 +3380,24 @@ async function fetchOne(key) {
   const ep = ENDPOINTS.find(e => e.key === key);
   if (!ep) return;
   try {
-    const data = await api(ep.url());
+    // News/vuln also read X-Total-Count (full filtered count) for the overflow
+    // hint; the rest only need the JSON body.
+    if (key === "news") {
+      const { data, total } = await apiFull(ep.url());
+      state.news = data || [];
+      state.newsTotal = total || state.news.length;
+    } else if (key === "vuln") {
+      const { data, total } = await apiFull(ep.url());
+      state.vuln = data || [];
+      state.vulnTotal = total || state.vuln.length;
+    } else {
+      const data = await api(ep.url());
+      if (key === "today") state.today = data;
+      else if (key === "dispatch") state.dispatch = data || [];
+      else if (key === "heat") state.heat = data || [];
+      else if (key === "sources") state.sources = data || [];
+    }
     delete fetchErrors[key];
-    if (key === "today") state.today = data;
-    else if (key === "news") state.news = data || [];
-    else if (key === "vuln") state.vuln = data || [];
-    else if (key === "dispatch") state.dispatch = data || [];
-    else if (key === "heat") state.heat = data || [];
-    else if (key === "sources") state.sources = data || [];
   } catch (exc) {
     fetchErrors[key] = exc.message || String(exc);
   }
