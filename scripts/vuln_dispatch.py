@@ -72,6 +72,10 @@ def select_candidates(
         v for v in vulns
         if v.kind == "supply"
         and v.is_supply_chain
+        # 投毒兜底闸（defense-in-depth）：只放真正带恶意包标记的条目。is_supply_chain
+        # 应已由上游(murphy/ghsa/osv)按 malicious gate，但若未来某源把 is_supply_chain
+        # 放得过宽，这道 MALWARE tag 校验仍能拦住普通依赖 CVE 误投 Kafka。
+        and "MALWARE" in v.tags
         and (redispatch is None or v.id == redispatch)
         and (redispatch is not None or v.id not in already_dispatched)
         and (redispatch is not None or (_vuln_date(v) != "" and _vuln_date(v) >= cutoff))

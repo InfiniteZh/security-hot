@@ -43,6 +43,7 @@ def _vuln(**kw) -> Vuln:
         iocs=["o4511335034847232.ingest.de.sentry.io"],
         fix_versions=[],
         references=[],
+        tags=["MURPHY", "MALWARE"],  # 真投毒包携带 MALWARE 标记，过投送兜底闸
         source="murphysec",
         published=f"{_TODAY}T00:00:00Z",  # 默认今天，通过冷启动新鲜度护栏
     )
@@ -77,6 +78,16 @@ def test_select_candidates_filters_supply_chain_and_dispatched():
     selected = vd.select_candidates(vulns, {"MURPHY-2"}, limit=None)
     assert [v.id for v in selected] == ["MURPHY-1"]
     assert [v.id for v in vd.select_candidates(vulns, {"MURPHY-2"}, limit=None, redispatch="MURPHY-2")] == ["MURPHY-2"]
+
+
+def test_select_candidates_requires_malware_tag():
+    # 兜底闸：即便 kind=="supply" 且 is_supply_chain，缺 MALWARE 标记(普通依赖
+    # CVE 误标供应链)也不投送。
+    vulns = [
+        _vuln(id="POISON", tags=["MURPHY", "MALWARE"]),
+        _vuln(id="PLAIN-CVE", tags=["MURPHY"]),  # 无 MALWARE → 拦下
+    ]
+    assert [v.id for v in vd.select_candidates(vulns, set(), limit=None)] == ["POISON"]
 
 
 def test_cold_start_guard_filters_old_vulns():
