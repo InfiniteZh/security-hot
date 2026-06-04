@@ -31,7 +31,7 @@ try:  # best-effort：CLI 独立运行时缺失也不致命
 except Exception:  # pragma: no cover
     _prog = None
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def migrate(conn: sqlite3.Connection) -> None:
@@ -167,10 +167,12 @@ def build_message(vuln: Vuln, related_news: list[dict]) -> dict:
         "ref_id": vuln.id,
         "title": vuln.title,
         "canonical_url": canonical_url(vuln),
-        "ecosystem": vuln.ecosystem or "",
-        "package": vuln.package or "",
-        "affected_version": vuln.affected_versions,
-        "fix_version": vuln.fix_versions[0] if vuln.fix_versions else "",
+        "packages": [{
+            "ecosystem": vuln.ecosystem or "",
+            "package": vuln.package or "",
+            "affected_version": vuln.affected_versions,
+            "fix_version": vuln.fix_versions[0] if vuln.fix_versions else "",
+        }] if vuln.package else [],
         "iocs": merge_iocs(vuln, related_news),
         "cve_id": vuln.cve_id,
         "ghsa_id": vuln.ghsa_id,

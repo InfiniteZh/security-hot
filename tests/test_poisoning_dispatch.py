@@ -123,23 +123,60 @@ def test_build_message_schema(tmp_path):
     conn = _make_db(tmp_path); pd.migrate(conn)
     _insert(conn, canonical_url="https://x/p", title="noon-contracts RAT", llm_score=10)
     row = list(conn.execute("SELECT * FROM articles"))[0]
-    tri = {"actionable": True, "ecosystem": "npm", "package": "noon-contracts",
-           "version": "", "iocs": [], "reason": "点名 npm 包"}
+    tri = {"actionable": True,
+           "packages": [{"ecosystem": "npm", "package": "noon-contracts", "versions": []}],
+           "iocs": [], "reason": "点名 npm 包"}
     msg = pd.build_message(row, tri, "完整正文")
-    assert msg["schema_version"] == 2
+    assert msg["schema_version"] == 3
     assert msg["kind"] == "poisoning_intel"
     assert msg["origin"] == "news"
     assert msg["ref_id"] == row["id"]
     assert msg["article_id"] == row["id"]
     assert msg["canonical_url"] == "https://x/p"
-    assert msg["package"] == "noon-contracts"
+    # v3: 顶层无 package/affected_version，统一进 packages[]
+    assert "package" not in msg and "affected_version" not in msg
+    assert msg["packages"] == [{"ecosystem": "npm", "package": "noon-contracts",
+                                "affected_version": [], "fix_version": ""}]
     assert msg["full_body"] == "完整正文"
-    assert msg["triage"]["package"] == "noon-contracts"
+
+
+def test_build_message_multi_package_and_versions(tmp_path):
+    """一篇列多个包+多版本：全部进 packages[]，逐元素校验后保留有效版本。"""
+    conn = _make_db(tmp_path); pd.migrate(conn)
+    _insert(conn, canonical_url="https://x/multi", title="Red Hat npm worm", llm_score=10)
+    row = list(conn.execute("SELECT * FROM articles"))[0]
+    tri = {"actionable": True, "packages": [
+        {"ecosystem": "npm", "package": "@redhat-cloud-services/types",
+         "versions": "3.6.1,3.6.2,3.6.4"},                       # 逗号多版本
+        {"ecosystem": "npm", "package": "@redhat-cloud-services/chrome",
+         "versions": ["2.3.1"]},
+        {"ecosystem": "npm", "package": "bad pkg name (prose)", "versions": []},  # 非法包名→剔除
+    ], "iocs": [], "reason": "多包"}
+    msg = pd.build_message(row, tri, "")
+    pkgs = {p["package"]: p for p in msg["packages"]}
+    assert set(pkgs) == {"@redhat-cloud-services/types", "@redhat-cloud-services/chrome"}
+    assert pkgs["@redhat-cloud-services/types"]["affected_version"] == ["3.6.1", "3.6.2", "3.6.4"]
+    assert pkgs["@redhat-cloud-services/chrome"]["affected_version"] == ["2.3.1"]
+
+
+def test_iocs_drop_legit_infra_trongrid(tmp_path):
+    """合法基础设施（trongrid.io / api.trongrid.io）不得当 IOC 投出。"""
+    conn = _make_db(tmp_path); pd.migrate(conn)
+    _insert(conn, canonical_url="https://x/php", title="Famous Chollima PHP", llm_score=8)
+    row = list(conn.execute("SELECT * FROM articles"))[0]
+    tri = {"actionable": True,
+           "packages": [{"ecosystem": "packagist", "package": "roberts/leads", "versions": []}],
+           "iocs": ["trongrid.io", "api.trongrid.io", "evil-c2.example"], "reason": "x"}
+    msg = pd.build_message(row, tri, "")
+    ioc_vals = {i["value"] for i in msg["iocs"]}
+    assert "trongrid.io" not in ioc_vals
+    assert "api.trongrid.io" not in ioc_vals
+    assert "evil-c2.example" in ioc_vals   # 真 IOC 仍保留
 
 
 def test_message_iocs_excludes_package_name_and_dsn_hex_false_positive():
     dsn = "d565e3f03d0b1a7c8935d7ff94237316@o4511335034847232.ingest.de.sentry.io/123"
-    iocs = pd._message_iocs([f"Sicoob.Sdk {dsn}"], package="Sicoob.Sdk")
+    iocs = pd._message_iocs([f"Sicoob.Sdk {dsn}"], exclude_names={"Sicoob.Sdk"})
     values = {item["value"] for item in iocs}
     assert "sicoob.sdk" not in values
     assert "d565e3f03d0b1a7c8935d7ff94237316" not in values
@@ -171,19 +208,31 @@ def test_message_iocs_keeps_real_iocs():
 
 
 def test_clean_fields_rejects_prose_package_and_version():
-    tri = {"actionable": True, "package": "Redhat cloud services npm namespace (Miasma worm)",
-           "version": "95 versions", "iocs": []}
-    pkg, ver, iocs = pd.clean_fields(tri)
-    assert pkg == "" and ver == "" and iocs == []
+    tri = {"actionable": True, "packages": [
+        {"ecosystem": "", "package": "Redhat cloud services npm namespace (Miasma worm)",
+         "versions": "95 versions"}], "iocs": []}
+    packages, iocs = pd.clean_fields(tri)
+    assert packages == [] and iocs == []
     assert pd.should_dispatch(tri) is False  # 净化后无 package 无 IOC → 不投
 
 
 def test_clean_fields_keeps_valid_package_and_version():
-    tri = {"actionable": True, "package": "@redhat-cloud-services/chrome",
-           "version": "4.0.4", "iocs": []}
-    pkg, ver, iocs = pd.clean_fields(tri)
-    assert pkg == "@redhat-cloud-services/chrome" and ver == "4.0.4"
+    tri = {"actionable": True, "packages": [
+        {"ecosystem": "npm", "package": "@redhat-cloud-services/chrome",
+         "versions": ["4.0.4"]}], "iocs": []}
+    packages, iocs = pd.clean_fields(tri)
+    assert len(packages) == 1
+    assert packages[0]["package"] == "@redhat-cloud-services/chrome"
+    assert packages[0]["affected_version"] == ["4.0.4"]
     assert pd.should_dispatch(tri) is True
+
+
+def test_valid_versions_splits_and_validates():
+    from dispatch_common import valid_versions
+    assert valid_versions("3.6.1,3.6.2,3.6.4") == ["3.6.1", "3.6.2", "3.6.4"]
+    assert valid_versions(["1.0.0", "1.0.0", "bad ver"]) == ["1.0.0"]   # 去重 + 剔散文
+    assert valid_versions("多个版本") == []
+    assert valid_versions("dev-drewroberts/feature/test-case") == []   # git 分支引用→空
 
 
 def test_select_candidates_only_tier1_sources(tmp_path):
@@ -217,8 +266,9 @@ async def test_run_actionable_sends_and_marks(tmp_path, monkeypatch):
         "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
     # triage → actionable
     async def fake_triage(client, cfg, row, body=""):
-        return {"actionable": True, "ecosystem": "npm", "package": "noon-contracts",
-                "version": "", "iocs": [], "reason": "ok"}
+        return {"actionable": True,
+                "packages": [{"ecosystem": "npm", "package": "noon-contracts", "versions": []}],
+                "iocs": [], "reason": "ok"}
     monkeypatch.setattr(pd, "triage", fake_triage)
     async def fake_fetch(client, url):
         return "full body text"
@@ -248,8 +298,7 @@ async def test_run_not_actionable_marks_without_send(tmp_path, monkeypatch):
     monkeypatch.setattr(pd, "_get_config", lambda: {
         "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
     async def fake_triage(client, cfg, row, body=""):
-        return {"actionable": False, "reason": "纯趋势", "ecosystem": "",
-                "package": "", "version": "", "iocs": []}
+        return {"actionable": False, "reason": "纯趋势", "packages": [], "iocs": []}
     monkeypatch.setattr(pd, "triage", fake_triage)
     async def fake_fetch(client, url): return "body"
     monkeypatch.setattr(pd, "fetch_body", fake_fetch)
@@ -279,8 +328,7 @@ async def test_run_actionable_without_package_or_ioc_marks_without_send(tmp_path
         "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
 
     async def fake_triage(client, cfg, row, body=""):
-        return {"actionable": True, "ecosystem": "", "package": "",
-                "version": "", "iocs": [], "reason": "泛泛分析"}
+        return {"actionable": True, "packages": [], "iocs": [], "reason": "泛泛分析"}
 
     monkeypatch.setattr(pd, "triage", fake_triage)
     async def fake_fetch(client, url): return "body"
@@ -308,8 +356,9 @@ async def test_run_dry_run_no_side_effects(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(pd, "_get_config", lambda: {
         "api_key": "k", "base_url": "http://llm", "model": "m", "timeout": 5})
     async def fake_triage(client, cfg, row, body=""):
-        return {"actionable": True, "ecosystem": "npm", "package": "p",
-                "version": "", "iocs": [], "reason": "ok"}
+        return {"actionable": True,
+                "packages": [{"ecosystem": "npm", "package": "p", "versions": []}],
+                "iocs": [], "reason": "ok"}
     monkeypatch.setattr(pd, "triage", fake_triage)
     async def fake_fetch(client, url): return "body"
     monkeypatch.setattr(pd, "fetch_body", fake_fetch)

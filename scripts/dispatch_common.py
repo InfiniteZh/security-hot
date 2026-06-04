@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 
@@ -60,19 +61,94 @@ _VER_RE = re.compile(r"^[vV0-9~^<>=]?[\w.\-+*]{0,39}$")
 
 
 def valid_package(name: str | None) -> str:
-    """校验并归一化包名；prose（含空格/括号）或非法字符 → 返回 ''。"""
+    """校验并归一化包名；prose（含空格/括号）/非 ASCII（中文等）/非法字符 → 返回 ''。"""
     name = (name or "").strip()
-    if not name or " " in name or "\t" in name or "(" in name or ")" in name:
+    if not name or not name.isascii() or " " in name or "\t" in name or "(" in name or ")" in name:
         return ""
     return name if _PKG_RE.match(name) else ""
 
 
 def valid_version(ver: str | None) -> str:
-    """校验版本号；含空格/中文/说明文字 → 返回 ''。"""
+    """校验单个版本号；含空格/中文（非 ASCII）/说明文字 → 返回 ''。
+    注意：正则 \\w 在 Unicode 下会匹配中文，故必须显式挡掉非 ASCII（如"多个版本"）。"""
     ver = (ver or "").strip()
-    if not ver or " " in ver:
+    if not ver or not ver.isascii() or " " in ver:
         return ""
     return ver if _VER_RE.match(ver) else ""
+
+
+# 多版本分隔符：逗号 / 顿号 / 分号 / 空白 / "and" / "&"。
+# 一次投毒常同时命中多个版本（如 redhat "3.6.1,3.6.2,3.6.4"），旧 valid_version
+# 对整串校验会因逗号直接清空 → 下游丢失受影响版本。改为逐元素校验后保留有效项。
+# 注意：不拆 '/' —— 它出现在 git 分支引用（dev-foo/feature/x）里，拆了会造出假版本；
+# 整串带 '/' 的会被 valid_version 直接判非法（'/' 不在合法版本字符集内）。
+_VERSION_SPLIT_RE = re.compile(r"[,、;；\s]+|\band\b|&", re.IGNORECASE)
+
+
+def valid_versions(raw) -> list[str]:
+    """把"多版本"输入（逗号串 / 列表 / 单串）拆分并逐个校验，返回去重后的有效版本列表。
+    非法/散文元素被剔除；无有效项返回 []。"""
+    if isinstance(raw, (list, tuple, set)):
+        parts: list[str] = [str(x) for x in raw]
+    else:
+        parts = _VERSION_SPLIT_RE.split(str(raw or ""))
+    out: list[str] = []
+    seen: set[str] = set()
+    for p in parts:
+        v = valid_version(p)
+        if v and v.lower() not in seen:
+            seen.add(v.lower())
+            out.append(v)
+    return out
+
+
+# 知名合法基础设施域名 —— 这些是恶意包"借道"的合法服务（区块链公共 RPC、
+# 包注册中心、官方代理），它们本身不是失陷指标。若当 IOC 投给下游自动封禁，
+# 会误伤正常业务（如把 api.trongrid.io 封了 → 所有正常 TRON 调用挂掉）。
+# 保持"窄"：只列那些"永远不会是真 IOC"的纯基础设施；像 github.com / *.trycloudflare.com
+# 这类既能托管合法内容又常被滥用投递 payload 的，绝不列入（否则会漏掉真 IOC）。
+# 可用 DISPATCH_INFRA_ALLOWLIST 环境变量追加（逗号分隔）。
+_DEFAULT_INFRA_ALLOWLIST = {
+    # 区块链公共 RPC / 浏览器 API
+    "trongrid.io", "api.trongrid.io",
+    "infura.io", "alchemyapi.io", "alchemy.com",
+    "etherscan.io", "blockchair.com", "blockcypher.com",
+    # 包注册中心 / 官方代理（advisory 里出现的是"包发布在哪"，非 IOC）
+    "registry.npmjs.org", "npmjs.com", "npmjs.org",
+    "pypi.org", "files.pythonhosted.org",
+    "crates.io", "static.crates.io",
+    "rubygems.org", "packagist.org", "repo.packagist.org",
+    "proxy.golang.org", "sum.golang.org",
+    "nuget.org", "api.nuget.org",
+}
+
+
+def _infra_allowlist() -> set[str]:
+    extra = os.environ.get("DISPATCH_INFRA_ALLOWLIST", "")
+    out = set(_DEFAULT_INFRA_ALLOWLIST)
+    for d in extra.split(","):
+        d = d.strip().lower().strip(".")
+        if d:
+            out.add(d)
+    return out
+
+
+def is_legit_infra(domain: str, allowlist: set[str] | None = None) -> bool:
+    """域名（或其父域）命中合法基础设施 allowlist → True。
+    子域匹配：api.trongrid.io 命中 trongrid.io。"""
+    d = (domain or "").lower().strip().strip(".")
+    if not d:
+        return False
+    allow = allowlist if allowlist is not None else _infra_allowlist()
+    return any(d == a or d.endswith("." + a) for a in allow)
+
+
+_URL_HOST_RE = re.compile(r"^[a-zA-Z][\w+.-]*://([^/:?#\s]+)")
+
+
+def _url_host(url: str) -> str:
+    m = _URL_HOST_RE.match(url or "")
+    return m.group(1).lower() if m else ""
 
 
 def make_producer(bootstrap: str):
@@ -126,6 +202,7 @@ def _clean_ioc(value: str) -> str:
 def extract_iocs(text: str, exclude: set[str] | None = None) -> list[dict]:
     normalized = _refang(text)
     exclude = exclude or set()
+    allowlist = _infra_allowlist()
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
     url_spans: list[tuple[int, int]] = []
@@ -138,6 +215,12 @@ def extract_iocs(text: str, exclude: set[str] | None = None) -> list[dict]:
         if not value:
             return
         if value.lower() in exclude:
+            return
+        # 合法基础设施（区块链 RPC / 包注册中心）不是失陷指标：domain 直接命中，
+        # url 取 host 命中 → 一律丢弃，避免下游误封正常服务。
+        if typ == "domain" and is_legit_infra(value, allowlist):
+            return
+        if typ == "url" and is_legit_infra(_url_host(value), allowlist):
             return
         key = (typ, value.lower())
         if key in seen:

@@ -162,12 +162,15 @@ def test_build_message_schema_and_canonical_fallback(monkeypatch):
         ai_summary="AI 摘要",
     )
     msg = vd.build_message(vuln, [])
-    assert msg["schema_version"] == 2
+    assert msg["schema_version"] == 3
     assert msg["origin"] == "vuln"
     assert msg["ref_id"] == "MURPHY-MPS-fthb-675x"
     assert msg["canonical_url"] == "https://www.oscs1024.com/hd/MPS-fthb-675x"
-    assert msg["affected_version"] == ["[2.0.0,2.0.4]"]
-    assert msg["fix_version"] == ""
+    # v3: 顶层无 package/affected_version，统一进 packages[]
+    assert "affected_version" not in msg and "package" not in msg
+    assert len(msg["packages"]) == 1
+    assert msg["packages"][0]["affected_version"] == ["[2.0.0,2.0.4]"]
+    assert msg["packages"][0]["fix_version"] == ""
     assert msg["summary_zh"] == "AI 摘要"
     assert msg["triage"]["actionable"] is True
     assert msg["produced_at"] == 1730000000
@@ -195,7 +198,7 @@ async def test_run_dry_run_does_not_write(monkeypatch, capsys):
     assert stats["dry_run"] is True
     assert stats["sent"] == 0
     assert conn.execute("SELECT COUNT(*) FROM vuln_dispatches").fetchone()[0] == 0
-    assert '"schema_version": 2' in capsys.readouterr().out
+    assert '"schema_version": 3' in capsys.readouterr().out
 
 
 @pytest.mark.asyncio
