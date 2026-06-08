@@ -106,13 +106,19 @@ class HeatEntry(BaseModel):
 class DispatchEntry(BaseModel):
     ref_id: str
     origin: Literal["vuln", "news"]
-    package: str | None = None
-    ecosystem: str | None = None
+    package: str | None = None       # derived: first package's name (back-compat / 摘要行)
+    ecosystem: str | None = None     # derived: first package's ecosystem
+    packages: list[dict] = Field(default_factory=list)  # v3: 多包数组 [{ecosystem,package,versions...}]
     iocs: list[dict] = Field(default_factory=list)
     title: str | None = None
+    severity: str | None = None
+    cve_id: str | None = None
+    summary_zh: str | None = None
+    references: list[dict] = Field(default_factory=list)
     related_news: list[dict] = Field(default_factory=list)
     dispatched_at: str
     topic: str | None = None
+    message: dict | None = None       # 完整 Kafka 投递报文（抽屉里展示原文）
 
 
 class SourceStatus(BaseModel):

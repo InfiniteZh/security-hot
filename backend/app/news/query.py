@@ -19,6 +19,34 @@ from ..models import Article, DispatchEntry, SourceStatus
 _DEFAULT_DISPATCH_TOPIC = "schedule_task_normal"
 
 
+def _normalize_packages(raw) -> list[dict]:
+    """归一化 v3 多包数组。兼容旧单包字段（package/ecosystem）。
+    每个元素保留 ecosystem / package / versions(affected_version) / fix_version。"""
+    out: list[dict] = []
+    if not isinstance(raw, list):
+        return out
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        name = str(p.get("package") or "").strip()
+        if not name:
+            continue
+        versions = p.get("versions")
+        if versions is None:
+            versions = p.get("affected_version")
+        if isinstance(versions, str):
+            versions = [versions] if versions.strip() else []
+        elif not isinstance(versions, list):
+            versions = []
+        out.append({
+            "ecosystem": str(p.get("ecosystem") or "").strip(),
+            "package": name,
+            "versions": [str(v) for v in versions if str(v).strip()],
+            "fix_version": str(p.get("fix_version") or "").strip(),
+        })
+    return out
+
+
 # ─────────── public loaders ───────────
 
 def _load_dispatch_cache() -> list[DispatchEntry]:
@@ -51,17 +79,32 @@ def _load_dispatch_cache() -> list[DispatchEntry]:
         origin = str(row["origin"] or msg.get("origin") or "vuln").strip()
         if not ref_id or not dispatched_at or origin not in ("vuln", "news"):
             continue
+        packages = _normalize_packages(msg.get("packages"))
+        # 兼容极旧的单包 schema（package/ecosystem 顶层字段）
+        if not packages and msg.get("package"):
+            packages = _normalize_packages([{
+                "ecosystem": msg.get("ecosystem"),
+                "package": msg.get("package"),
+                "affected_version": msg.get("affected_versions"),
+            }])
+        first = packages[0] if packages else {}
         try:
             items.append(DispatchEntry(
                 ref_id=ref_id,
                 origin=origin,  # type: ignore[arg-type]
-                package=(msg.get("package") or None),
-                ecosystem=(msg.get("ecosystem") or None),
+                package=(first.get("package") or None),
+                ecosystem=(first.get("ecosystem") or None),
+                packages=packages,
                 iocs=_normalize_iocs(msg.get("iocs")),
                 title=(msg.get("title") or None),
+                severity=(msg.get("severity") or None),
+                cve_id=(msg.get("cve_id") or None),
+                summary_zh=(msg.get("summary_zh") or msg.get("summary") or None),
+                references=[r for r in (msg.get("references") or []) if isinstance(r, dict)],
                 related_news=related,
                 dispatched_at=dispatched_at,
                 topic=(msg.get("topic") or _DEFAULT_DISPATCH_TOPIC),
+                message=msg,
             ))
         except (TypeError, ValueError):
             continue
@@ -92,17 +135,50 @@ def _load_dispatch_cache() -> list[DispatchEntry]:
             "url": row["canonical_url"] or "",
             "llm_score": row["llm_score"],
         }]
+        packages = _normalize_packages(triage.get("packages"))
+        if not packages and triage.get("package"):
+            packages = _normalize_packages([{
+                "ecosystem": triage.get("ecosystem"),
+                "package": triage.get("package"),
+            }])
+        first = packages[0] if packages else {}
+        iocs = _normalize_iocs(triage.get("iocs"))
+        references = [{"url": row["canonical_url"] or "", "label": row["title"] or ""}]
+        # news 来源只持久化了 triage 结果（非完整 Kafka 报文），按 build_message
+        # 的字段重建一份等价投递内容供抽屉展示。
+        message = {
+            "schema_version": triage.get("schema_version"),
+            "source": "security-hot",
+            "kind": "poisoning_intel",
+            "origin": "news",
+            "ref_id": str(row["id"]),
+            "article_id": row["id"],
+            "title": row["title"] or "",
+            "canonical_url": row["canonical_url"] or "",
+            "packages": packages,
+            "iocs": iocs,
+            "llm_score": row["llm_score"],
+            "references": references,
+            "related_news": related_news,
+            "triage": triage,
+            "topic": _DEFAULT_DISPATCH_TOPIC,
+            "dispatched_at": dispatched_at,
+        }
         try:
             items.append(DispatchEntry(
                 ref_id=str(row["id"]),
                 origin="news",
-                package=(triage.get("package") or None),
-                ecosystem=(triage.get("ecosystem") or None),
-                iocs=_normalize_iocs(triage.get("iocs")),
+                package=(first.get("package") or None),
+                ecosystem=(first.get("ecosystem") or None),
+                packages=packages,
+                iocs=iocs,
                 title=(row["title"] or None),
+                summary_zh=(triage.get("reason") or None),
+                references=references,
                 related_news=related_news,
                 dispatched_at=dispatched_at,
                 topic=_DEFAULT_DISPATCH_TOPIC,
+                message=message,
             ))
         except (TypeError, ValueError):
             continue

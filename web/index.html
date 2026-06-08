@@ -1570,9 +1570,11 @@
     </div>
 
     <!-- ─────────── DETAIL DRAWER (preserved) ─────────── -->
-    <div id="detail-overlay" class="fixed inset-0 z-40 hidden" style="background:rgba(7,6,10,0.7); backdrop-filter:blur(6px);" aria-hidden="true"></div>
+    <!-- NOTE: 不要给这个全屏遮罩加 backdrop-filter:blur —— 它会让浏览器在抽屉打开期间
+         对整张长页面持续重新栅格化+模糊，滚动直接卡死。纯半透明暗色即可。 -->
+    <div id="detail-overlay" class="fixed inset-0 z-40 hidden" style="background:rgba(7,6,10,0.55);" aria-hidden="true"></div>
     <aside id="detail-drawer" class="fixed top-0 right-0 h-full w-full md:w-[560px] z-50 translate-x-full transition-transform duration-200 ease-out overflow-y-auto scrollbar-thin"
-           style="background:var(--surface); border-left:1px solid var(--hairline); box-shadow:-8px 0 30px rgba(0,0,0,0.08);"
+           style="background:var(--surface); border-left:1px solid var(--hairline); box-shadow:-8px 0 30px rgba(0,0,0,0.08); overscroll-behavior:contain; will-change:transform;"
            role="dialog" aria-modal="true" aria-hidden="true">
       <div id="detail-content"></div>
     </aside>
@@ -2251,8 +2253,18 @@ function renderDispatch() {
       </div>
     </div>`;
 
-  const cards = items.map((d) => {
-    const pkgLine = `${d.package || t("dispatch.unknown_pkg")}@${d.ecosystem || "unknown"}`;
+  const cards = items.map((d, i) => {
+    const pkgList = (d.packages && d.packages.length) ? d.packages
+                  : (d.package ? [{ ecosystem: d.ecosystem, package: d.package }] : []);
+    const pkgChips = pkgList.slice(0, 6).map(p => {
+      const eco = p.ecosystem ? `<span class="text-paper-faint">${escapeHtml(p.ecosystem)}/</span>` : "";
+      const vers = (p.versions && p.versions.length) ? `<span class="text-paper-faint"> @${escapeHtml(p.versions.slice(0,3).join(","))}${p.versions.length>3?"…":""}</span>` : "";
+      return `<span class="pill-tag">${eco}${escapeHtml(p.package)}${vers}</span>`;
+    }).join("");
+    const pkgMore = pkgList.length > 6 ? `<span class="text-paper-faint font-mono text-[11px]">+${pkgList.length - 6}</span>` : "";
+    const pkgHtml = pkgList.length
+      ? `<div class="flex flex-wrap gap-1.5 items-center">${pkgChips}${pkgMore}</div>`
+      : `<div class="text-[12.5px] text-paper-faint">${t("dispatch.unknown_pkg")}</div>`;
     const originClass = d.origin === "news" ? "poc" : "supply";
     const iocs = (d.iocs || []).slice(0, 12).map(i => {
       const value = i && i.value ? String(i.value) : "";
@@ -2273,17 +2285,18 @@ function renderDispatch() {
         </div>
       </div>` : "";
     return `
-      <article class="mb-3" style="background:var(--surface); border:1px solid var(--hairline); border-radius:8px; padding:16px 18px;">
+      <article class="mb-3" data-dispatch-idx="${i}" role="button" tabindex="0" style="background:var(--surface); border:1px solid var(--hairline); border-radius:8px; padding:16px 18px; cursor:pointer;">
         <div class="article-eyebrow">
           <span class="pill-tag ${originClass}">${escapeHtml(d.origin)}</span>
           <span title="${escapeHtml(d.dispatched_at || "")}">${escapeHtml(relTime(d.dispatched_at) || fmtTime(d.dispatched_at))}</span>
           ${d.topic ? `<span style="color:var(--paper-veil);">·</span><span>${t("dispatch.topic")} ${escapeHtml(d.topic)}</span>` : ""}
+          ${pkgList.length > 1 ? `<span style="color:var(--paper-veil);">·</span><span class="text-paper-faint">${pkgList.length} ${t("dispatch.pkg_count")}</span>` : ""}
         </div>
         <h3 class="article-title clamp-2">${escapeHtml(d.title || d.ref_id)}</h3>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 font-mono mt-2">
           <div>
             <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${t("dispatch.package")}</div>
-            <div class="text-[12.5px] text-paper mt-0.5 break-all">${escapeHtml(pkgLine)}</div>
+            <div class="mt-1">${pkgHtml}</div>
           </div>
           <div>
             <div class="text-[9.5px] tracking-[0.18em] uppercase text-paper-faint">${t("dispatch.ref")}</div>
@@ -2295,10 +2308,134 @@ function renderDispatch() {
           <div class="flex flex-wrap gap-1.5">${iocs || `<span class="text-paper-faint font-mono text-[12px]">—</span>`}</div>
         </div>
         ${relatedHtml}
+        <div class="mt-3 font-mono text-[10.5px] text-ok" style="opacity:0.85;">${t("dispatch.view_payload")} →</div>
       </article>`;
   }).join("");
 
   el.innerHTML = stats + cards;
+}
+
+// 处置流抽屉：展示一条供应链投毒的完整 Kafka 投递内容（含全部包/版本/IOC/原始报文）。
+function renderDispatchDetail(d) {
+  const msg = d.message || {};
+  const originClass = d.origin === "news" ? "poc" : "supply";
+  const pkgList = (d.packages && d.packages.length) ? d.packages
+                : (d.package ? [{ ecosystem: d.ecosystem, package: d.package }] : []);
+
+  const pkgRows = pkgList.map(p => {
+    const vers = (p.versions && p.versions.length)
+      ? p.versions.map(v => `<code class="font-mono text-[11px] bg-surface-2 border hairline rounded px-1.5 py-0.5 text-paper-dim">${escapeHtml(v)}</code>`).join(" ")
+      : `<span class="text-paper-veil font-mono text-[11px]">${lang === 'zh' ? '版本未指定' : 'version n/a'}</span>`;
+    return `
+      <li class="py-2" style="border-top:1px solid var(--hairline);">
+        <div class="flex items-baseline gap-2 flex-wrap">
+          ${p.ecosystem ? `<span class="font-mono text-[10.5px] text-paper-faint uppercase">${escapeHtml(p.ecosystem)}</span>` : ""}
+          <span class="font-mono text-[13px] text-paper break-all">${escapeHtml(p.package)}</span>
+          ${p.fix_version ? `<span class="font-mono text-[10.5px]" style="color:var(--ok);">fix ${escapeHtml(p.fix_version)}</span>` : ""}
+        </div>
+        <div class="flex flex-wrap gap-1 mt-1">${vers}</div>
+      </li>`;
+  }).join("");
+
+  const iocRows = (d.iocs || []).map(io => {
+    const v = io && io.value ? String(io.value) : "";
+    if (!v) return "";
+    const typ = io.type ? String(io.type) : "unknown";
+    return `<li class="py-1.5 flex items-baseline gap-2" style="border-top:1px solid var(--hairline);">
+        <span class="font-mono text-[10px] uppercase text-paper-faint w-[68px] shrink-0">${escapeHtml(typ)}</span>
+        <span class="font-mono text-[12px] text-paper-dim break-all">${escapeHtml(v)}</span>
+      </li>`;
+  }).filter(Boolean).join("");
+
+  const refs = (d.references || []).filter(r => r && r.url).map(r => {
+    const label = r.label || (() => { try { return new URL(r.url).hostname.replace(/^www\./,''); } catch { return r.url; } })();
+    return `<li class="py-1.5" style="border-top:1px solid var(--hairline);">
+        <a class="lnk text-[12.5px] break-all" href="${escapeHtml(r.url)}" target="_blank" rel="noopener">${escapeHtml(label)} ↗</a>
+      </li>`;
+  }).join("");
+
+  const related = (d.related_news || []).filter(n => n && (n.url || n.title)).map(n => `
+    <li class="py-1.5" style="border-top:1px solid var(--hairline);">
+      <a class="lnk text-[12.5px] break-all" href="${escapeHtml(n.url || '#')}" target="_blank" rel="noopener">${escapeHtml(n.title || n.url)}${n.llm_score != null ? ` <span class="font-mono text-paper-faint">AI ${escapeHtml(String(n.llm_score))}</span>` : ""} ↗</a>
+    </li>`).join("");
+
+  const rawJson = (() => { try { return JSON.stringify(msg, null, 2); } catch { return "{}"; } })();
+  const metaChips = [
+    d.severity ? `<span class="pill-tag">${escapeHtml(String(d.severity)).toUpperCase()}</span>` : "",
+    d.cve_id ? `<span class="font-mono text-[11px] text-paper-dim">${escapeHtml(d.cve_id)}</span>` : "",
+    msg.schema_version ? `<span class="font-mono text-[10.5px] text-paper-faint">schema ${escapeHtml(String(msg.schema_version))}</span>` : "",
+  ].filter(Boolean).join('<span style="color:var(--paper-veil);margin:0 6px;">·</span>');
+
+  return `
+    <div class="p-6 lg:p-8">
+      <div class="flex items-center justify-between mb-5">
+        <button onclick="closeDetailDrawer()" class="font-mono text-[11px] uppercase tracking-widest text-paper-dim hover:text-paper transition-colors">← ${t("detail.close")}</button>
+        <span class="font-mono text-[10.5px] text-paper-faint">${t("dispatch.view_title")} ↗</span>
+      </div>
+
+      <div class="flex items-center gap-2 flex-wrap mb-3">
+        <span class="pill-tag ${originClass}">${escapeHtml(d.origin)}</span>
+        ${d.topic ? `<span class="font-mono text-[10.5px] text-paper-dim">${t("dispatch.topic")} ${escapeHtml(d.topic)}</span>` : ""}
+        <span class="font-mono text-[10.5px] text-paper-faint" title="${escapeHtml(d.dispatched_at || '')}">${escapeHtml(relTime(d.dispatched_at) || fmtTime(d.dispatched_at))}</span>
+      </div>
+
+      <h2 class="text-[20px] font-semibold tracking-tight leading-snug mb-1" style="letter-spacing:-0.018em;">${escapeHtml(d.title || d.ref_id)}</h2>
+      <div class="font-mono text-[12px] text-paper-dim mb-2 break-all">${t("dispatch.ref")} ${escapeHtml(d.ref_id)}</div>
+      ${metaChips ? `<div class="mb-4">${metaChips}</div>` : ""}
+
+      ${d.summary_zh ? `
+      <section class="mb-6">
+        <div class="ai-summary" style="max-width:none;">
+          <span class="ai-summary-tag">${lang === 'zh' ? '研判' : 'Triage'}</span>
+          <p class="ai-summary-text" style="font-size:13.5px;line-height:1.7;">${escapeHtml(d.summary_zh)}</p>
+        </div>
+      </section>` : ""}
+
+      <section class="mb-6">
+        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">${t("dispatch.package")} <span class="text-paper-veil">(${pkgList.length})</span></h3>
+        ${pkgList.length ? `<ul class="m-0 p-0" style="list-style:none;">${pkgRows}</ul>` : `<div class="text-[12.5px] text-paper-faint py-2">${t("dispatch.unknown_pkg")}</div>`}
+      </section>
+
+      <section class="mb-6">
+        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">${t("dispatch.iocs")} <span class="text-paper-veil">(${(d.iocs||[]).length})</span></h3>
+        ${iocRows ? `<ul class="m-0 p-0" style="list-style:none;">${iocRows}</ul>` : `<div class="text-[12.5px] text-paper-faint py-2">—</div>`}
+      </section>
+
+      ${related ? `
+      <section class="mb-6">
+        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">${t("dispatch.related")} <span class="text-paper-veil">(${(d.related_news||[]).length})</span></h3>
+        <ul class="m-0 p-0" style="list-style:none;">${related}</ul>
+      </section>` : ""}
+
+      ${refs ? `
+      <section class="mb-6">
+        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1">${t("detail.refs")} <span class="text-paper-veil">(${(d.references||[]).length})</span></h3>
+        <ul class="m-0 p-0" style="list-style:none;">${refs}</ul>
+      </section>` : ""}
+
+      <section class="mb-2">
+        <div class="flex items-center justify-between mb-1">
+          <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint">${t("dispatch.payload")}</h3>
+          <button onclick="copyDispatchPayload(this)" class="font-mono text-[10.5px] text-paper-dim hover:text-paper border hairline rounded px-2 py-0.5">${t("dispatch.copy")}</button>
+        </div>
+        <pre id="dispatch-raw-json" class="scrollbar-thin" style="background:var(--surface-2); border:1px solid var(--hairline); border-radius:8px; padding:12px 14px; font-family:'Geist Mono',monospace; font-size:11px; line-height:1.55; color:var(--paper-dim); overflow:auto; max-height:380px; white-space:pre; margin:0;">${escapeHtml(rawJson)}</pre>
+        <div class="font-mono text-[10px] text-paper-veil mt-2">Kafka topic <b style="color:var(--ok);font-weight:500;">${escapeHtml(d.topic || 'schedule_task_normal')}</b></div>
+      </section>
+    </div>
+  `;
+}
+
+function copyDispatchPayload(btn) {
+  const pre = document.getElementById("dispatch-raw-json");
+  if (!pre) return;
+  const txt = pre.textContent || "";
+  const done = () => { const o = btn.textContent; btn.textContent = lang === 'zh' ? '已复制' : 'Copied'; setTimeout(() => { btn.textContent = o; }, 1200); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(txt).then(done).catch(() => {});
+  } else {
+    const ta = document.createElement("textarea"); ta.value = txt; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); done(); } catch (_) {} document.body.removeChild(ta);
+  }
 }
 
 function newsCatPill(cat) {
@@ -2318,7 +2455,7 @@ function renderNewsCard(a) {
   const byline = a.source_title || a.source_slug || "";
   const absTime = a.published || a.fetched_at || "";
   return `
-    <article class="article">
+    <article class="article" data-news-id="${escapeHtml(String(a.id))}" role="button" tabindex="0" style="cursor:pointer;">
       <div class="article-eyebrow">
         ${cat ? `<span class="article-cat cat-${cat}">${escapeHtml(catLabel)}</span>` : ''}
         <span class="article-byline"><span class="byline-by">${lang === 'zh' ? '来自' : 'BY'}</span> ${escapeHtml(byline.toUpperCase())}</span>
@@ -2326,9 +2463,7 @@ function renderNewsCard(a) {
         <span title="${escapeHtml(absTime)}">${escapeHtml(relTime(a.published))}</span>
         ${a.llm_score != null ? `<span style="color:var(--paper-veil);">·</span><span class="text-paper-faint">AI ${a.llm_score}</span>` : ''}
       </div>
-      <a href="${escapeHtml(a.link)}" target="_blank" rel="noopener">
-        <h3 class="article-title clamp-2">${escapeHtml(a.title)}</h3>
-      </a>
+      <h3 class="article-title clamp-2">${escapeHtml(a.title)}</h3>
       ${aiSummary ? `
         <div class="ai-summary">
           <span class="ai-summary-tag">AI 摘要</span>
@@ -3482,8 +3617,11 @@ function openDetailDrawer(html) {
   // Save the element that had focus so we can restore it on close (a11y).
   if (!state.detailPrevFocus) state.detailPrevFocus = document.activeElement;
   document.getElementById("detail-content").innerHTML = html;
+  // 锁住底层页面滚动：抽屉打开时背景不应再随滚动重排/重绘（也避免滚动链穿透）。
+  document.body.style.overflow = "hidden";
   overlay.classList.remove("hidden");
   overlay.setAttribute("aria-hidden", "false");
+  drawer.scrollTop = 0;
   drawer.classList.remove("translate-x-full");
   drawer.setAttribute("aria-hidden", "false");
   // Move focus into the drawer (close button if present, else drawer itself).
@@ -3499,6 +3637,7 @@ function closeDetailDrawer() {
   overlay.setAttribute("aria-hidden", "true");
   drawer.classList.add("translate-x-full");
   drawer.setAttribute("aria-hidden", "true");
+  document.body.style.overflow = "";  // 解锁底层页面滚动
   // Clear URL deep-link and state.
   state.openDetailId = null;
   syncUrl();
@@ -3656,12 +3795,43 @@ document.addEventListener("click", (e) => {
     showDetail(node.dataset.vuln);
     return;
   }
+  // 投送卡片 → 处置流抽屉（完整 Kafka 报文）
+  const dispNode = e.target.closest("[data-dispatch-idx]");
+  if (dispNode && !e.target.closest("a")) {
+    e.preventDefault();
+    showDispatchDetail(Number(dispNode.dataset.dispatchIdx));
+    return;
+  }
+  // 资讯卡片 → 详情抽屉。忽略卡片内的链接/镜像展开条点击。
+  const newsCard = e.target.closest("[data-news-id]");
+  if (newsCard && !e.target.closest("a, .mirror-strip, .mirrors-expanded")) {
+    e.preventDefault();
+    showNewsCardDetail(newsCard.dataset.newsId);
+    return;
+  }
   const newsNode = e.target.closest("[data-news-link]");
   if (newsNode) {
     e.preventDefault();
     showNewsDetail(newsNode.dataset.newsLink, newsNode.dataset.newsLabel);
   }
 });
+
+// 资讯卡片：文章对象已在内存（state.news / hiddenNews），直接开抽屉，免再请求。
+function showNewsCardDetail(id) {
+  const pool = state.showHidden ? state.hiddenNews : state.news;
+  const a = (pool || []).find(x => String(x.id) === String(id))
+         || (state.news || []).find(x => String(x.id) === String(id))
+         || (state.hiddenNews || []).find(x => String(x.id) === String(id));
+  if (!a) return;
+  openDetailDrawer(renderNewsDetail(a, a.link));
+}
+
+// 投送卡片：处置流条目已在 state.dispatch，按索引取，渲染完整投递报文。
+function showDispatchDetail(idx) {
+  const d = (state.dispatch || [])[idx];
+  if (!d) return;
+  openDetailDrawer(renderDispatchDetail(d));
+}
 
 function renderNewsDetail(a, link) {
   const cat = a.llm_category;
