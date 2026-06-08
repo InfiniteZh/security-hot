@@ -18,7 +18,11 @@ from .refresh_state import _set_stage
 
 log = logging.getLogger("security-hot")
 
-ROOT = Path(__file__).resolve().parents[2]
+# NOTE: this file lives at backend/app/runtime/ (3 levels below repo root), so
+# the repo root is parents[3] — NOT parents[2] (that resolves to .../backend and
+# makes ROOT/"backend"/"cache" a non-existent doubled path, silently breaking
+# upsert_from_manifest → scheduler/manual fetch steps never update the panel).
+ROOT = Path(__file__).resolve().parents[3]
 
 
 _LLM_TASKS_BY_SCOPE = {

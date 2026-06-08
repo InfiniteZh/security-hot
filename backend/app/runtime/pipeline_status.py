@@ -55,7 +55,12 @@ STEP_META: dict[str, tuple[str, str]] = {
 }
 
 # Tests monkeypatch this to redirect the store to a tmp dir.
-CACHE_DIR = Path(__file__).resolve().parents[1] / "cache"
+# Must be backend/cache (parents[2]/cache), NOT backend/app/cache: only
+# backend/cache is bind-mounted in docker-compose, so the panel store survives
+# container restarts and sits next to manifest.json (matches this module's
+# docstring). parents[1] would put it in the un-mounted backend/app/cache and
+# lose all pipeline status on every restart.
+CACHE_DIR = Path(__file__).resolve().parents[2] / "cache"
 
 
 def now_iso() -> str:

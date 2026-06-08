@@ -14,7 +14,9 @@ from pathlib import Path
 
 log = logging.getLogger("security-hot")
 
-ROOT = Path(__file__).resolve().parents[2]
+# backend/app/runtime/ is 3 levels below repo root → parents[3] (see
+# pipeline_runner.py); parents[2] wrongly resolves to .../backend.
+ROOT = Path(__file__).resolve().parents[3]
 
 REFRESH_TOKEN_ENV = "SECURITY_HOT_REFRESH_TOKEN"
 
