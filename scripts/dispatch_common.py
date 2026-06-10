@@ -1,6 +1,7 @@
 """Shared helpers for security-hot Kafka dispatchers."""
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -29,8 +30,14 @@ _ENTITY_RE = re.compile(r"&\w+;")
 _WS_RE = re.compile(r"\s+")
 
 _URL_RE = re.compile(r"\b(?:https?|hxxps?)://[^\s<>'\"，。；;,]+", re.IGNORECASE)
-_SHA256_RE = re.compile(r"(?<![@:/.\w])[a-fA-F0-9]{64}(?![@:/.\w])")
-_MD5_RE = re.compile(r"(?<![@:/.\w])[a-fA-F0-9]{32}(?![@:/.\w])")
+# (pattern, ioc_type) ordered longest-first so a 64-char hex string matches sha256, not sha1/md5.
+_HASH_RES: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"(?<![@:/.\w])[a-fA-F0-9]{64}(?![@:/.\w])"), "sha256"),
+    (re.compile(r"(?<![@:/.\w])[a-fA-F0-9]{40}(?![@:/.\w])"), "sha1"),   # git commit hashes
+    (re.compile(r"(?<![@:/.\w])[a-fA-F0-9]{32}(?![@:/.\w])"), "md5"),
+]
+# Hash IOC types are high-confidence enough for body augmentation; domains/URLs are too noisy.
+BODY_AUGMENT_TYPES: frozenset[str] = frozenset(t for _, t in _HASH_RES)
 _IPV4_RE = re.compile(r"(?<![\w.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?![\w.])")
 _IPV6_RE = re.compile(r"(?<![\w:])(?:[a-fA-F0-9]{1,4}:){2,7}[a-fA-F0-9]{1,4}(?![\w:])")
 _DOMAIN_RE = re.compile(
@@ -123,14 +130,15 @@ _DEFAULT_INFRA_ALLOWLIST = {
 }
 
 
-def _infra_allowlist() -> set[str]:
+@functools.lru_cache(maxsize=1)
+def _infra_allowlist() -> frozenset[str]:
     extra = os.environ.get("DISPATCH_INFRA_ALLOWLIST", "")
     out = set(_DEFAULT_INFRA_ALLOWLIST)
     for d in extra.split(","):
         d = d.strip().lower().strip(".")
         if d:
             out.add(d)
-    return out
+    return frozenset(out)
 
 
 def is_legit_infra(domain: str, allowlist: set[str] | None = None) -> bool:
@@ -231,10 +239,9 @@ def extract_iocs(text: str, exclude: set[str] | None = None) -> list[dict]:
     for m in _URL_RE.finditer(normalized):
         url_spans.append(m.span())
         add(m.group(0), "url")
-    for m in _SHA256_RE.finditer(normalized):
-        add(m.group(0).lower(), "sha256")
-    for m in _MD5_RE.finditer(normalized):
-        add(m.group(0).lower(), "md5")
+    for pattern, ioc_type in _HASH_RES:
+        for m in pattern.finditer(normalized):
+            add(m.group(0).lower(), ioc_type)
     for m in _IPV4_RE.finditer(normalized):
         add(m.group(0), "ipv4")
     for m in _IPV6_RE.finditer(normalized):

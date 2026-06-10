@@ -41,6 +41,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import db  # noqa: E402
 from dispatch_common import (  # noqa: E402
+    BODY_AUGMENT_TYPES,
     KAFKA_BOOTSTRAP,
     KAFKA_TOPIC,
     TIER1_SUPPLY_SOURCES,
@@ -69,18 +70,21 @@ TIER1_MIN_SCORE = 7
 TRIAGE_BODY_LIMIT = 16000
 
 _TRIAGE_SYSTEM = """你是供应链投毒情报分诊员。基于【正文】（而非仅标题/摘要）判断文章是否"可处置"——\
-即是否点名了具体的、企业内网可能安装/使用的开源组件（含生态：npm/pypi/maven/go/cargo/nuget/gem/composer/packagist 等），\
-或给出了具体可联查的失陷指标。
-纯趋势评论、宏观报道、无具体组件/IOC 的事件通报 → 不可处置（actionable=false，packages=[], iocs=[]）。
+即是否点名了具体的、企业内网可能安装/使用的开源组件，或给出了具体可联查的失陷指标。
+可处置场景（以下任一成立 → actionable=true）：
+  A. 注册表包投毒：点名了具体的 npm/pypi/maven/go/cargo/nuget/gem/composer/packagist 等生态的恶意包；
+  B. GitHub 仓库源码劫持：某个被广泛 git clone/pip install git+.../直接从 repo 安装的开源项目的主分支/标签/Release 被植入恶意代码，
+     企业开发者可能在攻击窗口内拉取过。此场景 ecosystem 填 "github"，package 填完整 org/repo（如 Pythagora-io/gpt-pilot）。
+不可处置：纯趋势评论、宏观报道、无具体组件/IOC 的事件通报（actionable=false，packages=[], iocs=[]）。
 字段规则（严格遵守）：
-- packages：列出文章点名的【所有】被投毒/恶意的具体包，一个都不要漏。每个元素：
-    {"ecosystem":"<npm|pypi|maven|go|cargo|nuget|gem|composer|packagist 等，未知填空串>",
-     "package":"<单个具体包名，如 @scope/name 或 name，不含空格/说明文字>",
-     "versions":["<受影响版本号，如 4.0.4>", ...]  // 多个就都列；不要写"多个版本"之类描述；无则空数组}
+- packages：列出文章点名的【所有】被投毒/恶意的具体包/仓库，一个都不要漏。每个元素：
+    {"ecosystem":"<npm|pypi|maven|go|cargo|nuget|gem|composer|packagist|github 等，未知填空串>",
+     "package":"<单个具体包名或 org/repo，不含空格/说明文字>",
+     "versions":["<受影响版本号或 git commit hash（40位）>", ...]  // 多个就都列；无则空数组}
   正文若列了 30 个中毒包就返回 30 个元素。无任何具体包 → packages 为空数组 []。
-- iocs：列出文章里【所有】真正的失陷指标，一个都不要漏——恶意域名 / IP / 文件 SHA256或MD5 / 恶意 URL。\
-绝不要填：包名、文件名（如 index.js）、文件路径、加密算法描述、git commit hash、报告人账号、恶意软件家族名、生态名、\
-合法基础设施（如 npm/pypi 注册中心、区块链公共节点）。无则空数组 []。
+- iocs：列出文章里【所有】真正的失陷指标，一个都不要漏——恶意域名 / IP / 文件哈希（SHA256 64位、SHA1 40位 git commit hash、MD5 32位）/ 恶意 URL。\
+绝不要填：包名、文件名（如 index.js）、文件路径、加密算法描述、报告人账号、恶意软件家族名、生态名、\
+合法基础设施（如 npm/pypi 注册中心、sigstore.dev 等代码签名基础设施、区块链公共节点）。无则空数组 []。
 只输出严格 JSON：{"actionable": true/false, "packages": [...], "iocs": [], "reason": "中文<=50字"}"""
 
 
@@ -205,15 +209,13 @@ def _message_iocs(values: list, exclude_names: set[str] | None = None) -> list[d
 
 # 正文里补抓的"高置信"IOC 类型：哈希几乎必然是失陷指标，且常列在表格里被 LLM 截断/漏掉；
 # 域名/URL 不在此列（散文里的厂商域名/引用链接噪声大，仍只信 LLM triage）。
-_BODY_AUGMENT_TYPES = {"sha256", "md5"}
-
 
 def _augment_iocs_from_body(iocs: list[dict], full_body: str,
                             exclude_names: set[str] | None = None) -> list[dict]:
     """用正文里正则抓到的高置信哈希补全 LLM 可能漏掉的 IOC（去重合并）。"""
     have = {i["value"].lower() for i in iocs}
     for item in extract_iocs(full_body or "", exclude={n.lower() for n in (exclude_names or set()) if n}):
-        if item["type"] not in _BODY_AUGMENT_TYPES:
+        if item["type"] not in BODY_AUGMENT_TYPES:
             continue
         key = item["value"].lower()
         if key in have:
