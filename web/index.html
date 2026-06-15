@@ -1601,6 +1601,38 @@
       </div>
     </div>
 
+    <!-- ─────────── RESEND CONFIRM MODAL ─────────── -->
+    <div id="resend-modal" hidden>
+      <div class="modal-backdrop" onclick="closeResendModal()"></div>
+      <div class="modal-shell">
+        <article class="modal-content scrollbar-thin" style="max-width:520px;">
+          <header class="modal-header">
+            <div>
+              <div class="modal-date" data-i18n="dispatch.resend.confirm_sub">报文将原样打回处置队列 · 不重跑 triage</div>
+              <h2 class="modal-title" data-i18n="dispatch.resend.confirm_title">确认重发到 Kafka</h2>
+            </div>
+            <button class="modal-close" onclick="closeResendModal()" data-i18n="modal.close">关闭 ✕</button>
+          </header>
+          <div class="modal-body" style="padding:22px 32px 28px;">
+            <div class="grid grid-cols-[80px_1fr] gap-x-3 gap-y-2 font-mono text-[12px] mb-4">
+              <div class="text-paper-faint uppercase tracking-[0.14em] text-[10px] pt-0.5" data-i18n="dispatch.resend.field_topic">Topic</div>
+              <div class="text-ok break-all" id="resend-topic">—</div>
+              <div class="text-paper-faint uppercase tracking-[0.14em] text-[10px] pt-0.5" data-i18n="dispatch.resend.field_origin">来源</div>
+              <div class="text-paper break-all" id="resend-origin">—</div>
+              <div class="text-paper-faint uppercase tracking-[0.14em] text-[10px] pt-0.5" data-i18n="dispatch.resend.field_key">Key</div>
+              <div class="text-paper break-all" id="resend-key">—</div>
+            </div>
+            <div class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-1" data-i18n="dispatch.resend.field_payload">报文预览</div>
+            <pre id="resend-payload" class="scrollbar-thin" style="background:var(--surface-2); border:1px solid var(--hairline); border-radius:8px; padding:12px 14px; font-family:'Geist Mono',monospace; font-size:11px; line-height:1.5; color:var(--paper-dim); overflow:auto; max-height:260px; white-space:pre; margin:0;"></pre>
+            <div class="flex items-center justify-end gap-2 mt-5">
+              <button onclick="closeResendModal()" class="font-mono text-[12px] px-4 py-2 rounded-lg border hairline text-paper-dim hover:text-paper hover:bg-surface-2 transition" data-i18n="dispatch.resend.cancel">取消</button>
+              <button id="resend-confirm-btn" onclick="doResend()" class="font-mono text-[12px] px-4 py-2 rounded-lg border transition" style="border-color:var(--ok); color:var(--ok);" data-i18n="dispatch.resend.confirm">确认发送 ↗</button>
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+
     <!-- ─────────── FOOTER ─────────── -->
     <footer class="border-t hairline mt-8 py-8 above-grain">
       <div class="flex flex-wrap items-center justify-between gap-3 footer-meta">
@@ -2265,7 +2297,7 @@ function renderDispatch() {
         ${relatedHtml}
         <div class="mt-3 flex items-center justify-between">
           <div class="font-mono text-[10.5px] text-ok" style="opacity:0.85;">${t("dispatch.view_payload")} →</div>
-          <button onclick="event.stopPropagation(); resendDispatch(${JSON.stringify(d.ref_id)}, ${JSON.stringify(d.origin)}, this)"
+          <button type="button" data-resend-idx="${i}"
                   class="font-mono text-[10.5px] px-2.5 py-1 rounded border transition hover:bg-surface-2"
                   style="border-color:var(--hairline); color:var(--ok);"
                   data-i18n="dispatch.resend">重发</button>
@@ -2279,6 +2311,7 @@ function renderDispatch() {
 // 处置流抽屉：展示一条供应链投毒的完整 Kafka 投递内容（含全部包/版本/IOC/原始报文）。
 function renderDispatchDetail(d) {
   const msg = d.message || {};
+  const dispatchIdx = (state.dispatch || []).indexOf(d);
   const originClass = d.origin === "news" ? "poc" : "supply";
   const pkgList = (d.packages && d.packages.length) ? d.packages
                 : (d.package ? [{ ecosystem: d.ecosystem, package: d.package }] : []);
@@ -2378,7 +2411,7 @@ function renderDispatchDetail(d) {
         <div class="flex items-center justify-between mb-1">
           <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint">${t("dispatch.payload")}</h3>
           <div class="flex items-center gap-2">
-            <button onclick="resendDispatch(${JSON.stringify(d.ref_id)}, ${JSON.stringify(d.origin)}, this)"
+            <button type="button" data-resend-idx="${dispatchIdx}"
                     class="font-mono text-[10.5px] border hairline rounded px-2 py-0.5 transition hover:bg-surface-2"
                     style="color:var(--ok);"
                     data-i18n="dispatch.resend">${t("dispatch.resend")}</button>
@@ -2606,20 +2639,51 @@ function getRefreshToken() { return localStorage.getItem(REFRESH_TOKEN_KEY) || n
 function setRefreshToken(tok) { localStorage.setItem(REFRESH_TOKEN_KEY, tok); }
 function clearRefreshToken() { localStorage.removeItem(REFRESH_TOKEN_KEY); }
 
-// ───────────────────── per-record Kafka resend ─────────────────────
-async function resendDispatch(refId, origin, btn) {
-  if (btn) { btn.disabled = true; btn.textContent = t("dispatch.resend.running"); }
+// ───────────────────── per-record Kafka resend (confirm modal) ─────────────────────
+let _resendIdx = -1;
+let _resendInFlight = false;
+
+function openResendModal(idx) {
+  const d = (state.dispatch || [])[idx];
+  if (!d) return;
+  _resendIdx = idx;
+  const topic = d.topic || "schedule_task_normal";
+  document.getElementById("resend-topic").textContent = topic;
+  document.getElementById("resend-origin").textContent = d.origin || "—";
+  document.getElementById("resend-key").textContent = d.ref_id || "—";
+  let payload = "";
+  try { payload = JSON.stringify(d.message ?? {}, null, 2); } catch { payload = String(d.message ?? ""); }
+  document.getElementById("resend-payload").textContent = payload;
+  const modal = document.getElementById("resend-modal");
+  modal.hidden = false;
+  const btn = document.getElementById("resend-confirm-btn");
+  if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend.confirm"); }
+  applyI18n();
+}
+
+function closeResendModal() {
+  if (_resendInFlight) return;   // 发送途中不允许关闭
+  const modal = document.getElementById("resend-modal");
+  if (modal) modal.hidden = true;
+  _resendIdx = -1;
+}
+
+async function doResend() {
+  const d = (state.dispatch || [])[_resendIdx];
+  if (!d) { closeResendModal(); return; }
+  const refId = d.ref_id, origin = d.origin;
 
   let token = getRefreshToken();
   if (!token) {
     token = window.prompt(t("refresh.prompt"));
-    if (!token) {
-      if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend"); applyI18n(); }
-      return;
-    }
+    if (!token) return;
     setRefreshToken(token.trim());
     token = token.trim();
   }
+
+  const btn = document.getElementById("resend-confirm-btn");
+  _resendInFlight = true;
+  if (btn) { btn.disabled = true; btn.removeAttribute("data-i18n"); btn.textContent = t("dispatch.resend.running"); }
 
   let res;
   try {
@@ -2628,12 +2692,14 @@ async function resendDispatch(refId, origin, btn) {
       { method: "POST", headers: { "X-Refresh-Token": token } }
     );
   } catch (e) {
-    if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend"); applyI18n(); }
+    _resendInFlight = false;
+    if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend.confirm"); applyI18n(); }
     showRefreshToast(`${t("dispatch.resend.failed")}: ${e.message}`, "error");
     return;
   }
 
-  if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend"); applyI18n(); }
+  _resendInFlight = false;
+  if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend.confirm"); applyI18n(); }
 
   if (res.status === 503) { showRefreshToast(t("dispatch.resend.disabled"), "error", 6000); return; }
   if (res.status === 401) { clearRefreshToken(); showRefreshToast(t("dispatch.resend.unauthorized"), "error"); return; }
@@ -2643,6 +2709,7 @@ async function resendDispatch(refId, origin, btn) {
     showRefreshToast(`${t("dispatch.resend.failed")}: ${detail}`, "error");
     return;
   }
+  closeResendModal();
   showRefreshToast(`${t("dispatch.resend.ok")} (${origin}:${refId})`, "ok");
 }
 
@@ -3792,6 +3859,14 @@ document.addEventListener("click", (e) => {
     showDetail(node.dataset.vuln);
     return;
   }
+  // 重发按钮（卡片 / 抽屉）→ 弹出确认模态框，先于卡片点击拦截
+  const resendNode = e.target.closest("[data-resend-idx]");
+  if (resendNode) {
+    e.preventDefault();
+    e.stopPropagation();
+    openResendModal(Number(resendNode.dataset.resendIdx));
+    return;
+  }
   // 投送卡片 → 处置流抽屉（完整 Kafka 报文）
   const dispNode = e.target.closest("[data-dispatch-idx]");
   if (dispNode && !e.target.closest("a")) {
@@ -4025,6 +4100,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     const modal = document.getElementById("pipeline-modal");
     if (modal && !modal.hidden) closePipeline();
+    const rs = document.getElementById("resend-modal");
+    if (rs && !rs.hidden) closeResendModal();
   }
 });
 
