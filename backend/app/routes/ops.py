@@ -235,6 +235,71 @@ def healthz() -> JSONResponse:
     })
 
 
+_dispatch_in_flight: bool = False
+
+
+async def _run_dispatch(kind: str, dry_run: bool) -> None:
+    global _dispatch_in_flight
+    import sys
+    import time as _t
+    from pathlib import Path as _P
+
+    _root_scripts = str(_P(__file__).resolve().parents[3] / "scripts")
+    if _root_scripts not in sys.path:
+        sys.path.insert(0, _root_scripts)
+
+    t0 = _t.monotonic()
+    try:
+        if kind in ("poisoning", "all"):
+            import poisoning_dispatch
+            stats = await poisoning_dispatch.run(fresh_days=3, limit=None, dry_run=dry_run)
+            log.info("dispatch poisoning: sent=%s errors=%s", stats.get("sent"), stats.get("errors"))
+        if kind in ("vuln", "all"):
+            import vuln_dispatch
+            stats = await vuln_dispatch.run(dry_run=dry_run)
+            log.info("dispatch vuln: sent=%s errors=%s", stats.get("sent"), stats.get("errors"))
+    except Exception:
+        log.exception("dispatch failed (kind=%s)", kind)
+    finally:
+        _dispatch_in_flight = False
+        log.info("dispatch done in %.1fs", _t.monotonic() - t0)
+
+
+@router.post("/api/dispatch", tags=["overview"])
+async def api_dispatch(
+    background: BackgroundTasks,
+    kind: str = Query(default="all", description="poisoning | vuln | all"),
+    dry_run: bool = Query(default=False, description="print messages, do not send"),
+    x_refresh_token: str | None = Header(default=None),
+) -> JSONResponse:
+    """Manually trigger Kafka dispatch without re-fetching.
+
+    Runs poisoning_dispatch and/or vuln_dispatch in the background.
+    Auth: same `SECURITY_HOT_REFRESH_TOKEN` env var as /api/refresh.
+    """
+    global _dispatch_in_flight
+
+    if kind not in ("poisoning", "vuln", "all"):
+        raise HTTPException(status_code=400, detail="kind must be poisoning | vuln | all")
+
+    expected = os.environ.get(refresh_state.REFRESH_TOKEN_ENV)
+    if not expected:
+        raise HTTPException(status_code=503, detail=f"dispatch disabled; set {refresh_state.REFRESH_TOKEN_ENV} to enable")
+    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+    if _dispatch_in_flight:
+        return JSONResponse({"queued": False, "reason": "already running"}, status_code=409)
+
+    _dispatch_in_flight = True
+    background.add_task(_run_dispatch, kind, dry_run)
+    return JSONResponse({"queued": True, "kind": kind, "dry_run": dry_run}, status_code=202)
+
+
+@router.get("/api/dispatch/status", tags=["overview"])
+def api_dispatch_status() -> JSONResponse:
+    return JSONResponse({"in_flight": _dispatch_in_flight})
+
+
 @router.post("/api/refresh", tags=["overview"])
 async def api_refresh(
     background: BackgroundTasks,
