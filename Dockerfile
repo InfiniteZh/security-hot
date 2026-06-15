@@ -1,6 +1,17 @@
 # Multi-stage build: install uv deps in one layer, ship a slim runtime.
 FROM python:3.12-slim AS base
 
+# Build-time proxy passthrough (set HTTP_PROXY / HTTPS_PROXY in your shell or
+# docker-compose build args to make apt-get / curl / uv sync go through it).
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG http_proxy
+ARG https_proxy
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    http_proxy=${http_proxy} \
+    https_proxy=${https_proxy}
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy

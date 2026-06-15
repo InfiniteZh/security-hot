@@ -2,9 +2,14 @@ services:
   web:
     build:
       context: .
+      network: host
       args:
         APP_UID: ${APP_UID:-10001}
         APP_GID: ${APP_GID:-10001}
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        http_proxy: ${http_proxy:-}
+        https_proxy: ${https_proxy:-}
     ports:
       - "8000:8000"
     env_file:
@@ -29,9 +34,14 @@ services:
     # schedule via host cron / a sidecar like ofelia).
     build:
       context: .
+      network: host
       args:
         APP_UID: ${APP_UID:-10001}
         APP_GID: ${APP_GID:-10001}
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        http_proxy: ${http_proxy:-}
+        https_proxy: ${https_proxy:-}
     profiles: ["job"]
     env_file:
       - .env
