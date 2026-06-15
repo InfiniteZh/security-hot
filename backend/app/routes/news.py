@@ -111,6 +111,63 @@ def api_dispatches(
     return load_dispatches(limit=limit, origin=origin)
 
 
+@router.post("/api/dispatches/resend", tags=["vulnerability"])
+async def api_dispatch_resend(
+    ref_id: str = Query(..., description="ref_id of the dispatch entry"),
+    origin: str = Query(default="vuln", description="vuln | news"),
+    x_refresh_token: str | None = Header(default=None),
+) -> JSONResponse:
+    """Re-send a previously dispatched message to Kafka verbatim.
+
+    Looks up the stored message for (ref_id, origin) and pushes it to Kafka
+    without re-running any LLM triage. Auth: SECURITY_HOT_REFRESH_TOKEN header.
+    """
+    import sys
+    import time as _t
+    from pathlib import Path as _P
+
+    expected = os.environ.get("SECURITY_HOT_REFRESH_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="resend disabled — set SECURITY_HOT_REFRESH_TOKEN")
+    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+
+    if origin not in ("vuln", "news"):
+        raise HTTPException(status_code=400, detail="origin must be vuln | news")
+
+    entries = load_dispatches(limit=1000, origin=origin)
+    entry = next((e for e in entries if e.ref_id == ref_id), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"dispatch entry {ref_id!r} not found")
+    if not entry.message:
+        raise HTTPException(status_code=422, detail="no message payload stored for this entry")
+
+    _root_scripts = str(_P(__file__).resolve().parents[3] / "scripts")
+    if _root_scripts not in sys.path:
+        sys.path.insert(0, _root_scripts)
+
+    from dispatch_common import KAFKA_BOOTSTRAP, KAFKA_TOPIC, make_producer, send  # noqa: E402
+
+    bootstrap = os.environ.get("KAFKA_BOOTSTRAP", KAFKA_BOOTSTRAP)
+    topic = os.environ.get("KAFKA_TOPIC", entry.topic or KAFKA_TOPIC)
+
+    t0 = _t.monotonic()
+    try:
+        producer = make_producer(bootstrap)
+        await producer.start()
+        try:
+            await send(producer, topic, str(ref_id), entry.message)
+        finally:
+            await producer.stop()
+    except Exception as exc:
+        log.error("resend %s/%s failed: %s", origin, ref_id, exc)
+        raise HTTPException(status_code=502, detail=f"Kafka send failed: {exc}") from exc
+
+    elapsed = round(_t.monotonic() - t0, 2)
+    log.info("resend ok origin=%s ref_id=%s topic=%s elapsed=%.2fs", origin, ref_id, topic, elapsed)
+    return JSONResponse({"ok": True, "ref_id": ref_id, "origin": origin, "topic": topic, "elapsed_s": elapsed})
+
+
 @router.get("/api/search", response_model=SearchResult, tags=["search"])
 def api_search(
     q: str = Query(..., min_length=2, description="Search query"),

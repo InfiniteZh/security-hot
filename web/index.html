@@ -1505,22 +1505,10 @@
         </section>
 
         <section class="panel" data-panel="dispatch" hidden>
-          <div class="flex items-center gap-3 mb-5 flex-wrap">
+          <div class="flex items-center gap-3 mb-5">
             <button onclick="setActiveTab('news')" class="shrink-0 font-mono text-[11px] px-3 py-1.5 rounded-lg border hover:bg-surface-2 transition text-paper-faint hover:text-paper" style="border-color:var(--hairline);">← <span data-i18n="dispatch.back">返回</span></button>
             <h2 class="font-display text-[30px]" style="font-weight:400;"><span data-i18n="dispatch.view_title">处置流</span> <span class="text-ok">↗</span></h2>
             <span class="font-mono text-[11px] text-paper-faint" data-i18n="dispatch.view_sub">供应链投毒 · 已投送 Kafka 处置队列</span>
-            <div class="relative ml-auto" id="dispatch-trigger-wrap">
-              <button id="dispatch-trigger-btn" onclick="toggleDispatchMenu()"
-                      class="font-mono text-[11px] px-3 py-1.5 rounded-lg border transition flex items-center gap-1.5"
-                      style="border-color:var(--hairline); color:var(--ok); background:transparent;"
-                      data-i18n="dispatch.trigger">手动下发 ↗</button>
-              <div id="dispatch-trigger-menu" class="absolute right-0 top-full mt-1 z-30 hidden"
-                   style="background:var(--surface); border:1px solid var(--hairline); border-radius:8px; box-shadow:0 4px 16px rgba(0,0,0,0.08); min-width:176px; overflow:hidden;">
-                <button onclick="triggerDispatch('poisoning')" class="w-full text-left font-mono text-[11px] px-4 py-2.5 hover:bg-surface-2 transition" data-i18n="dispatch.trigger.poisoning">供应链投毒</button>
-                <button onclick="triggerDispatch('vuln')"      class="w-full text-left font-mono text-[11px] px-4 py-2.5 hover:bg-surface-2 transition" data-i18n="dispatch.trigger.vuln">漏洞情报</button>
-                <button onclick="triggerDispatch('all')"       class="w-full text-left font-mono text-[11px] px-4 py-2.5 hover:bg-surface-2 transition border-t" style="border-color:var(--hairline);" data-i18n="dispatch.trigger.all">全部（供应链 + 漏洞）</button>
-              </div>
-            </div>
           </div>
           <div id="dispatch-list"></div>
         </section>
@@ -2275,7 +2263,13 @@ function renderDispatch() {
           <div class="flex flex-wrap gap-1.5">${iocs || `<span class="text-paper-faint font-mono text-[12px]">—</span>`}</div>
         </div>
         ${relatedHtml}
-        <div class="mt-3 font-mono text-[10.5px] text-ok" style="opacity:0.85;">${t("dispatch.view_payload")} →</div>
+        <div class="mt-3 flex items-center justify-between">
+          <div class="font-mono text-[10.5px] text-ok" style="opacity:0.85;">${t("dispatch.view_payload")} →</div>
+          <button onclick="event.stopPropagation(); resendDispatch(${JSON.stringify(d.ref_id)}, ${JSON.stringify(d.origin)}, this)"
+                  class="font-mono text-[10.5px] px-2.5 py-1 rounded border transition hover:bg-surface-2"
+                  style="border-color:var(--hairline); color:var(--ok);"
+                  data-i18n="dispatch.resend">重发</button>
+        </div>
       </article>`;
   }).join("");
 
@@ -2383,7 +2377,13 @@ function renderDispatchDetail(d) {
       <section class="mb-2">
         <div class="flex items-center justify-between mb-1">
           <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint">${t("dispatch.payload")}</h3>
-          <button onclick="copyDispatchPayload(this)" class="font-mono text-[10.5px] text-paper-dim hover:text-paper border hairline rounded px-2 py-0.5">${t("dispatch.copy")}</button>
+          <div class="flex items-center gap-2">
+            <button onclick="resendDispatch(${JSON.stringify(d.ref_id)}, ${JSON.stringify(d.origin)}, this)"
+                    class="font-mono text-[10.5px] border hairline rounded px-2 py-0.5 transition hover:bg-surface-2"
+                    style="color:var(--ok);"
+                    data-i18n="dispatch.resend">${t("dispatch.resend")}</button>
+            <button onclick="copyDispatchPayload(this)" class="font-mono text-[10.5px] text-paper-dim hover:text-paper border hairline rounded px-2 py-0.5">${t("dispatch.copy")}</button>
+          </div>
         </div>
         <pre id="dispatch-raw-json" class="scrollbar-thin" style="background:var(--surface-2); border:1px solid var(--hairline); border-radius:8px; padding:12px 14px; font-family:'Geist Mono',monospace; font-size:11px; line-height:1.55; color:var(--paper-dim); overflow:auto; max-height:380px; white-space:pre; margin:0;">${escapeHtml(rawJson)}</pre>
         <div class="font-mono text-[10px] text-paper-veil mt-2">Kafka topic <b style="color:var(--ok);font-weight:500;">${escapeHtml(d.topic || 'schedule_task_normal')}</b></div>
@@ -2606,68 +2606,44 @@ function getRefreshToken() { return localStorage.getItem(REFRESH_TOKEN_KEY) || n
 function setRefreshToken(tok) { localStorage.setItem(REFRESH_TOKEN_KEY, tok); }
 function clearRefreshToken() { localStorage.removeItem(REFRESH_TOKEN_KEY); }
 
-// ───────────────────── manual Kafka dispatch ─────────────────────
-let _dispatchInFlight = false;
-
-function toggleDispatchMenu() {
-  const menu = document.getElementById("dispatch-trigger-menu");
-  if (!menu) return;
-  const hidden = menu.classList.contains("hidden");
-  menu.classList.toggle("hidden", !hidden);
-  if (!hidden) return;
-  const close = (e) => {
-    if (!document.getElementById("dispatch-trigger-wrap")?.contains(e.target)) {
-      menu.classList.add("hidden");
-      document.removeEventListener("click", close, true);
-    }
-  };
-  setTimeout(() => document.addEventListener("click", close, true), 0);
-}
-
-async function triggerDispatch(kind) {
-  document.getElementById("dispatch-trigger-menu")?.classList.add("hidden");
-  if (_dispatchInFlight) { showRefreshToast(t("dispatch.trigger.already"), "warn"); return; }
+// ───────────────────── per-record Kafka resend ─────────────────────
+async function resendDispatch(refId, origin, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = t("dispatch.resend.running"); }
 
   let token = getRefreshToken();
   if (!token) {
     token = window.prompt(t("refresh.prompt"));
-    if (!token) return;
+    if (!token) {
+      if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend"); applyI18n(); }
+      return;
+    }
     setRefreshToken(token.trim());
     token = token.trim();
   }
 
-  const btn = document.getElementById("dispatch-trigger-btn");
-  _dispatchInFlight = true;
-  if (btn) { btn.disabled = true; btn.textContent = t("dispatch.trigger.running"); }
-
   let res;
   try {
-    res = await fetch(`/api/dispatch?kind=${encodeURIComponent(kind)}`, {
-      method: "POST",
-      headers: { "X-Refresh-Token": token },
-    });
+    res = await fetch(
+      `/api/dispatches/resend?ref_id=${encodeURIComponent(refId)}&origin=${encodeURIComponent(origin)}`,
+      { method: "POST", headers: { "X-Refresh-Token": token } }
+    );
   } catch (e) {
-    _dispatchInFlight = false;
-    if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.trigger"); applyI18n(); }
-    showRefreshToast(`${t("dispatch.trigger.failed")}: ${e.message}`, "error");
+    if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend"); applyI18n(); }
+    showRefreshToast(`${t("dispatch.resend.failed")}: ${e.message}`, "error");
     return;
   }
 
-  _dispatchInFlight = false;
-  if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.trigger"); applyI18n(); }
+  if (btn) { btn.disabled = false; btn.setAttribute("data-i18n", "dispatch.resend"); applyI18n(); }
 
-  if (res.status === 503) { showRefreshToast(t("dispatch.trigger.disabled"), "error", 6000); return; }
-  if (res.status === 401) {
-    clearRefreshToken();
-    showRefreshToast(t("dispatch.trigger.unauthorized"), "error");
-    return;
-  }
-  if (res.status === 409) { showRefreshToast(t("dispatch.trigger.already"), "warn"); return; }
+  if (res.status === 503) { showRefreshToast(t("dispatch.resend.disabled"), "error", 6000); return; }
+  if (res.status === 401) { clearRefreshToken(); showRefreshToast(t("dispatch.resend.unauthorized"), "error"); return; }
   if (!res.ok) {
-    showRefreshToast(`${t("dispatch.trigger.failed")}: HTTP ${res.status}`, "error");
+    let detail = "";
+    try { detail = (await res.json()).detail || ""; } catch { detail = `HTTP ${res.status}`; }
+    showRefreshToast(`${t("dispatch.resend.failed")}: ${detail}`, "error");
     return;
   }
-  showRefreshToast(`${t("dispatch.trigger.ok")} (${kind})`, "ok");
+  showRefreshToast(`${t("dispatch.resend.ok")} (${origin}:${refId})`, "ok");
 }
 
 function updateRefreshButtonStates() {
