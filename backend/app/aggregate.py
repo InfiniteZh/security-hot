@@ -76,7 +76,6 @@ def _news_heat_score(a: "Article", now_utc: datetime) -> int:
     base       = llm_score × 10               (0-100, but in practice most live
                                                at 80-90 due to LLM bias)
     recency    = max(0, 24 - age_hours)       (0-24, favors today's stories)
-    cluster_bonus = mirror_count × 3          (0-30, multi-source events rise)
     """
     base = (a.llm_score or 0) * 10
     age_h = 0.0
@@ -88,15 +87,14 @@ def _news_heat_score(a: "Article", now_utc: datetime) -> int:
         except (ValueError, TypeError):
             pass
     recency = max(0, int(24 - age_h)) if age_h <= 24 else 0
-    cluster_bonus = (a.mirror_count or 0) * 3
-    return base + recency + cluster_bonus
+    return base + recency
 
 
 def news_heat_board(limit: int = 10, date: str | None = None) -> list[HeatEntry]:
     """Top news articles for the 行业资讯 tab right rail.
 
-    Composite score combines LLM rank + recency + mirror count to differentiate
-    items the LLM clumped at the same score. If `date` is given, restricts to
+    Composite score combines LLM rank + recency to differentiate items the LLM
+    clumped at the same score. If `date` is given, restricts to
     articles published (or first-seen) on that date — gives a per-day heat view
     that tracks the date strip; otherwise returns the global top.
     """

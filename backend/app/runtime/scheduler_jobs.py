@@ -12,7 +12,6 @@ from contextlib import asynccontextmanager
 
 from .pipeline_runner import (
     _record_pipeline_result,
-    _run_enrich_pipeline,
     _run_fetch_step,
     _run_news_pipeline,
     _run_vuln_pipeline,
@@ -32,7 +31,7 @@ _JOB_LABELS = {
     "fetch_news": "资讯抓取",
     "fetch_murphy": "墨菲漏洞预警",
     "fetch_other": "其它情报源",
-    "heavy_pipeline": "富化 + LLM 流水线",
+    "heavy_pipeline": "LLM 流水线",
     "daily_brief": "每日简报",
 }
 
@@ -94,20 +93,6 @@ async def _sched_fetch_murphy_async() -> None:
 
 def _sched_fetch_murphy() -> None:
     _run_coro_blocking(_sched_fetch_murphy_async())
-
-
-async def _sched_enrich_async() -> None:
-    # Embedding + mirror clustering on its own long cadence (default 2h),
-    # decoupled from the 15-min news fetch and from manual /api/refresh.
-    async with _pipeline_run() as owned:
-        if not owned:
-            return
-        await _run_enrich_pipeline()
-        _set_stage("done")
-
-
-def _sched_enrich() -> None:
-    _run_coro_blocking(_sched_enrich_async())
 
 
 def _sched_daily_brief() -> None:

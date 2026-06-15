@@ -5,8 +5,7 @@
 
 三层辨别只投"可处置"的情报（点名具体可被企业安装的包/IOC），不投纯趋势/事件报道：
   L0 免费 SQL 筛：source_title∈TIER1_SUPPLY_SOURCES AND llm_category='supply-chain'
-                  AND llm_score>=7 AND is_relevant
-                  AND (cluster_id IS NULL OR is_cluster_primary=1) AND 未投送过
+                  AND llm_score>=7 AND is_relevant AND 未投送过
   L1 LLM triage（基于全文）：问"是否点名了具体可装的包/失陷指标"，仅 actionable 投；
                   package/version/iocs 经 dispatch_common 严格校验，散文/文件名/commit hash 一律剔除
   （L2 权威兜底在 security_copilot disposal 的 extractor，已存在）
@@ -126,7 +125,6 @@ def select_candidates(conn: sqlite3.Connection, fresh_days: int, limit: int | No
           AND source_title IN ({source_placeholders})
           AND llm_score >= ?
           AND (is_relevant = 1 OR is_relevant IS NULL)
-          AND (cluster_id IS NULL OR is_cluster_primary = 1)
           AND COALESCE(poisoning_dispatched, 0) = 0
           AND (
                 published IS NULL

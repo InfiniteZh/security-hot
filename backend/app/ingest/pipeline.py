@@ -37,7 +37,7 @@ main.py, the tests and poisoning_dispatch — stays byte-for-byte stable.
   news_llm       — classify_news / summarize_news
   vuln_llm       — assess_vulns
   brief          — generate_daily_brief
-  orchestration  — on_news_fetched / on_vuln_fetched / on_news_enrich / …
+  orchestration  — on_news_fetched / on_vuln_fetched / …
 """
 from __future__ import annotations
 
@@ -82,8 +82,6 @@ from .llm.news import (  # noqa: F401
 from .llm.vuln import assess_vulns  # noqa: F401
 from .llm.brief import generate_daily_brief  # noqa: F401
 from .llm.orchestration import (  # noqa: F401
-    _run_pool_step,
-    on_news_enrich,
     on_news_fetched,
     on_vuln_fetched,
 )

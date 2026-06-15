@@ -32,9 +32,7 @@ def _seed_db(db_path: Path) -> None:
         is_relevant BOOLEAN,
         llm_scored_at TEXT,
         llm_summary_zh TEXT,
-        llm_summarized_at TEXT,
-        cluster_id INTEGER,
-        is_cluster_primary BOOLEAN DEFAULT 0
+        llm_summarized_at TEXT
     )""")
     articles = [
         ("https://vuldb.com/1", "CVE-2026-1111 | Apache HTTP Server path traversal",
@@ -100,8 +98,7 @@ def test_news_cve_bridge_empty_db(tmp_path):
         fetched_at TEXT NOT NULL, first_seen_date TEXT,
         llm_score INTEGER, llm_category TEXT, llm_reason TEXT,
         is_relevant BOOLEAN, llm_scored_at TEXT, llm_summary_zh TEXT,
-        llm_summarized_at TEXT, cluster_id INTEGER,
-        is_cluster_primary BOOLEAN DEFAULT 0
+        llm_summarized_at TEXT
     )""")
     conn.commit()
     conn.close()

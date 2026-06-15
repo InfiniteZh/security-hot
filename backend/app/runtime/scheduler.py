@@ -17,13 +17,7 @@ Cadence mirrors the documented cron template and is fully env-tunable:
     SECURITY_HOT_FETCH_NEWS_MINUTES     news fetch interval     (default 15)
     SECURITY_HOT_FETCH_MURPHY_MINUTES   murphy vuln-warn poll   (default 5)
     SECURITY_HOT_FETCH_OTHER_HOURS      non-news fetchers       (default 4)
-    SECURITY_HOT_ENRICH_MINUTES         embed + mirror cluster  (default 120)
     SECURITY_HOT_BRIEF_HOUR_UTC         daily brief hour, UTC   (default 23)
-
-Embedding (e5-small) is the slowest news step, so it no longer rides every
-news fetch nor manual /api/refresh — it runs on its own ~2h cadence. Mirror
-clustering value converges over hours, so a not-yet-enriched article still
-shows (NULL cluster_id), just without cross-source dedup until the next run.
 
 Murphy is a time-sensitive vuln-warn feed, so it gets its own short-interval
 job (default 5min) instead of riding the 4h "other" bucket. Its fetch is
@@ -62,7 +56,7 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-def start_scheduler(*, fetch_news, daily_brief, fetch_other, fetch_murphy, enrich=None):
+def start_scheduler(*, fetch_news, daily_brief, fetch_other, fetch_murphy):
     """Build + start the BackgroundScheduler. Returns the scheduler (so the
     caller can shut it down) or None when disabled / unavailable.
 
@@ -83,7 +77,6 @@ def start_scheduler(*, fetch_news, daily_brief, fetch_other, fetch_murphy, enric
     news_minutes = _int_env("SECURITY_HOT_FETCH_NEWS_MINUTES", 15)
     murphy_minutes = _int_env("SECURITY_HOT_FETCH_MURPHY_MINUTES", 5)
     other_hours = _int_env("SECURITY_HOT_FETCH_OTHER_HOURS", 4)
-    enrich_minutes = _int_env("SECURITY_HOT_ENRICH_MINUTES", 120)
     brief_hour = _int_env("SECURITY_HOT_BRIEF_HOUR_UTC", 23) % 24
 
     global _scheduler
@@ -100,15 +93,13 @@ def start_scheduler(*, fetch_news, daily_brief, fetch_other, fetch_murphy, enric
         sched.add_job(fetch_news, "interval", minutes=news_minutes, id="fetch_news")
         sched.add_job(fetch_murphy, "interval", minutes=murphy_minutes, id="fetch_murphy")
         sched.add_job(fetch_other, "interval", hours=other_hours, id="fetch_other")
-        if enrich is not None:
-            sched.add_job(enrich, "interval", minutes=enrich_minutes, id="enrich")
         sched.add_job(daily_brief, "cron", hour=brief_hour, minute=0, id="daily_brief")
         sched.start()
         _scheduler = sched
 
     log.info(
-        "scheduler started — news=%dm murphy=%dm other=%dh enrich=%dm brief=%02d:00 UTC",
-        news_minutes, murphy_minutes, other_hours, enrich_minutes, brief_hour,
+        "scheduler started — news=%dm murphy=%dm other=%dh brief=%02d:00 UTC",
+        news_minutes, murphy_minutes, other_hours, brief_hour,
     )
     return sched
 

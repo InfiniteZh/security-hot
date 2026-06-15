@@ -88,15 +88,15 @@ def test_upsert_step_records_llm_failure_with_tail(store):
 
 
 def test_upsert_step_ok_clears_error(store):
-    ps.upsert_step("embed", ok=False, error="boom")
-    ps.upsert_step("embed", ok=True, elapsed_s=4.0)
-    embed = {s["name"]: s for s in ps.load_steps()}["embed"]
-    assert embed["ok"] is True
-    assert embed["error"] is None
+    ps.upsert_step("classify", ok=False, error="boom")
+    ps.upsert_step("classify", ok=True, elapsed_s=4.0)
+    classify = {s["name"]: s for s in ps.load_steps()}["classify"]
+    assert classify["ok"] is True
+    assert classify["error"] is None
 
 
 def test_load_steps_includes_pending_for_never_run(store):
-    # Nothing recorded yet → all 17 steps present as pending, in canonical order.
+    # Nothing recorded yet → every step present as pending, in canonical order.
     steps = ps.load_steps()
     names = [s["name"] for s in steps]
     assert names == list(ps.STEP_META)
@@ -104,8 +104,6 @@ def test_load_steps_includes_pending_for_never_run(store):
 
 
 def test_step_name_mapping():
-    assert ps.step_name("scripts/embed_articles.py") == "embed"
-    assert ps.step_name("cluster_articles.py") == "cluster"
     assert ps.step_name("llm_rank.py", "news_classify") == "classify"
     assert ps.step_name("llm_rank.py", "news_summarize") == "summarize"
     assert ps.step_name("llm_rank.py", "daily_brief") == "daily_brief"

@@ -1,8 +1,8 @@
 """Prune articles older than NEWS_DAYS_BACK from news.db.
 
 Also drops articles with malformed publish dates (year < 2020 or > now+7d),
-which are RSS metadata garbage. Cascades: removes associated embeddings,
-breaks dangling cluster_id pointers, and deletes empty clusters.
+which are RSS metadata garbage. The FTS index is kept consistent by the
+articles_ad delete trigger.
 
 Run on demand; not part of cron. Safe to re-run.
 """
@@ -43,87 +43,22 @@ def prune(*, db_path=None, days: int | None = None, dry_run: bool = False) -> di
                   file=sys.stderr)
             return {"dry_run": True, "would_delete": n_old, "total": n_total}
 
-        # Collect cluster ids that might become empty after the prune
-        affected_clusters = [
-            r[0] for r in conn.execute("""
-                SELECT DISTINCT cluster_id FROM articles
-                WHERE cluster_id IS NOT NULL
-                  AND published IS NOT NULL
-                  AND (published < ? OR published < ? OR published > ?)
-            """, [cutoff, floor, ceil])
-        ]
-
-        # Delete embeddings first (FK references articles)
-        n_emb = conn.execute("""
-            DELETE FROM article_embeddings
-            WHERE article_id IN (
-                SELECT id FROM articles
-                WHERE published IS NOT NULL
-                  AND (published < ? OR published < ? OR published > ?)
-            )
-        """, [cutoff, floor, ceil]).rowcount
-
-        # Delete articles
+        # Delete articles (the articles_ad trigger keeps articles_fts in sync)
         n_del = conn.execute("""
             DELETE FROM articles
             WHERE published IS NOT NULL
               AND (published < ? OR published < ? OR published > ?)
         """, [cutoff, floor, ceil]).rowcount
 
-        # Clean up clusters that lost members
-        # If a cluster's primary was deleted, the surviving members are now
-        # cluster_id-pointing-to-a-still-existing-cluster-row, but the
-        # primary_article_id is broken. Detect and either reassign primary
-        # or delete the cluster.
-        n_cluster_dropped = 0
-        n_cluster_recovered = 0
-        for cid in affected_clusters:
-            survivors = list(conn.execute(
-                "SELECT id, lang, fetched_at FROM articles WHERE cluster_id = ?", [cid]
-            ))
-            if len(survivors) < 2:
-                # Cluster collapsed: drop the cluster + null out the lone survivor
-                conn.execute("UPDATE articles SET cluster_id = NULL, is_cluster_primary = 0 WHERE cluster_id = ?", [cid])
-                conn.execute("DELETE FROM clusters WHERE id = ?", [cid])
-                n_cluster_dropped += 1
-                continue
-            # Cluster still viable: ensure a valid primary exists
-            current_primary = conn.execute(
-                "SELECT id FROM articles WHERE cluster_id = ? AND is_cluster_primary = 1", [cid]
-            ).fetchone()
-            if current_primary is None:
-                # Old primary was deleted — pick a new one (zh-first, then earliest)
-                survivors_sorted = sorted(
-                    survivors,
-                    key=lambda r: (0 if r["lang"] == "zh" else 1, r["fetched_at"] or "9999"),
-                )
-                new_primary_id = survivors_sorted[0]["id"]
-                conn.execute("UPDATE articles SET is_cluster_primary = 1 WHERE id = ?", [new_primary_id])
-                conn.execute("UPDATE clusters SET primary_article_id = ?, member_count = ? WHERE id = ?",
-                             [new_primary_id, len(survivors), cid])
-                n_cluster_recovered += 1
-            else:
-                # Just refresh member_count
-                conn.execute("UPDATE clusters SET member_count = ? WHERE id = ?",
-                             [len(survivors), cid])
-
         conn.commit()
         n_after = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
-        n_clusters_after = conn.execute("SELECT COUNT(*) FROM clusters").fetchone()[0]
         print(
-            f"[prune] deleted {n_del} articles + {n_emb} embeddings "
-            f"({n_total} → {n_after}); "
-            f"clusters: dropped {n_cluster_dropped}, primary-recovered {n_cluster_recovered}, "
-            f"remaining {n_clusters_after}",
+            f"[prune] deleted {n_del} articles ({n_total} → {n_after})",
             file=sys.stderr,
         )
         return {
             "deleted_articles": n_del,
-            "deleted_embeddings": n_emb,
             "remaining_articles": n_after,
-            "clusters_dropped": n_cluster_dropped,
-            "clusters_primary_recovered": n_cluster_recovered,
-            "clusters_remaining": n_clusters_after,
         }
     finally:
         conn.close()

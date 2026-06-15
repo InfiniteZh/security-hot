@@ -4,11 +4,11 @@ Why this exists
 ---------------
 `manifest.json` is rewritten on every fetch run and only contains the fetchers
 that ran in *that* invocation — so with murphy polling every 5min it gets
-clobbered down to a single entry within minutes. Worse, the enrichment / LLM
-scripts (embed / cluster / llm_rank) never write manifest at all.
+clobbered down to a single entry within minutes. Worse, the LLM scripts
+(llm_rank) never write manifest at all.
 
 This module keeps a small, merge-on-write record of the LAST outcome of every
-pipeline step — both data fetchers and enrichment/LLM scripts — so the frontend
+pipeline step — both data fetchers and LLM scripts — so the frontend
 can answer: *what ran, when, did it fail, and why* — across runs and restarts.
 
 Store: ``backend/cache/pipeline_status.json``::
@@ -43,9 +43,7 @@ STEP_META: dict[str, tuple[str, str]] = {
     "heat":   ("fetch", "fetch_other"),
     "hn":     ("fetch", "fetch_other"),
     "masto":  ("fetch", "fetch_other"),
-    # ── enrichment + LLM ───────────────────────────────────────────
-    "embed":       ("enrich", "heavy_pipeline"),
-    "cluster":     ("enrich", "heavy_pipeline"),
+    # ── LLM ────────────────────────────────────────────────────────
     "classify":    ("llm", "heavy_pipeline"),
     "summarize":   ("llm", "heavy_pipeline"),
     # ── Kafka 投送（供应链投毒情报 → security_copilot disposal）──────
@@ -113,10 +111,6 @@ def step_name(script: str, task: str | None = None) -> str | None:
     """Map a (script, --task) pair to a canonical step name. Returns None for
     fetch_data.py (those are recorded per-fetcher from the manifest instead)."""
     base = Path(script).name
-    if base == "embed_articles.py":
-        return "embed"
-    if base == "cluster_articles.py":
-        return "cluster"
     if base == "llm_rank.py":
         return {
             "news_classify": "classify",

@@ -27,8 +27,6 @@ class Article(BaseModel):
     llm_category: NewsCategory | None = None
     llm_summary_zh: str | None = None
     is_relevant: bool | None = None
-    mirror_count: int = 0
-    mirror_source_titles: list[str] = Field(default_factory=list)
 
 
 class PocLink(BaseModel):

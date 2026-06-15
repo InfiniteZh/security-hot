@@ -59,7 +59,7 @@ async def generate_daily_brief(
 
         _brief_total = sum(
             conn.execute(
-                "SELECT COUNT(*) FROM articles WHERE substr(published,1,10)=? AND llm_category=? AND (is_relevant=1 OR is_relevant IS NULL) AND (cluster_id IS NULL OR is_cluster_primary=1)",
+                "SELECT COUNT(*) FROM articles WHERE substr(published,1,10)=? AND llm_category=? AND (is_relevant=1 OR is_relevant IS NULL)",
                 [target_date, c]).fetchone()[0]
             for c in ALL_CATEGORIES)
         _brief_articles_done = 0
@@ -78,7 +78,6 @@ async def generate_daily_brief(
                     WHERE substr(published, 1, 10) = ?
                       AND llm_category = ?
                       AND (is_relevant = 1 OR is_relevant IS NULL)
-                      AND (cluster_id IS NULL OR is_cluster_primary = 1)
                     ORDER BY COALESCE(llm_score, 5) DESC
                 """, [target_date, category]))
                 if not rows:

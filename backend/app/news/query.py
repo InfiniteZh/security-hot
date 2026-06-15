@@ -196,8 +196,7 @@ def load_dispatches(limit: int = 100, origin: str = "all") -> list[DispatchEntry
 
 
 def all_articles() -> list[Article]:
-    """SQLite-backed: primary articles (or unclustered) where is_relevant != 0,
-    with mirror_source_titles attached for the cluster.
+    """SQLite-backed: articles where is_relevant != 0.
 
     Cached against news.db mtime — every request was rebuilding ~10k Pydantic
     models, dominating hot-path latency. Invalidates on any DB write."""
@@ -209,24 +208,13 @@ def all_articles() -> list[Article]:
         return cached[1]
 
     conn = cache_io._news_conn()
-    # Pre-fetch mirror source titles, grouped by cluster
-    mirror_titles: dict = {}
-    for r in conn.execute("""
-        SELECT cluster_id, source_title
-        FROM articles
-        WHERE cluster_id IS NOT NULL AND is_cluster_primary = 0
-        ORDER BY fetched_at ASC
-    """):
-        mirror_titles.setdefault(r["cluster_id"], []).append(r["source_title"] or "")
-
     rows = list(conn.execute("""
         SELECT * FROM articles
         WHERE (is_relevant = 1 OR is_relevant IS NULL)
-          AND (cluster_id IS NULL OR is_cluster_primary = 1)
         ORDER BY COALESCE(llm_score, -1) DESC, COALESCE(published, fetched_at) DESC
     """))
     conn.close()
-    items = [cache_io._row_to_article(r, mirror_titles) for r in rows]
+    items = [cache_io._row_to_article(r) for r in rows]
     cache_io._state["__articles_sqlite__"] = (mtime, items)
     return items
 
@@ -252,7 +240,7 @@ def search_articles(q: str, limit: int = 200) -> list[Article]:
 
     Source-name hits (e.g. "BleepingComputer") work in either path: ASCII
     path adds a source_title LIKE union; CJK path already covers source_title.
-    Restricts to primary cluster articles where is_relevant != 0.
+    Restricts to articles where is_relevant != 0.
     """
     q = (q or "").strip()
     if not q or len(q) < 2:
@@ -262,14 +250,6 @@ def search_articles(q: str, limit: int = 200) -> list[Article]:
 
     conn = cache_io._news_conn()
     try:
-        mirror_titles: dict = {}
-        for r in conn.execute(
-            "SELECT cluster_id, source_title FROM articles "
-            "WHERE cluster_id IS NOT NULL AND is_cluster_primary = 0 "
-            "ORDER BY fetched_at ASC"
-        ):
-            mirror_titles.setdefault(r["cluster_id"], []).append(r["source_title"] or "")
-
         rows_by_id: dict[int, tuple[float, dict]] = {}
         has_cjk = bool(_CJK_RE.search(q))
 
@@ -291,7 +271,6 @@ def search_articles(q: str, limit: int = 200) -> list[Article]:
                     JOIN articles_fts fts ON fts.rowid = a.id
                     WHERE articles_fts MATCH ?
                       AND (a.is_relevant = 1 OR a.is_relevant IS NULL)
-                      AND (a.cluster_id IS NULL OR a.is_cluster_primary = 1)
                     ORDER BY fts.rank
                     LIMIT ?
                     """,
@@ -326,7 +305,6 @@ def search_articles(q: str, limit: int = 200) -> list[Article]:
                 SELECT * FROM articles
                 WHERE {' AND '.join(where_clauses)}
                   AND (is_relevant = 1 OR is_relevant IS NULL)
-                  AND (cluster_id IS NULL OR is_cluster_primary = 1)
                 ORDER BY COALESCE(llm_score, -1) DESC,
                          COALESCE(published, fetched_at) DESC
                 LIMIT ?
@@ -336,7 +314,6 @@ def search_articles(q: str, limit: int = 200) -> list[Article]:
                 SELECT * FROM articles
                 WHERE lower(source_title) LIKE ?
                   AND (is_relevant = 1 OR is_relevant IS NULL)
-                  AND (cluster_id IS NULL OR is_cluster_primary = 1)
                 LIMIT ?
             """
             params = [f"%{q.lower()}%", limit]
@@ -346,7 +323,7 @@ def search_articles(q: str, limit: int = 200) -> list[Article]:
                 rows_by_id[r["id"]] = (1e9 + i, dict(r))
 
         sorted_rows = sorted(rows_by_id.values(), key=lambda t: t[0])[:limit]
-        return [cache_io._row_to_article(r[1], mirror_titles) for r in sorted_rows]
+        return [cache_io._row_to_article(r[1]) for r in sorted_rows]
     finally:
         conn.close()
 

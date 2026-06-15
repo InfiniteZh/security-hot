@@ -134,45 +134,6 @@ def test_hidden_endpoint_returns_off_topic_and_uncategorized(client, tmp_db):
     assert "Real CVE" not in titles
 
 
-def test_mirrors_endpoint_returns_cluster_members(client, tmp_db):
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-    import db as scripts_db
-    c = scripts_db.connect(tmp_db)
-    ids = []
-    for i in range(3):
-        ids.append(scripts_db.upsert_article(c, {
-            "canonical_url": f"https://x/{i}", "title": f"T{i}", "summary": "",
-            "source_slug": f"s{i}", "source_title": f"Src{i}", "lang": "en",
-            "published": None, "fetched_at": "2026-05-25T11:00:00Z",
-            "first_seen_date": "2026-05-25",
-        }))
-    scripts_db.create_cluster(c, primary_id=ids[0], mirror_ids=[ids[1], ids[2]],
-                              created_at="2026-05-25T12:00:00Z")
-    c.close()
-
-    r = client.get(f"/api/news/{ids[0]}/mirrors")
-    assert r.status_code == 200
-    body = r.json()
-    assert len(body) == 2  # only mirrors, not primary
-    titles = {a["title"] for a in body}
-    assert titles == {"T1", "T2"}
-
-
-def test_mirrors_endpoint_404_for_unclustered(client, tmp_db):
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-    import db as scripts_db
-    c = scripts_db.connect(tmp_db)
-    rid = scripts_db.upsert_article(c, {
-        "canonical_url": "https://x/solo", "title": "Solo", "summary": "",
-        "source_slug": "x", "source_title": "X", "lang": "en",
-        "published": None, "fetched_at": "2026-05-25T11:00:00Z",
-        "first_seen_date": "2026-05-25",
-    })
-    c.close()
-    r = client.get(f"/api/news/{rid}/mirrors")
-    assert r.status_code == 404
-
-
 def test_regenerate_brief_returns_409_when_in_flight(client, monkeypatch):
     """Second concurrent regen call must return 409."""
     import backend.app.main as main_mod

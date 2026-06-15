@@ -32,7 +32,7 @@ def _make_db(tmp_path) -> sqlite3.Connection:
         CREATE TABLE articles (
             id INTEGER PRIMARY KEY, canonical_url TEXT UNIQUE, title TEXT,
             summary TEXT, llm_summary_zh TEXT, llm_score INTEGER, llm_category TEXT,
-            is_relevant INTEGER, cluster_id INTEGER, is_cluster_primary INTEGER,
+            is_relevant INTEGER,
             published TEXT, source_title TEXT
         )""")
     return conn
@@ -40,11 +40,11 @@ def _make_db(tmp_path) -> sqlite3.Connection:
 
 def _insert(conn, **kw):
     cols = ["canonical_url", "title", "summary", "llm_summary_zh", "llm_score",
-            "llm_category", "is_relevant", "cluster_id", "is_cluster_primary", "published",
+            "llm_category", "is_relevant", "published",
             "source_title"]
     defaults = dict(canonical_url="https://x/1", title="t", summary="s", llm_summary_zh="zh",
                     llm_score=10, llm_category="supply-chain", is_relevant=1,
-                    cluster_id=None, is_cluster_primary=None, published="2026-05-29",
+                    published="2026-05-29",
                     source_title="Socket")
     defaults.update(kw)
     conn.execute(
@@ -72,7 +72,6 @@ def test_select_candidates_filters(tmp_path):
     _insert(conn, canonical_url="https://x/low", llm_score=6)                       # ✗ 低分
     _insert(conn, canonical_url="https://x/cat", llm_category="incident", llm_score=10)  # ✗ 非投毒
     _insert(conn, canonical_url="https://x/irr", is_relevant=0, llm_score=10)       # ✗ 不相关
-    _insert(conn, canonical_url="https://x/mirror", cluster_id=5, is_cluster_primary=0, llm_score=10)  # ✗ 镜像非主
     rows = pd.select_candidates(conn, fresh_days=30, limit=None)
     urls = {r["canonical_url"] for r in rows}
     assert urls == {"https://x/ok"}

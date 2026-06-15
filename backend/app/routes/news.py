@@ -224,26 +224,4 @@ def api_news_hidden(
         ORDER BY published DESC, fetched_at DESC LIMIT ?
     """, [target, limit]))
     conn.close()
-    return [_row_to_article(r, {}) for r in rows]
-
-
-@router.get("/api/news/{article_id}/mirrors", response_model=list[Article], tags=["news"])
-def api_article_mirrors(article_id: int) -> list[Article]:
-    """Return all mirror articles in the same cluster (excludes primary)."""
-    from ..data import _news_conn, _NEWS_DB, _row_to_article
-    if not _NEWS_DB.exists():
-        raise HTTPException(status_code=404, detail="news.db not found")
-    conn = _news_conn()
-    primary = conn.execute(
-        "SELECT cluster_id FROM articles WHERE id = ?", [article_id]
-    ).fetchone()
-    if not primary or not primary["cluster_id"]:
-        conn.close()
-        raise HTTPException(status_code=404, detail="no cluster for this article")
-    rows = list(conn.execute("""
-        SELECT * FROM articles
-        WHERE cluster_id = ? AND id != ?
-        ORDER BY fetched_at ASC
-    """, [primary["cluster_id"], article_id]))
-    conn.close()
-    return [_row_to_article(r, {}) for r in rows]
+    return [_row_to_article(r) for r in rows]

@@ -534,25 +534,6 @@
     margin: 0;
   }
 
-  /* — Mirror cluster strip — */
-  .mirror-strip {
-    margin-top: 12px;
-    display: inline-flex; align-items: center; gap: 8px;
-    font-family: "Geist Mono", monospace;
-    font-size: 11px;
-    color: var(--paper-faint);
-    cursor: pointer;
-    padding: 5px 12px;
-    border: 1px solid var(--hairline);
-    background: var(--surface-2);
-    border-radius: 999px;
-    transition: all 140ms;
-  }
-  .mirror-strip:hover { color: var(--ink); border-color: var(--hairline-2); background: var(--surface); }
-  .mirror-strip .mirror-dot { display: inline-block; width: 4px; height: 4px; border-radius: 50%; background: var(--paper-faint); }
-  .mirrors-expanded { margin-top: 10px; padding-left: 14px; border-left: 2px solid var(--hairline); }
-  .mirrors-expanded a:hover { color: var(--ok); }
-
   /* — Heat board — */
   .heat-board { background: transparent; }
   .heat-section-title {
@@ -1945,32 +1926,6 @@ function renderMarkdown(md) {
   return out.join("\n");
 }
 
-// ───────────────────── mirror expand ─────────────────────
-async function expandMirrors(stripEl, articleId) {
-  const container = stripEl.nextElementSibling;
-  if (!container || !container.classList.contains('mirrors-expanded')) return;
-  const chevron = stripEl.querySelector('.mirror-chevron');
-  if (!container.classList.contains('hidden')) {
-    container.classList.add('hidden');
-    container.innerHTML = '';
-    if (chevron) chevron.textContent = '▾';
-    return;
-  }
-  try {
-    const r = await fetch(`/api/news/${articleId}/mirrors`);
-    if (!r.ok) return;
-    const mirrors = await r.json();
-    container.innerHTML = mirrors.map(m => `
-      <div class="py-1.5 text-xs">
-        <span class="font-mono text-paper-faint mr-2">${escapeHtml(m.source_title)}</span>
-        <a href="${escapeHtml(m.link)}" target="_blank" rel="noopener" class="hover:underline">${escapeHtml(m.title)}</a>
-      </div>
-    `).join('');
-    container.classList.remove('hidden');
-    if (chevron) chevron.textContent = '▴';
-  } catch (e) { console.warn('expand failed', e); }
-}
-
 // ───────────────────── renderers ─────────────────────
 function renderStats() {
   // Hero stats: "TODAY · MAY 25 · 62 articles · 14 vulns · 681 sources"
@@ -2482,16 +2437,6 @@ function renderNewsCard(a) {
           <p class="ai-summary-text clamp-3">${escapeHtml(aiSummary)}</p>
         </div>
       ` : (origSummary ? `<p class="article-summary clamp-2">${escapeHtml(origSummary)}</p>` : '')}
-      ${(a.mirror_count || 0) > 0 ? `
-        <div class="mirror-strip" data-article-id="${a.id}" onclick="expandMirrors(this, ${JSON.stringify(a.id)})">
-          ${'<span class="mirror-dot"></span>'.repeat(Math.min(a.mirror_count, 3))}
-          <span>+${a.mirror_count} ${escapeHtml(t('news.mirrors'))}</span>
-          <span style="color:var(--paper-veil);">·</span>
-          <span class="text-paper-faint">${escapeHtml((a.mirror_source_titles || []).slice(0,3).join(' / '))}${(a.mirror_source_titles || []).length > 3 ? '…' : ''}</span>
-          <span class="mirror-chevron ml-2">▾</span>
-        </div>
-        <div class="mirrors-expanded hidden"></div>
-      ` : ''}
     </article>
   `;
 }
@@ -3878,9 +3823,9 @@ document.addEventListener("click", (e) => {
     showDispatchDetail(Number(dispNode.dataset.dispatchIdx));
     return;
   }
-  // 资讯卡片 → 详情抽屉。忽略卡片内的链接/镜像展开条点击。
+  // 资讯卡片 → 详情抽屉。忽略卡片内的链接点击。
   const newsCard = e.target.closest("[data-news-id]");
-  if (newsCard && !e.target.closest("a, .mirror-strip, .mirrors-expanded")) {
+  if (newsCard && !e.target.closest("a")) {
     e.preventDefault();
     showNewsCardDetail(newsCard.dataset.newsId);
     return;
@@ -3917,7 +3862,6 @@ function renderNewsDetail(a, link) {
   const byline = a.source_title || a.source_slug || "";
   const absTime = a.published || "";
   const scoreBar = a.llm_score != null ? Math.min(a.llm_score, 10) : 0;
-  const mirrors = a.mirror_source_titles || [];
   return `
     <div class="p-6 lg:p-8">
       <div class="flex items-center justify-between mb-5">
@@ -3951,14 +3895,6 @@ function renderNewsDetail(a, link) {
       <section class="mb-6">
         <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-2">${lang === 'zh' ? '原文摘要' : 'ORIGINAL SUMMARY'}</h3>
         <p class="text-[13.5px] text-paper-dim leading-relaxed whitespace-pre-line" style="max-width:56ch;">${escapeHtml(origSummary)}</p>
-      </section>` : ''}
-
-      ${(a.mirror_count || 0) > 0 ? `
-      <section class="mb-6">
-        <h3 class="font-mono text-[10px] tracking-widest uppercase text-paper-faint mb-2">${lang === 'zh' ? '多源报道' : 'ALSO REPORTED BY'} <span class="text-paper-veil">(${a.mirror_count})</span></h3>
-        <div class="flex flex-wrap gap-1.5">
-          ${mirrors.slice(0,6).map(s => `<span class="font-mono text-[11.5px] bg-surface-2 border hairline rounded px-2 py-0.5 text-paper-dim">${escapeHtml(s)}</span>`).join("")}
-        </div>
       </section>` : ''}
 
       <div class="pt-2" style="border-top:1px solid var(--hairline);">
@@ -4508,7 +4444,6 @@ function showSgDetail(type, idx) {
     if (a.llm_score != null) html += `<span class="sg-node-badge sg-b-score">AI ${a.llm_score}</span>`;
     if (a.llm_category) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">${escapeHtmlSg(a.llm_category)}</span>`;
     if (a.lang) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">${a.lang.toUpperCase()}</span>`;
-    if (a.mirror_count > 0) html += `<span class="sg-node-badge" style="background:var(--surface-2);color:var(--ink);">${a.mirror_count} mirrors</span>`;
     html += `</div>`;
 
     // AI Summary

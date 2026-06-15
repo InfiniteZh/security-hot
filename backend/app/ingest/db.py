@@ -1,7 +1,7 @@
 """SQLite helpers for the news pipeline.
 
 Single-file source of truth for connection management, schema, and CRUD
-helpers for articles / sources / clusters / daily_briefs.
+helpers for articles / sources / daily_briefs.
 """
 from __future__ import annotations
 
@@ -31,16 +31,12 @@ CREATE TABLE IF NOT EXISTS articles (
     is_relevant        BOOLEAN,
     llm_scored_at      TEXT,
     llm_summary_zh     TEXT,
-    llm_summarized_at  TEXT,
-    cluster_id          INTEGER,
-    is_cluster_primary  BOOLEAN DEFAULT 0,
-    FOREIGN KEY (cluster_id) REFERENCES clusters(id)
+    llm_summarized_at  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_published     ON articles(published DESC);
 CREATE INDEX IF NOT EXISTS idx_score         ON articles(llm_score DESC, published DESC);
 CREATE INDEX IF NOT EXISTS idx_category      ON articles(llm_category);
-CREATE INDEX IF NOT EXISTS idx_cluster       ON articles(cluster_id);
 CREATE INDEX IF NOT EXISTS idx_first_seen    ON articles(first_seen_date);
 CREATE INDEX IF NOT EXISTS idx_is_relevant   ON articles(is_relevant);
 
@@ -59,14 +55,6 @@ CREATE TABLE IF NOT EXISTS sources (
     consecutive_failures INTEGER DEFAULT 0
 );
 
-CREATE TABLE IF NOT EXISTS clusters (
-    id                  INTEGER PRIMARY KEY,
-    primary_article_id  INTEGER NOT NULL,
-    member_count        INTEGER NOT NULL,
-    created_at          TEXT NOT NULL,
-    FOREIGN KEY (primary_article_id) REFERENCES articles(id)
-);
-
 CREATE TABLE IF NOT EXISTS daily_briefs (
     date           TEXT NOT NULL,
     category       TEXT NOT NULL,
@@ -75,16 +63,6 @@ CREATE TABLE IF NOT EXISTS daily_briefs (
     generated_at   TEXT NOT NULL,
     PRIMARY KEY (date, category)
 );
-
-CREATE TABLE IF NOT EXISTS article_embeddings (
-    article_id  INTEGER PRIMARY KEY,
-    embedding   BLOB NOT NULL,
-    model       TEXT NOT NULL,
-    created_at  TEXT NOT NULL,
-    FOREIGN KEY (article_id) REFERENCES articles(id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_emb_model ON article_embeddings(model);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS articles_fts USING fts5(
     title, summary, llm_summary_zh,
@@ -138,8 +116,8 @@ ARTICLE_INSERT_COLS = [
 def upsert_article(conn: sqlite3.Connection, row: dict) -> int:
     """INSERT-or-IGNORE on canonical_url. Returns the article id.
 
-    LLM and cluster fields are NEVER touched by upsert — they are the
-    sole responsibility of llm_rank.py and cluster_articles.py.
+    LLM fields are NEVER touched by upsert — they are the sole
+    responsibility of llm_rank.py.
     """
     cols = ARTICLE_INSERT_COLS
     placeholders = ",".join("?" for _ in cols)
@@ -225,57 +203,6 @@ def record_source_fetch(
               consecutive_failures = consecutive_failures + 1
             WHERE slug = ?
         """, [now, error, slug])
-    conn.commit()
-
-
-def create_cluster(
-    conn: sqlite3.Connection,
-    *,
-    primary_id: int,
-    mirror_ids: list[int],
-    created_at: str,
-) -> int:
-    """Create a cluster row + link primary and mirror articles in one txn.
-
-    Use defer_foreign_keys to handle the articles<->clusters cycle.
-    """
-    member_count = 1 + len(mirror_ids)
-    conn.execute("PRAGMA defer_foreign_keys = ON")
-    cur = conn.execute(
-        "INSERT INTO clusters (primary_article_id, member_count, created_at) VALUES (?, ?, ?)",
-        [primary_id, member_count, created_at],
-    )
-    cluster_id = cur.lastrowid
-    conn.execute(
-        "UPDATE articles SET cluster_id = ?, is_cluster_primary = 1 WHERE id = ?",
-        [cluster_id, primary_id],
-    )
-    if mirror_ids:
-        placeholders = ",".join("?" for _ in mirror_ids)
-        conn.execute(
-            f"UPDATE articles SET cluster_id = ?, is_cluster_primary = 0 WHERE id IN ({placeholders})",
-            [cluster_id, *mirror_ids],
-        )
-    conn.commit()
-    return cluster_id
-
-
-def upsert_embedding(
-    conn: sqlite3.Connection,
-    article_id: int,
-    vector: bytes,
-    model: str,
-    created_at: str,
-) -> None:
-    """INSERT OR UPDATE embedding for an article. Overwrites on conflict."""
-    conn.execute("""
-        INSERT INTO article_embeddings (article_id, embedding, model, created_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(article_id) DO UPDATE SET
-          embedding = excluded.embedding,
-          model = excluded.model,
-          created_at = excluded.created_at
-    """, [article_id, vector, model, created_at])
     conn.commit()
 
 

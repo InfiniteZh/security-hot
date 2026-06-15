@@ -13,7 +13,7 @@ Endpoints:
   /                      mounted web/ static frontend
 
 This module is the app factory: it builds the FastAPI `app`, loads .env,
-configures logging + CORS, wires the lifespan (ingest pool + scheduler), and
+configures logging + CORS, wires the lifespan (scheduler), and
 mounts the route packages. The actual endpoint handlers live in the
 routes_* modules; the refresh state machine, pipeline orchestration, and
 scheduler job bodies live in their own modules.
@@ -48,7 +48,6 @@ from .runtime import refresh_state
 from .routes import news as routes_news, ops as routes_ops, vuln as routes_vuln
 from .runtime.scheduler_jobs import (
     _sched_daily_brief,
-    _sched_enrich,
     _sched_fetch_murphy,
     _sched_fetch_news,
     _sched_fetch_other,
@@ -68,23 +67,19 @@ async def _lifespan(app: FastAPI):
     # Start the optional in-process pipeline scheduler (see scheduler.py).
     # The job functions live in scheduler_jobs. Stays None when
     # SECURITY_HOT_SCHEDULER_ENABLED is unset.
-    from .ingest.pool import shutdown_pool, start_pool
     from .runtime.scheduler import start_scheduler, stop_scheduler
     refresh_state._main_loop = asyncio.get_running_loop()
-    app.state.ingest_pool = start_pool()
     app.state.scheduler = start_scheduler(
         fetch_news=_sched_fetch_news,
         fetch_murphy=_sched_fetch_murphy,
         daily_brief=_sched_daily_brief,
         fetch_other=_sched_fetch_other,
-        enrich=_sched_enrich,
     )
     yield
     sched = getattr(app.state, "scheduler", None)
     if sched is not None:
         log.info("scheduler stopping")
         stop_scheduler(sched)
-    shutdown_pool()
     refresh_state._main_loop = None
 
 

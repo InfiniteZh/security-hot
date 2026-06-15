@@ -41,9 +41,7 @@ def _news_conn() -> _sqlite3.Connection:
     return c
 
 
-def _row_to_article(row, mirror_titles_by_cluster: dict) -> Article:
-    cluster_id = row["cluster_id"]
-    mirror_titles = mirror_titles_by_cluster.get(cluster_id, []) if cluster_id else []
+def _row_to_article(row) -> Article:
     raw_cat = row["llm_category"]
     llm_cat: NewsCategory | None = raw_cat if raw_cat in _VALID_CATEGORIES else None
     return Article(
@@ -61,8 +59,6 @@ def _row_to_article(row, mirror_titles_by_cluster: dict) -> Article:
         llm_category=llm_cat,
         llm_summary_zh=row["llm_summary_zh"],
         is_relevant=bool(row["is_relevant"]) if row["is_relevant"] is not None else None,
-        mirror_count=len(mirror_titles),
-        mirror_source_titles=mirror_titles[:6],
     )
 
 

@@ -66,7 +66,7 @@ def _record_step_status(script: str, step: str | None, ok: bool, elapsed: float,
 
 
 def _record_pipeline_result(step: str, result: dict) -> None:
-    if step not in {"embed", "cluster", "classify", "summarize", "daily_brief",
+    if step not in {"classify", "summarize", "daily_brief",
                     "poisoning_dispatch", "vuln_dispatch"}:
         return
     ok = bool(result.get("ok"))
@@ -116,17 +116,6 @@ async def _run_news_pipeline(*, include_daily_brief: bool = False) -> dict:
                 "elapsed_s": round(_time.monotonic() - t0, 2),
             }
         _record_pipeline_result("daily_brief", results["daily_brief"])
-    return results
-
-
-async def _run_enrich_pipeline() -> dict:
-    """Embedding + mirror clustering on its own cadence (default 2h)."""
-    from ..ingest.pipeline import on_news_enrich
-
-    results = await on_news_enrich(stage_cb=_set_stage)
-    for name in ("embed", "cluster"):
-        if name in results:
-            _record_pipeline_result(name, results[name])
     return results
 
 
