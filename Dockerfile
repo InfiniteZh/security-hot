@@ -19,6 +19,11 @@ ENV PYTHONUNBUFFERED=1 \
 # Install uv via pip — more reliable than the curl installer in restricted networks.
 RUN pip install --no-cache-dir uv
 
+# gosu: clean privilege-drop from the root entrypoint to the runtime user.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gosu \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy lockfile + manifest first for layer caching.
@@ -38,15 +43,18 @@ RUN mkdir -p backend/cache backend/history
 
 EXPOSE 8000
 
-# Drop privileges. UID/GID are build args so bind-mounted host dirs
-# (backend/cache, backend/history) can match the deploy user — avoids
-# "unable to open database file" from SQLite when the container user
-# can't write the mount point.
-ARG APP_UID=10001
-ARG APP_GID=10001
-RUN groupadd -g ${APP_GID} app \
-    && useradd -u ${APP_UID} -g ${APP_GID} -m -d /home/app app \
-    && chown -R app:app /app
-USER app
+# Create a placeholder 'app' user. Its UID/GID are re-pointed at RUNTIME by the
+# entrypoint to match whoever owns the bind-mounted cache dir — so there is no
+# build-time APP_UID arg and no host-side `chown` to keep in sync. HOME is fixed
+# so uv's cache has a stable, writable location after the entrypoint chowns it.
+RUN groupadd -g 1000 app \
+    && useradd -u 1000 -g 1000 -m -d /home/app app
+ENV HOME=/home/app
 
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Entrypoint runs as root (resolves UID, fixes ownership), then gosu-drops to the
+# runtime user before exec'ing CMD.
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["uv", "run", "uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
