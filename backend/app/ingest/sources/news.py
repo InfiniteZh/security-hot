@@ -152,11 +152,19 @@ async def fetch_news_to_sqlite(
     concurrency: int = 24,
     now_iso: str | None = None,
     db_path=None,
+    force: bool = False,
 ) -> dict:
     """SQLite-backed news fetcher. Replaces the news.json write path.
 
     Picks 'due' sources via db.due_sources(), respects ETag/If-Modified-Since,
     upserts new articles into the articles table.
+
+    `force=True` bypasses BOTH the interval gate (last_fetched + interval) and
+    the ban gate (consecutive_failures >= 5): every source in the table is
+    fetched this run. Used by the "force-fetch all" button to break the
+    "0 sources due" stalemate a failed run leaves behind (a failed fetch stamps
+    last_fetched=now, benching the source for up to interval_minutes). A source
+    that succeeds under force naturally resets its failure counter (un-bans).
     """
     ts = now_iso if now_iso is not None else datetime.now(timezone.utc).isoformat()
     conn = _db.connect(db_path)
@@ -187,8 +195,12 @@ async def fetch_news_to_sqlite(
             })
         print(f"[news] bootstrapped {conn.execute('SELECT COUNT(*) FROM sources').fetchone()[0]} sources", file=sys.stderr)
 
-    due = _db.due_sources(conn, ts)
-    print(f"[news] {len(due)} sources due (out of total in sources table)", file=sys.stderr)
+    if force:
+        due = list(conn.execute("SELECT * FROM sources ORDER BY (last_fetched IS NULL) DESC, last_fetched ASC"))
+        print(f"[news] FORCE mode: fetching all {len(due)} sources (ignoring due+ban gates)", file=sys.stderr)
+    else:
+        due = _db.due_sources(conn, ts)
+        print(f"[news] {len(due)} sources due (out of total in sources table)", file=sys.stderr)
 
     sem = asyncio.Semaphore(concurrency)
     inserted_total = 0

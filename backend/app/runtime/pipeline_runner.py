@@ -128,11 +128,11 @@ async def _run_vuln_pipeline() -> dict:
     return results
 
 
-async def _run_fetch_step(label: str, names: list[str] | None, concurrency: int | None = None) -> bool:
-    log.info("scheduler: %s -> run_fetchers(%s)", label, names or "all")
+async def _run_fetch_step(label: str, names: list[str] | None, concurrency: int | None = None, force: bool = False) -> bool:
+    log.info("scheduler: %s -> run_fetchers(%s)%s", label, names or "all", " [force]" if force else "")
     t0 = _time.monotonic()
     try:
-        result = await run_fetchers(names, concurrency)
+        result = await run_fetchers(names, concurrency, force=force)
         elapsed = _time.monotonic() - t0
         ok = bool(result.get("ok"))
         returncode = int(result.get("returncode", 1))
@@ -150,13 +150,13 @@ async def _run_fetch_step(label: str, names: list[str] | None, concurrency: int 
         return False
 
 
-async def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None) -> None:
+async def _run_fetcher(only: list[str] | None, llm_tasks: list[str] | None = None, force: bool = False) -> None:
     """Run fetchers in-process, then optionally chain the service pipeline."""
     from .refresh_state import _finish_refresh
 
     try:
         _set_stage("fetching")
-        ok = await _run_fetch_step("fetcher refresh", only)
+        ok = await _run_fetch_step("fetcher refresh", only, force=force)
         if not ok:
             _set_stage("error")
             return

@@ -12,6 +12,13 @@ services:
         https_proxy: ${https_proxy:-}
     ports:
       - "8000:8000"
+    # On Linux Docker, `host.docker.internal` does NOT resolve inside the
+    # container by default — the in-process fetcher uses it as its HTTPS_PROXY
+    # host (see .env), so without this mapping every RSS fetch dies with
+    # "[Errno -2] Name or service not known". host-gateway routes the name to
+    # the host. (Docker Desktop resolves it automatically; this is harmless there.)
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     environment:
@@ -43,6 +50,8 @@ services:
         http_proxy: ${http_proxy:-}
         https_proxy: ${https_proxy:-}
     profiles: ["job"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     volumes:

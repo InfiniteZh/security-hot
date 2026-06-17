@@ -187,7 +187,7 @@ FETCHERS = {
 DEFAULT_FETCH_CONCURRENCY = 24
 
 
-async def run(selected: list[str], concurrency: int, snapshot: bool = True, incremental: bool = False) -> int:
+async def run(selected: list[str], concurrency: int, snapshot: bool = True, incremental: bool = False, force: bool = False) -> int:
     timeout = httpx.Timeout(30.0, connect=10.0)
     limits = httpx.Limits(max_connections=concurrency * 2, max_keepalive_connections=concurrency)
     _proxy = proxy_url()
@@ -219,7 +219,8 @@ async def run(selected: list[str], concurrency: int, snapshot: bool = True, incr
                     # Conditional GET headers). `incremental` is now a no-op — Conditional
                     # GET is always on, so re-running with the same content is naturally
                     # cheap (304 responses skip article writes entirely).
-                    r = await fn(concurrency=concurrency)
+                    # `force` bypasses the due+ban gates (force-fetch-all button).
+                    r = await fn(concurrency=concurrency, force=force)
                 else:
                     r = await fn(client)
                 elapsed = round(time.monotonic() - t0, 2)
@@ -293,12 +294,13 @@ async def run_fetchers(
     *,
     snapshot: bool = True,
     incremental: bool = False,
+    force: bool = False,
 ) -> dict:
     selected = list(names) if names is not None else list(FETCHERS)
     unknown = [name for name in selected if name not in FETCHERS]
     if unknown:
         raise ValueError(f"unknown fetcher(s): {unknown}; available: {list(FETCHERS)}")
-    code = await run(selected, concurrency or DEFAULT_FETCH_CONCURRENCY, snapshot=snapshot, incremental=incremental)
+    code = await run(selected, concurrency or DEFAULT_FETCH_CONCURRENCY, snapshot=snapshot, incremental=incremental, force=force)
     manifest_path = CACHE / "manifest.json"
     manifest = {}
     if manifest_path.exists():
@@ -321,6 +323,7 @@ def main() -> int:
                    help=f"news-feed concurrency (default {DEFAULT_FETCH_CONCURRENCY})")
     p.add_argument("--no-snapshot", action="store_true", help="skip history snapshot + first_seen annotation")
     p.add_argument("--incremental", action="store_true", help="merge new articles into existing cache instead of replacing")
+    p.add_argument("--force", action="store_true", help="news: fetch ALL sources, ignoring due+ban gates")
     p.add_argument("--list", action="store_true", help="list available fetchers and exit")
     args = p.parse_args()
 
@@ -336,7 +339,7 @@ def main() -> int:
             sys.exit(f"unknown fetcher(s): {unknown}; available: {list(FETCHERS)}")
     else:
         selected = list(FETCHERS)
-    return asyncio.run(run(selected, args.concurrency, snapshot=not args.no_snapshot, incremental=args.incremental))
+    return asyncio.run(run(selected, args.concurrency, snapshot=not args.no_snapshot, incremental=args.incremental, force=args.force))
 
 
 if __name__ == "__main__":

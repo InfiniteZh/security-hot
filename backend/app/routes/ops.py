@@ -239,6 +239,7 @@ async def api_refresh(
     background: BackgroundTasks,
     only: str | None = Query(default=None, description="comma-separated fetcher names; default = all"),
     llm: str | None = Query(default=None, description="LLM scope: news | vuln | all | none (default: none)"),
+    force: bool = Query(default=False, description="news: fetch ALL sources, bypassing due+ban gates"),
     x_refresh_token: str | None = Header(default=None),
 ) -> JSONResponse:
     """Trigger a fetcher run in the background.
@@ -259,8 +260,8 @@ async def api_refresh(
         return JSONResponse({"queued": False, "reason": "already running"}, status_code=409)
     chosen = [s.strip() for s in only.split(",") if s.strip()] if only else None
     llm_scope, llm_tasks = _resolve_refresh_pipeline(chosen, llm)
-    background.add_task(_run_fetcher, chosen, llm_tasks or None)
-    return JSONResponse({"queued": True, "only": chosen, "llm": llm_tasks, "llm_scope": llm_scope}, status_code=202)
+    background.add_task(_run_fetcher, chosen, llm_tasks or None, force)
+    return JSONResponse({"queued": True, "only": chosen, "llm": llm_tasks, "llm_scope": llm_scope, "force": force}, status_code=202)
 
 
 class _UnbanBody(_BaseModel):

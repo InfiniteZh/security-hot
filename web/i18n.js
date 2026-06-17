@@ -164,6 +164,8 @@ const I18N = {
     "sources.banCount": (n) => `${n} 个源被封禁`,
     "sources.noBenched": "无封禁源，全部正常运行中",
     "sources.unbanAll": "全部解封",
+    "sources.refetchAll": "强制全部拉取",
+    "sources.refetchStarted": "已触发强制全量拉取，稍候在流水线状态查看进度",
     "sources.unban": "解封",
     "sources.unbanOk": (n) => `已解封 ${n} 个源`,
     "sources.unbanFail": "解封失败",

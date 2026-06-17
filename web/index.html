@@ -1592,6 +1592,10 @@
               <h2 class="modal-title" data-i18n="sources.modal.title">数据源管理</h2>
             </div>
             <div class="flex items-center gap-2">
+              <button id="src-refetch-all-btn" onclick="doRefetchAll()"
+                      class="font-mono text-[11px] px-3 py-1.5 rounded-lg border transition"
+                      style="border-color:var(--accent,#2563eb);color:var(--accent,#2563eb);"
+                      data-i18n="sources.refetchAll">强制全部拉取</button>
               <button id="src-unban-all-btn" onclick="doUnbanAll()"
                       class="font-mono text-[11px] px-3 py-1.5 rounded-lg border transition"
                       style="border-color:var(--warn,#f59e0b);color:var(--warn,#f59e0b);"
@@ -4099,6 +4103,36 @@ async function _doUnban(slugs) {
 
 function doUnbanAll() { _doUnban([]); }
 function doUnbanOne(slug) { _doUnban([slug]); }
+
+// Force-fetch ALL news sources, bypassing the due+ban gates. Breaks the
+// "0 sources due" stalemate a failed run leaves behind. Reuses /api/refresh
+// with force=1; success on a source auto-resets its failure counter (un-bans).
+async function doRefetchAll() {
+  let token = getRefreshToken();
+  if (!token) {
+    token = window.prompt(t("refresh.prompt"));
+    if (!token) return;
+    setRefreshToken(token.trim());
+    token = token.trim();
+  }
+  const btn = document.getElementById("src-refetch-all-btn");
+  if (btn) btn.disabled = true;
+  try {
+    const params = new URLSearchParams({ only: "news", force: "1", llm: "news" });
+    const res = await fetch(`/api/refresh?${params.toString()}`, {
+      method: "POST", headers: { "X-Refresh-Token": token },
+    });
+    if (res.status === 401) { clearRefreshToken(); showRefreshToast(t("refresh.unauthorized"), "error", 4000); return; }
+    if (res.status === 503) { showRefreshToast(t("refresh.disabled"), "error", 4000); return; }
+    if (res.status === 409) { showRefreshToast(t("refresh.already_running"), "warn", 4000); return; }
+    if (!res.ok && res.status !== 202) { showRefreshToast(`${t("refresh.failed")} · HTTP ${res.status}`, "error", 4000); return; }
+    showRefreshToast(t("sources.refetchStarted"), "ok", 4000);
+  } catch (_) {
+    showRefreshToast(t("refresh.failed"), "error", 4000);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
 
 // ───────────────────── pipeline status modal ─────────────────────
 let _plData = null;
