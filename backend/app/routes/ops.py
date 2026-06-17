@@ -278,7 +278,7 @@ async def api_sources_unban(
     Requires `X-Refresh-Token` (same token as /api/refresh).
     """
     from ..ingest import db as _db
-    from ..news import cache_io as _cache_io
+    from .. import cache_io as _cache_io
 
     refresh_state.require_refresh_token(x_refresh_token, feature="unban")
 
