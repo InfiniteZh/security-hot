@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
-import os
 import re
-import secrets
 import time as _time
 from pathlib import Path
 
@@ -256,11 +254,7 @@ async def api_refresh(
     """
     from ..runtime.pipeline_runner import _resolve_refresh_pipeline, _run_fetcher
 
-    expected = os.environ.get(refresh_state.REFRESH_TOKEN_ENV)
-    if not expected:
-        raise HTTPException(status_code=503, detail=f"refresh disabled; set {refresh_state.REFRESH_TOKEN_ENV} to enable")
-    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
-        raise HTTPException(status_code=401, detail="invalid refresh token")
+    refresh_state.require_refresh_token(x_refresh_token, feature="refresh")
     if not await refresh_state._begin_refresh("manual refresh"):
         return JSONResponse({"queued": False, "reason": "already running"}, status_code=409)
     chosen = [s.strip() for s in only.split(",") if s.strip()] if only else None
@@ -286,11 +280,7 @@ async def api_sources_unban(
     from ..ingest import db as _db
     from ..news import cache_io as _cache_io
 
-    expected = os.environ.get(refresh_state.REFRESH_TOKEN_ENV)
-    if not expected:
-        raise HTTPException(status_code=503, detail=f"unban disabled; set {refresh_state.REFRESH_TOKEN_ENV} to enable")
-    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
-        raise HTTPException(status_code=401, detail="invalid refresh token")
+    refresh_state.require_refresh_token(x_refresh_token, feature="unban")
 
     conn = _db.connect(_cache_io._NEWS_DB)
     n = _db.unban_sources(conn, body.slugs if body.slugs else None)

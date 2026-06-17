@@ -190,7 +190,7 @@ DEFAULT_FETCH_CONCURRENCY = 24
 async def run(selected: list[str], concurrency: int, snapshot: bool = True, incremental: bool = False) -> int:
     timeout = httpx.Timeout(30.0, connect=10.0)
     limits = httpx.Limits(max_connections=concurrency * 2, max_keepalive_connections=concurrency)
-    _proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
+    _proxy = proxy_url()
     async with httpx.AsyncClient(
         headers=HEADERS, timeout=timeout, limits=limits, follow_redirects=True,
         proxy=_proxy,

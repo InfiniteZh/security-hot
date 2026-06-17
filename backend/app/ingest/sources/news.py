@@ -203,7 +203,7 @@ async def fetch_news_to_sqlite(
         _prog = None
 
     timeout = httpx.Timeout(30.0, connect=10.0)
-    _proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
+    _proxy = _util.proxy_url()
     async with httpx.AsyncClient(headers=HEADERS, timeout=timeout,
                                   follow_redirects=True, proxy=_proxy) as client:
         async def one(src):

@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import logging
 import os
-import secrets
 import threading
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
+
+from ..runtime import refresh_state
 
 from ..data import (
     all_articles,
@@ -126,11 +127,7 @@ async def api_dispatch_resend(
     import time as _t
     from pathlib import Path as _P
 
-    expected = os.environ.get("SECURITY_HOT_REFRESH_TOKEN")
-    if not expected:
-        raise HTTPException(status_code=503, detail="resend disabled — set SECURITY_HOT_REFRESH_TOKEN")
-    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
-        raise HTTPException(status_code=401, detail="invalid refresh token")
+    refresh_state.require_refresh_token(x_refresh_token, feature="resend")
 
     if origin not in ("vuln", "news"):
         raise HTTPException(status_code=400, detail="origin must be vuln | news")
@@ -226,13 +223,7 @@ async def regenerate_brief(
     Requires SECURITY_HOT_REFRESH_TOKEN header match. Only one regen runs at a time;
     concurrent calls return 409.
     """
-    expected = os.environ.get("SECURITY_HOT_REFRESH_TOKEN")
-    # Distinguish "feature disabled (server-side missing config)" from
-    # "wrong token (user-side)" so the UI can show a useful message.
-    if not expected:
-        raise HTTPException(status_code=503, detail="brief regenerate disabled — set SECURITY_HOT_REFRESH_TOKEN in .env")
-    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
-        raise HTTPException(status_code=401, detail="invalid refresh token")
+    refresh_state.require_refresh_token(x_refresh_token, feature="brief regenerate")
     target = _validate_date(date) or _today_utc_str()
     with _brief_regen_lock:
         if _get_brief_regen_in_flight():

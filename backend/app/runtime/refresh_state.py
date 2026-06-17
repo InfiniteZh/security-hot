@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import secrets
 import time as _time
 from pathlib import Path
+
+from fastapi import HTTPException
 
 log = logging.getLogger("security-hot")
 
@@ -19,6 +23,20 @@ log = logging.getLogger("security-hot")
 ROOT = Path(__file__).resolve().parents[3]
 
 REFRESH_TOKEN_ENV = "SECURITY_HOT_REFRESH_TOKEN"
+
+
+def require_refresh_token(x_refresh_token: str | None, *, feature: str = "this endpoint") -> None:
+    """Constant-time guard shared by all token-protected endpoints.
+
+    Raises 503 when the token env var is unset (feature disabled), 401 on
+    mismatch. Centralizes the check so every endpoint reads the same env var
+    name and uses secrets.compare_digest.
+    """
+    expected = os.environ.get(REFRESH_TOKEN_ENV)
+    if not expected:
+        raise HTTPException(status_code=503, detail=f"{feature} disabled; set {REFRESH_TOKEN_ENV} to enable")
+    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
+        raise HTTPException(status_code=401, detail="invalid or missing refresh token")
 
 # The running event loop, captured in main's lifespan. Used by
 # _run_coro_blocking to marshal scheduler coroutines onto the app loop.

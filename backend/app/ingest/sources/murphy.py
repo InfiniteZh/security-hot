@@ -194,7 +194,7 @@ async def fetch_murphy(_client: httpx.AsyncClient) -> dict:
     pages = 0
     total: int | None = None
     timeout = aiohttp.ClientTimeout(total=90, connect=15)
-    _proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
+    _proxy = _util.proxy_url()
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for page in range(1, max_pages + 1):
             body = {

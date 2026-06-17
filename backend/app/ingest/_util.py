@@ -35,6 +35,11 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def proxy_url() -> str | None:
+    """The HTTPS proxy from the environment, honoring upper/lower case."""
+    return os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
+
+
 def write_json(name: str, data) -> Path:
     path = CACHE / name
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

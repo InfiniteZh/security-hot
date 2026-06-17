@@ -37,8 +37,8 @@ def _fake_session_factory(payloads: list[dict], requests: list[dict]):
         async def __aexit__(self, exc_type, exc, tb):
             return False
 
-        def post(self, url, *, json=None, headers=None):
-            requests.append({"url": url, "json": json, "headers": headers})
+        def post(self, url, *, json=None, headers=None, proxy=None):
+            requests.append({"url": url, "json": json, "headers": headers, "proxy": proxy})
             return _FakeMurphyResponse(payloads.pop(0))
 
     return FakeSession

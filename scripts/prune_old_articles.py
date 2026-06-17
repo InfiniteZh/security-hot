@@ -23,23 +23,22 @@ def prune(*, db_path=None, days: int | None = None, dry_run: bool = False) -> di
         days = int(os.environ.get("NEWS_DAYS_BACK", "30"))
     now = datetime.now(timezone.utc)
     cutoff = (now - timedelta(days=days)).isoformat().replace("+00:00", "Z")
-    floor = "2020-01-01T00:00:00Z"
     ceil = (now + timedelta(days=7)).isoformat().replace("+00:00", "Z")
 
     conn = db.connect(db_path)
     db.init_schema(conn)
     try:
-        # Count what we'd delete before doing it
+        # Count what we'd delete before doing it (too old, or impossibly future)
         n_old = conn.execute("""
             SELECT COUNT(*) FROM articles
             WHERE published IS NOT NULL
-              AND (published < ? OR published < ? OR published > ?)
-        """, [cutoff, floor, ceil]).fetchone()[0]
+              AND (published < ? OR published > ?)
+        """, [cutoff, ceil]).fetchone()[0]
         n_total = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
 
         if dry_run:
             print(f"[prune] DRY RUN: would delete {n_old} of {n_total} articles "
-                  f"(cutoff={cutoff[:10]}, floor=2020-01-01, ceil={ceil[:10]})",
+                  f"(cutoff={cutoff[:10]}, ceil={ceil[:10]})",
                   file=sys.stderr)
             return {"dry_run": True, "would_delete": n_old, "total": n_total}
 
@@ -47,8 +46,8 @@ def prune(*, db_path=None, days: int | None = None, dry_run: bool = False) -> di
         n_del = conn.execute("""
             DELETE FROM articles
             WHERE published IS NOT NULL
-              AND (published < ? OR published < ? OR published > ?)
-        """, [cutoff, floor, ceil]).rowcount
+              AND (published < ? OR published > ?)
+        """, [cutoff, ceil]).rowcount
 
         conn.commit()
         n_after = conn.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
