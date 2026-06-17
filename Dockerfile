@@ -16,11 +16,8 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_LINK_MODE=copy
 
-# Install uv (fast Python package manager).
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && rm -rf /var/lib/apt/lists/*
-ENV PATH="/root/.local/bin:${PATH}"
+# Install uv via pip — more reliable than the curl installer in restricted networks.
+RUN pip install --no-cache-dir uv
 
 WORKDIR /app
 
