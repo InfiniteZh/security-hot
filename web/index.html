@@ -2002,14 +2002,22 @@ function renderStats() {
   }
   if (statsLine) {
     const benched = (state.sources || []).filter(s => s.consecutive_failures >= 5).length;
-    const sourceTxt = lang === "zh"
-      ? `${d.news_today} 篇资讯 · ${d.vuln_today} 个漏洞 · ${d.sources_alive}/${d.sources_total} 源`
-      : `${d.news_today} articles · ${d.vuln_today} vulns · ${d.sources_alive}/${d.sources_total} sources`;
-    if (benched > 0) {
-      statsLine.innerHTML = `${escapeHtml(sourceTxt)} <button onclick="openSourcesModal()" style="display:inline-flex;align-items:center;gap:3px;background:var(--warn,#f59e0b);color:#fff;font-size:10px;font-family:'Geist Mono',monospace;padding:1px 7px;border-radius:999px;border:none;cursor:pointer;vertical-align:middle;line-height:1.6;letter-spacing:0.05em;">${escapeHtml(t("sources.banCount", benched))}</button>`;
-    } else {
-      statsLine.textContent = sourceTxt;
-    }
+    // Head (articles · vulns) is plain text; the source-count segment is an
+    // ALWAYS-clickable entry into the source-management modal (where the
+    // "force-fetch all" + "unban" buttons live). Previously the only entry was
+    // an orange ban badge that vanished when 0 sources were benched — so the
+    // force button was unreachable exactly when you'd want it after a fix.
+    const headTxt = lang === "zh"
+      ? `${d.news_today} 篇资讯 · ${d.vuln_today} 个漏洞 · `
+      : `${d.news_today} articles · ${d.vuln_today} vulns · `;
+    const srcTxt = lang === "zh"
+      ? `${d.sources_alive}/${d.sources_total} 源`
+      : `${d.sources_alive}/${d.sources_total} sources`;
+    const srcBtn = `<button onclick="openSourcesModal()" title="${escapeHtml(t("sources.modal.title"))}" style="background:none;border:none;padding:0;margin:0;color:inherit;font:inherit;cursor:pointer;border-bottom:1px dashed var(--hairline,#cbb);">${escapeHtml(srcTxt)}</button>`;
+    const banBadge = benched > 0
+      ? ` <button onclick="openSourcesModal()" style="display:inline-flex;align-items:center;gap:3px;background:var(--warn,#f59e0b);color:#fff;font-size:10px;font-family:'Geist Mono',monospace;padding:1px 7px;border-radius:999px;border:none;cursor:pointer;vertical-align:middle;line-height:1.6;letter-spacing:0.05em;">${escapeHtml(t("sources.banCount", benched))}</button>`
+      : "";
+    statsLine.innerHTML = escapeHtml(headTxt) + srcBtn + banBadge;
   }
 
   // Inject the live source count into the hero sub-headline so the claim
