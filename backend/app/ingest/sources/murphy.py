@@ -137,13 +137,13 @@ def _load_murphy_cache() -> dict:
         return {}
 
 
-async def _fetch_murphy_page(session: aiohttp.ClientSession, body: dict, customer_code: str) -> dict:
+async def _fetch_murphy_page(session: aiohttp.ClientSession, body: dict, customer_code: str, proxy: str | None = None) -> dict:
     headers = {
         "Content-Type": "application/json",
         "CustomerCode": customer_code,
         "User-Agent": USER_AGENT,
     }
-    async with session.post(MURPHY_URL, json=body, headers=headers) as resp:
+    async with session.post(MURPHY_URL, json=body, headers=headers, proxy=proxy) as resp:
         text = await resp.text()
         if resp.status >= 400:
             raise RuntimeError(f"MurphySec HTTP {resp.status}: {text[:200]}")
@@ -194,6 +194,7 @@ async def fetch_murphy(_client: httpx.AsyncClient) -> dict:
     pages = 0
     total: int | None = None
     timeout = aiohttp.ClientTimeout(total=90, connect=15)
+    _proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy") or None
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for page in range(1, max_pages + 1):
             body = {
@@ -206,7 +207,7 @@ async def fetch_murphy(_client: httpx.AsyncClient) -> dict:
             }
             body["start_time"] = start_time
             body["end_time"] = end_time
-            payload = await _fetch_murphy_page(session, body, customer_code)
+            payload = await _fetch_murphy_page(session, body, customer_code, proxy=_proxy)
             page_items = _murphy_items_from_payload(payload)
             pages = page
             if total is None:

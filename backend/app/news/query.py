@@ -335,7 +335,7 @@ def all_sources() -> list[SourceStatus]:
     out: list[SourceStatus] = []
     conn = cache_io._news_conn()
     for r in conn.execute("""
-        SELECT slug, title, url, lang, ok, error,
+        SELECT slug, title, url, lang, ok, error, tier, consecutive_failures, last_fetched,
                (SELECT COUNT(*) FROM articles WHERE source_slug = sources.slug) AS count
         FROM sources
     """):
@@ -346,6 +346,9 @@ def all_sources() -> list[SourceStatus]:
             lang=lang_val,
             ok=bool(r["ok"]), count=int(r["count"] or 0),
             error=r["error"],
+            consecutive_failures=int(r["consecutive_failures"] or 0),
+            tier=r["tier"] or "tail",
+            last_fetched=r["last_fetched"],
         ))
     conn.close()
     return out

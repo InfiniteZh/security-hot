@@ -206,6 +206,22 @@ def record_source_fetch(
     conn.commit()
 
 
+def unban_sources(conn: sqlite3.Connection, slugs: list[str] | None = None) -> int:
+    """Reset consecutive_failures=0, ok=1, error=NULL.
+
+    slugs=None → all sources. Returns count of rows updated.
+    """
+    if slugs is None:
+        conn.execute("UPDATE sources SET consecutive_failures = 0, ok = 1, error = NULL")
+    else:
+        conn.executemany(
+            "UPDATE sources SET consecutive_failures = 0, ok = 1, error = NULL WHERE slug = ?",
+            [(s,) for s in slugs],
+        )
+    conn.commit()
+    return conn.execute("SELECT changes()").fetchone()[0]
+
+
 def upsert_brief(
     conn: sqlite3.Connection,
     *,

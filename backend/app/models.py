@@ -127,6 +127,9 @@ class SourceStatus(BaseModel):
     ok: bool
     count: int = 0
     error: str | None = None
+    consecutive_failures: int = 0
+    tier: str = "tail"
+    last_fetched: str | None = None
 
 
 class FetcherStatus(BaseModel):

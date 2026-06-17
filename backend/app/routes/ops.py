@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel as _BaseModel
 
 from ..runtime import pipeline_status as ps
 from ..runtime import refresh_state
@@ -266,3 +267,32 @@ async def api_refresh(
     llm_scope, llm_tasks = _resolve_refresh_pipeline(chosen, llm)
     background.add_task(_run_fetcher, chosen, llm_tasks or None)
     return JSONResponse({"queued": True, "only": chosen, "llm": llm_tasks, "llm_scope": llm_scope}, status_code=202)
+
+
+class _UnbanBody(_BaseModel):
+    slugs: list[str] = []  # 空列表 = 全部解封
+
+
+@router.post("/api/sources/unban", tags=["sources"])
+async def api_sources_unban(
+    body: _UnbanBody,
+    x_refresh_token: str | None = Header(default=None),
+) -> JSONResponse:
+    """Reset consecutive_failures for benched sources, re-admitting them to polling.
+
+    Pass `{"slugs": [...]}` to unban specific sources; empty list unbans all.
+    Requires `X-Refresh-Token` (same token as /api/refresh).
+    """
+    from ..ingest import db as _db
+    from ..news import cache_io as _cache_io
+
+    expected = os.environ.get(refresh_state.REFRESH_TOKEN_ENV)
+    if not expected:
+        raise HTTPException(status_code=503, detail=f"unban disabled; set {refresh_state.REFRESH_TOKEN_ENV} to enable")
+    if not x_refresh_token or not secrets.compare_digest(x_refresh_token, expected):
+        raise HTTPException(status_code=401, detail="invalid refresh token")
+
+    conn = _db.connect(_cache_io._NEWS_DB)
+    n = _db.unban_sources(conn, body.slugs if body.slugs else None)
+    conn.close()
+    return JSONResponse({"ok": True, "reset": n})

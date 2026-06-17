@@ -1581,6 +1581,29 @@
       </div>
     </div>
 
+    <!-- ─────────── SOURCES MODAL ─────────── -->
+    <div id="sources-modal" hidden>
+      <div class="modal-backdrop" onclick="closeSourcesModal()"></div>
+      <div class="modal-shell">
+        <article class="modal-content scrollbar-thin">
+          <header class="modal-header">
+            <div>
+              <div class="modal-date" id="src-modal-sub" data-i18n="sources.modal.sub">RSS 拉取源状态 · 连续失败 ≥5 次自动封禁</div>
+              <h2 class="modal-title" data-i18n="sources.modal.title">数据源管理</h2>
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="src-unban-all-btn" onclick="doUnbanAll()"
+                      class="font-mono text-[11px] px-3 py-1.5 rounded-lg border transition"
+                      style="border-color:var(--warn,#f59e0b);color:var(--warn,#f59e0b);"
+                      data-i18n="sources.unbanAll">全部解封</button>
+              <button class="modal-close" onclick="closeSourcesModal()" data-i18n="modal.close">关闭 ✕</button>
+            </div>
+          </header>
+          <div class="modal-body pl-modal-body" id="src-content"></div>
+        </article>
+      </div>
+    </div>
+
     <!-- ─────────── PIPELINE STATUS MODAL ─────────── -->
     <div id="pipeline-modal" hidden>
       <div class="modal-backdrop" onclick="closePipeline()"></div>
@@ -1974,9 +1997,15 @@ function renderStats() {
     return;
   }
   if (statsLine) {
-    statsLine.textContent = lang === "zh"
+    const benched = (state.sources || []).filter(s => s.consecutive_failures >= 5).length;
+    const sourceTxt = lang === "zh"
       ? `${d.news_today} 篇资讯 · ${d.vuln_today} 个漏洞 · ${d.sources_alive}/${d.sources_total} 源`
       : `${d.news_today} articles · ${d.vuln_today} vulns · ${d.sources_alive}/${d.sources_total} sources`;
+    if (benched > 0) {
+      statsLine.innerHTML = `${escapeHtml(sourceTxt)} <button onclick="openSourcesModal()" style="display:inline-flex;align-items:center;gap:3px;background:var(--warn,#f59e0b);color:#fff;font-size:10px;font-family:'Geist Mono',monospace;padding:1px 7px;border-radius:999px;border:none;cursor:pointer;vertical-align:middle;line-height:1.6;letter-spacing:0.05em;">${escapeHtml(t("sources.banCount", benched))}</button>`;
+    } else {
+      statsLine.textContent = sourceTxt;
+    }
   }
 
   // Inject the live source count into the hero sub-headline so the claim
@@ -3978,6 +4007,98 @@ async function showNewsDetail(link, label) {
       </div>`);
   }
 }
+
+// ───────────────────── sources modal ─────────────────────
+function renderSourcesModal() {
+  const box = document.getElementById("src-content");
+  if (!box) return;
+  const sources = state.sources || [];
+  const benched = sources.filter(s => s.consecutive_failures >= 5);
+  const now = new Date().toISOString();
+
+  const rowHtml = (s, showUnban) => {
+    const lastFmt = s.last_fetched ? _plRel(s.last_fetched, now) : t("sources.never");
+    const unbanBtn = showUnban
+      ? `<button class="src-unban-btn font-mono text-[10px] px-2 py-1 rounded-md border transition"
+                style="border-color:var(--warn,#f59e0b);color:var(--warn,#f59e0b);white-space:nowrap;"
+                onclick="doUnbanOne('${escapeHtml(s.slug)}')"
+                data-i18n="sources.unban">解封</button>`
+      : "";
+    return `<div class="pl-row" style="align-items:flex-start;gap:6px;">
+      <span class="pl-ico pl-ico--${s.ok ? 'ok' : 'error'}">${s.ok ? "●" : "✕"}</span>
+      <span class="pl-name" style="min-width:0;flex:1;">${escapeHtml(s.title || s.slug)}
+        <span class="pl-meta" style="font-family:'Geist Mono',monospace;font-size:10px;margin-left:4px;">${escapeHtml(s.slug)}</span>
+      </span>
+      <span class="pl-when" style="white-space:nowrap;">${escapeHtml(lastFmt)}</span>
+      ${unbanBtn}
+      ${s.error ? `<div class="pl-err" style="flex-basis:100%;padding-left:20px;">${escapeHtml(s.error)}</div>` : ""}
+    </div>`;
+  };
+
+  let html = "";
+  if (benched.length === 0) {
+    html = `<div class="pl-empty">${escapeHtml(t("sources.noBenched"))}</div>`;
+  } else {
+    html += `<section><div class="pl-group-title">${escapeHtml(t("sources.benched"))} <span class="pl-next" style="background:var(--warn,#f59e0b);color:#fff;padding:1px 6px;border-radius:999px;font-size:10px;">${benched.length}</span></div>`;
+    for (const s of benched) html += rowHtml(s, true);
+    html += `</section>`;
+  }
+
+  const unbanAllBtn = document.getElementById("src-unban-all-btn");
+  if (unbanAllBtn) unbanAllBtn.hidden = benched.length === 0;
+
+  box.innerHTML = html;
+  // translate static data-i18n attrs in the unban button(s)
+  box.querySelectorAll("[data-i18n]").forEach(el => {
+    const v = t(el.getAttribute("data-i18n")); if (typeof v === "string") el.textContent = v;
+  });
+}
+
+function openSourcesModal() {
+  const modal = document.getElementById("sources-modal");
+  if (!modal) return;
+  modal.hidden = false;
+  renderSourcesModal();
+}
+
+function closeSourcesModal() {
+  const modal = document.getElementById("sources-modal");
+  if (modal) modal.hidden = true;
+}
+
+async function _doUnban(slugs) {
+  let token = getRefreshToken();
+  if (!token) {
+    token = window.prompt(t("refresh.prompt"));
+    if (!token) return;
+    setRefreshToken(token.trim());
+    token = token.trim();
+  }
+  try {
+    const res = await fetch("/api/sources/unban", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Refresh-Token": token },
+      body: JSON.stringify({ slugs }),
+    });
+    if (res.status === 401) { clearRefreshToken(); showRefreshToast(t("refresh.unauthorized"), "error", 4000); return; }
+    if (res.status === 503) { showRefreshToast(t("refresh.disabled"), "error", 4000); return; }
+    if (!res.ok) { showRefreshToast(t("sources.unbanFail"), "error", 4000); return; }
+    const data = await res.json();
+    showRefreshToast(t("sources.unbanOk", data.reset || 0), "ok", 3000);
+    // Refresh sources state then re-render modal + hero stats
+    try {
+      const s = await fetch("/api/sources").then(r => r.json());
+      state.sources = s || [];
+    } catch (_) {}
+    renderSourcesModal();
+    if (typeof renderStats === "function") renderStats();
+  } catch (_) {
+    showRefreshToast(t("sources.unbanFail"), "error", 4000);
+  }
+}
+
+function doUnbanAll() { _doUnban([]); }
+function doUnbanOne(slug) { _doUnban([slug]); }
 
 // ───────────────────── pipeline status modal ─────────────────────
 let _plData = null;
