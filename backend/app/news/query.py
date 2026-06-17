@@ -334,10 +334,18 @@ def all_sources() -> list[SourceStatus]:
         return []
     out: list[SourceStatus] = []
     conn = cache_io._news_conn()
+    # One grouped pass over articles instead of a correlated COUNT subquery per
+    # source row (713 sources × full scan → O(sources×articles)). With
+    # idx_source_slug this is a single index-grouped aggregation.
     for r in conn.execute("""
-        SELECT slug, title, url, lang, ok, error, tier, consecutive_failures, last_fetched,
-               (SELECT COUNT(*) FROM articles WHERE source_slug = sources.slug) AS count
-        FROM sources
+        SELECT s.slug AS slug, s.title AS title, s.url AS url, s.lang AS lang,
+               s.ok AS ok, s.error AS error, s.tier AS tier,
+               s.consecutive_failures AS consecutive_failures,
+               s.last_fetched AS last_fetched,
+               COUNT(a.source_slug) AS count
+        FROM sources s
+        LEFT JOIN articles a ON a.source_slug = s.slug
+        GROUP BY s.slug
     """):
         lang_raw = r["lang"]
         lang_val = lang_raw if lang_raw in ("zh", "en") else "mixed"

@@ -273,12 +273,34 @@ def _osv_malware_to_vulns() -> list[Vuln]:
     return out[:200]
 
 
+_SIGNAL_FILES = ("epss.json", "hn.json", "masto.json", "nuclei.json")
+_signals_cache: tuple[tuple, dict[str, dict]] | None = None
+
+
+def _signal_files_key() -> tuple:
+    """mtime fingerprint of the 4 signal source files (None when absent)."""
+    out = []
+    for name in _SIGNAL_FILES:
+        p = cache_io.CACHE / name
+        out.append(p.stat().st_mtime if p.exists() else None)
+    return tuple(out)
+
+
 def _cve_signals() -> dict[str, dict]:
     """Pre-compute per-CVE signals: EPSS, HN mentions, Mastodon mentions, Nuclei.
 
     Returned shape:  {cve_id: {epss, epss_p, hn_mentions, masto_mentions, nuclei_url}}
     All sub-keys may be missing if the source had no entry for that CVE.
+
+    Memoized by source-file mtimes: EPSS alone is 300k+ entries, and this dict
+    was previously rebuilt on every /api/vuln request. The cache is invalidated
+    automatically when any of the 4 files is re-fetched (mtime changes).
     """
+    global _signals_cache
+    key = _signal_files_key()
+    if _signals_cache is not None and _signals_cache[0] == key:
+        return _signals_cache[1]
+
     epss = _load_json("epss.json", {"items": {}})
     hn = _load_json("hn.json", {"items": []})
     masto = _load_json("masto.json", {"items": []})
@@ -310,6 +332,7 @@ def _cve_signals() -> dict[str, dict]:
         slot = signals.setdefault(cve, {})
         slot["nuclei_url"] = info.get("url")
 
+    _signals_cache = (key, signals)
     return signals
 
 

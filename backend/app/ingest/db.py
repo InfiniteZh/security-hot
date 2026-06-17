@@ -39,6 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_score         ON articles(llm_score DESC, publish
 CREATE INDEX IF NOT EXISTS idx_category      ON articles(llm_category);
 CREATE INDEX IF NOT EXISTS idx_first_seen    ON articles(first_seen_date);
 CREATE INDEX IF NOT EXISTS idx_is_relevant   ON articles(is_relevant);
+CREATE INDEX IF NOT EXISTS idx_source_slug   ON articles(source_slug);
 
 CREATE TABLE IF NOT EXISTS sources (
     slug             TEXT PRIMARY KEY,
