@@ -43,6 +43,7 @@ from dispatch_common import (  # noqa: E402
     BODY_AUGMENT_TYPES,
     KAFKA_BOOTSTRAP,
     KAFKA_TOPIC,
+    SCHEMA_VERSION,
     TIER1_SUPPLY_SOURCES,
     TIER2_SUPPLY_SOURCES,
     extract_iocs,
@@ -60,7 +61,6 @@ try:  # best-effort：CLI 独立运行时缺失也不致命
 except Exception:  # pragma: no cover
     _prog = None
 
-SCHEMA_VERSION = 3
 MIN_SCORE = 8
 TIER1_MIN_SCORE = 7
 

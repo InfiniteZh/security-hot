@@ -10,11 +10,21 @@ from __future__ import annotations
 
 import re
 import sqlite3 as _sqlite3
+import sys
 import time
+from pathlib import Path
 
 from .. import cache_io
 from ..cache_io import _RELOAD_TTL, _json_list, _json_obj, _normalize_iocs
 from ..models import Article, DispatchEntry, SourceStatus
+
+# 抽屉重建的报文须与 scripts 侧 dispatcher 的 build_message 同 schema 版本；从共享的
+# dispatch_common 取唯一真源，杜绝硬编码漂移（news 链路只存 triage、不存完整报文，
+# 曾因 triage.get("schema_version") 取空而呈现 schema_version=null）。
+_SCRIPTS = Path(__file__).resolve().parents[3] / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+from dispatch_common import SCHEMA_VERSION  # noqa: E402
 
 _DEFAULT_DISPATCH_TOPIC = "schedule_task_normal"
 
@@ -147,7 +157,7 @@ def _load_dispatch_cache() -> list[DispatchEntry]:
         # news 来源只持久化了 triage 结果（非完整 Kafka 报文），按 build_message
         # 的字段重建一份等价投递内容供抽屉展示。
         message = {
-            "schema_version": triage.get("schema_version"),
+            "schema_version": SCHEMA_VERSION,
             "source": "security-hot",
             "kind": "poisoning_intel",
             "origin": "news",

@@ -21,6 +21,7 @@ from backend.app.models import Article, Reference, Vuln  # noqa: E402
 from dispatch_common import (  # noqa: E402
     KAFKA_BOOTSTRAP,
     KAFKA_TOPIC,
+    SCHEMA_VERSION,
     extract_iocs,
     make_producer,
     send,
@@ -30,8 +31,6 @@ try:  # best-effort：CLI 独立运行时缺失也不致命
     import refresh_progress as _prog  # noqa: E402
 except Exception:  # pragma: no cover
     _prog = None
-
-SCHEMA_VERSION = 3
 
 
 def migrate(conn: sqlite3.Connection) -> None:

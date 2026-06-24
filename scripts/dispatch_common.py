@@ -14,6 +14,12 @@ KAFKA_BOOTSTRAP = (
 )
 KAFKA_TOPIC = "schedule_task_normal"
 
+# Kafka 投递报文的协议版本号 —— 单一真源。两个 dispatcher（poisoning/vuln）的
+# build_message 与 backend 抽屉重建（news.query）共用此常量；下游 security_copilot
+# 按它判断报文结构（v3 起顶层单包字段合并为 packages[] 数组）。任何破坏性结构变更
+# 都要在此 +1 并同步下游，切勿在各处硬编码（曾导致重建报文 schema_version=null）。
+SCHEMA_VERSION = 3
+
 TIER1_SUPPLY_SOURCES = {
     "Socket", "SafeDep", "StepSecurity", "Endor Labs", "Aikido", "defend.network",
 }
