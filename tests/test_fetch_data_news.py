@@ -22,11 +22,12 @@ async def test_run_fetchers_defaults_to_24_concurrency(monkeypatch):
 
     seen = {}
 
-    async def fake_run(selected, concurrency, snapshot=True, incremental=False):
+    async def fake_run(selected, concurrency, snapshot=True, incremental=False, force=False):
         seen["selected"] = selected
         seen["concurrency"] = concurrency
         seen["snapshot"] = snapshot
         seen["incremental"] = incremental
+        seen["force"] = force
         return 0
 
     monkeypatch.setattr(fetchers, "run", fake_run)
@@ -39,6 +40,7 @@ async def test_run_fetchers_defaults_to_24_concurrency(monkeypatch):
         "concurrency": 24,
         "snapshot": True,
         "incremental": False,
+        "force": False,
     }
 
 
@@ -63,7 +65,7 @@ async def test_partial_fetch_exit_code_ignores_prior_manifest_failures(tmp_path,
         ],
     }), encoding="utf-8")
 
-    async def fake_news_fetcher(*, concurrency):
+    async def fake_news_fetcher(*, concurrency, force=False):
         return {"name": "news", "count": 0}
 
     monkeypatch.setattr(fetchers, "CACHE", cache)
